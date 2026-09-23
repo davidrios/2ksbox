@@ -13,7 +13,7 @@
  * built when meson found liblibdisc.a (-Dlibdisc_dir, patch 50).
  *
  * The same file also registers `isodir`, which serves a host *directory*
- * as a generated ISO 9660 + Joliet volume (M5g, docs/tracks/m5-dirdisc.md).
+ * as a generated ISO 9660 + Joliet volume (M5g, docs/17-cdrom-implementation.md §8).
  * It is a protocol driver, `isodir:/path/to/folder`, because a directory
  * can be neither probed nor opened as a `file` child — the shape vvfat's
  * `fat:` prefix has for the same reason. Everything else is shared with

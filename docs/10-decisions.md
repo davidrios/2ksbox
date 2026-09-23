@@ -1,34 +1,54 @@
 # 10. Decision records
 
-Short ADR-style log. Newest last. Docs elsewhere reflect the current state;
-this file preserves the *why*.
+The project's architecture decisions, oldest first. Each record keeps
+its date, its status, the decision, why, and what it cost; amendments
+stay inside the record they change, dated. The other docs describe the
+current state; this one keeps the *why*. The roadmap is doc 08.
+
+| ADR | Decision | Status |
+|---|---|---|
+| 001 | QEMU is the base | accepted |
+| 002 | QEMU runs in-process with the display | accepted |
+| 003 | A libretro core is the front end | **superseded by 005** |
+| 004 | Rust where possible | accepted |
+| 005 | A standalone player; RetroArch dropped | accepted |
+| 006 | Direct3D 8/9 through our own paravirtual device | accepted |
+| 007 | The executor is DXVK everywhere; macOS on KosmicKrisp | accepted, amended 2026-09-17 and 2026-09-21 (Windows) |
+| 008 | A real guest display driver, staged after the DLL device | accepted |
+| 009 | The launcher and `shader-chain` are GPL-2.0-or-later | accepted, with an addendum |
+| 010 | The player ships despite the GPLv2 / Apache-2.0 conflict | accepted |
+| 011 | The product is 2ksbox, app ID `com._2ksbox.Launcher` | accepted, amended 2026-09-06 |
+| 012 | Win98 gets the XP driver over a shared core | accepted |
+| 013 | Below the Vulkan 1.3 floor, no DXVK device; no second executor | accepted, amended; points 1 and 3 **superseded by 018** |
+| 014 | One launcher library, front ends draw it | accepted; "two front ends" **ended by 017** |
+| 015 | The Qt front end is the shipped one | accepted; "keep `launcher/`" **reversed by 017** |
+| 016 | The Voodoo 2 is emulated beside the Glide pass-through | accepted |
+| 017 | The egui front end is retired | accepted |
+| 018 | Below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest retired | accepted, retirement pending (M15 step 6) |
+| 019 | Two macOS builds: App Store 26+, community at Homebrew's floor | accepted |
 
 ## ADR-001: QEMU as the base (2026-08-31)
 
-Only open-source option covering Linux/Windows/macOS incl. Apple Silicon with
-a working guest-3D path for both Win98 and XP (qemu-3dfx). VMware rejected
-(closed source, no ARM mac). VirtualBox rejected (3D for pre-Win7 guests
-removed in 6.1+). 86Box out of scope (authentic-hardware emulation already
-exists; we don't duplicate it).
+The only open-source option covering Linux, Windows and macOS on Apple
+Silicon with a working guest-3D path for both Win98 and XP (qemu-3dfx).
+VMware: closed source, no ARM Mac. VirtualBox: 3D for pre-Win7 guests
+removed in 6.1. 86Box: authentic-hardware emulation already exists and
+we don't duplicate it (ADR-016 later borrows its Voodoo 2 as a device).
 
 ## ADR-002: QEMU runs in-process with the display (2026-08-31)
 
-Gaming latency requirement: framebuffer, input, and audio must not cross a
-process boundary. UTM-style embed patches. Consequence: one VM per hosting
-process; GPL-2.0 for anything linking QEMU.
+Gaming latency: framebuffer, input and audio must not cross a process
+boundary. UTM-style embed patches. Consequences: one VM per hosting
+process; GPL-2.0 for anything that links QEMU. ADR-010 measured the
+latency premise later and found a process boundary affordable; the
+decision stands for the work a split would take.
 
-## ADR-003: Primary frontend is a libretro core; custom app demoted to companion (2026-08-31)
+## ADR-003: A libretro core is the front end (2026-08-31) — superseded by ADR-005
 
-A RetroArch core replaces most of the planned custom display pipeline and
-player: native slang CRT shaders, mature frame pacing, input capture, audio,
-disk-control API for CD swapping, cross-platform packaging, existing
-user base. Precedent: DOSBox Pure (Win98-in-RetroArch works and has demand).
-The `libqemu_embed.h` layer is frontend-agnostic, so a standalone player
-remains possible later at low cost; the **companion launcher** (machine
-creation, snapshots, disc shelf, guest-tools media) covers what RetroArch's
-content model does badly. Accepted risks: qemu-3dfx GL inside libretro
-hw-render contexts on macOS (spike scheduled in M0), large save states,
-living with libretro API constraints.
+A RetroArch core would have supplied CRT shaders, frame pacing, input,
+audio, disc control and packaging, with the custom app demoted to a
+companion launcher (machines, snapshots, disc shelf). The embed layer
+was kept front-end-agnostic so a standalone player stayed possible.
 
 ## ADR-004: Rust where possible (2026-08-31)
 
@@ -36,378 +56,238 @@ All original code is Rust unless a hard boundary forces C:
 
 | Component | Language | Why |
 |---|---|---|
-| libretro core shell (cdylib) | **Rust** | thin FFI over small API |
-| embed-API bindings | **Rust** (bindgen) | consumer side |
-| companion launcher | **Rust** | greenfield GUI |
-| CD disc-model crate + format parsers ("libdisc") | **Rust** | greenfield, parser-heavy = Rust sweet spot; QEMU upstream now accepts Rust (experimental since 9.2), so upstreaming is plausible |
-| MMC exerciser, tooling, CI | **Rust** | greenfield |
-| QEMU patches: embed API, ATAPI device glue | C | inside QEMU; thin shims calling libdisc |
+| Embed-API bindings, player, launcher | Rust | greenfield, consumer side |
+| Disc model and format parsers (`libdisc`) | Rust | parser-heavy; QEMU accepts Rust (experimental since 9.2), so upstreaming is plausible |
+| Tooling | Rust | greenfield |
+| QEMU patches: embed API, ATAPI glue | C | inside QEMU; thin shims over libdisc |
 | qemu-3dfx host patches | C | third-party, version-coupled |
-| Guest-side wrappers/drivers | C (era toolchains) | Rust cannot target Win9x/XP |
+| Guest wrappers and drivers | C (era toolchains) | Rust cannot target Win9x/XP |
 
-Consequence for doc 05: disc model is implemented in Rust; libmirage becomes
-a behavioral reference (readable GPL source, format documentation), not a
-linked dependency — this also drops its glib dependency problem.
+Consequence: libmirage is a behavioural reference (doc 05), not a
+linked dependency, which also drops its glib dependency.
 
-## ADR-005: Standalone player is the frontend; RetroArch/libretro dropped (2026-09-02)
+## ADR-005: Standalone player is the front end; RetroArch dropped (2026-09-02)
 
-Supersedes ADR-003. After hands-on time with RetroArch the user judged it too
-buggy to build on ("the thing is so full of bugs it's not even worth it").
-The frontend returns to the original design: a **standalone Rust player**
-(winit + wgpu + librashader + egui + cpal) with in-process QEMU (ADR-002
-unchanged), plus the **launcher** for machine management — the two-process
-model from the first architecture draft. Consequences:
+Supersedes ADR-003. After hands-on time the user judged RetroArch too
+buggy to build on ("the thing is so full of bugs it's not even worth
+it"). The front end returns to a **standalone Rust player** (winit,
+wgpu, librashader, cpal) with QEMU in-process (ADR-002), plus a
+separate **launcher**.
 
-- We own the whole presentation pipeline again (doc 03 fully in scope): CRT
-  shaders via librashader's wgpu runtime (Metal on macOS), frame pacing,
-  input grab, audio. More work than the core route, but no dependence on
-  RetroArch's quality or API constraints.
-- qemu-3dfx integration target becomes "guest GL output → wgpu texture"
-  (Spike A retargeted: docs/spikes/spike-a-macos.md) instead of a libretro
-  hw-render context. No libretro hw-render risk on macOS anymore; the
-  GL↔Metal interop question remains and is the spike.
-- Spike B (libretro crate choice) is void. The M0 libretro core validated in
-  RetroArch is deleted; its test pattern lives on in `player/`.
-- The embed API stays frontend-agnostic on principle; a libretro shell could
-  be re-added by a third party, we won't maintain one.
+- We own the presentation pipeline (doc 03): CRT shaders through
+  librashader's wgpu runtime, frame pacing, input grab, audio.
+- qemu-3dfx's target becomes "guest GL output → wgpu texture" (Spike A,
+  `docs/spikes/spike-a-macos.md`) instead of a libretro hw-render
+  context.
+- Spike B (`docs/spikes/spike-b-libretro-crate.md`) is void; the M0
+  core is deleted. The embed API stays front-end-agnostic on principle;
+  we will not maintain a libretro shell.
 
 ## ADR-006: Direct3D 8/9 for XP through our own paravirtual device (2026-09-03)
 
-**Decision.** Direct3D 8/9 acceleration for the XP guest is a paravirtual
-Direct3D device of our own: thin guest `d3d9.dll`/`d3d8.dll` that serialize
-the API into a shared-memory command stream, and a host-side executor that
-runs the same D3D9 semantics natively (DXVK's d3d9 over Vulkan, MoltenVK on
-macOS). Design in doc 14. Guest-side WineD3D (JHRobotics' wine9x build on
-the guest-tools ISO) stays as the fallback and as the only path for
-DirectDraw / Direct3D ≤7 until the device grows a ddraw layer.
+**Decision.** Thin guest `d3d9.dll` / `d3d8.dll` serialize the API into
+a shared-memory command stream; a host executor runs the same D3D9
+semantics natively. Design in doc 14. Guest-side WineD3D (JHRobotics'
+wine9x) stays as the fallback and the DirectDraw / D3D ≤ 7 path.
 
-**Why now.** Two days with WineD3D-in-guest on XP (FIFA 2000, doc 00):
+**Why.** Two days of WineD3D-in-guest on XP (FIFA 2000): every fix was
+in a 2015 fork with no upstream, and the structural cost is unfixable —
+WineD3D does its state tracking and D3D → GL translation inside the
+emulated guest at TCG speed, then ships GL calls through the FIFO one
+by one. A paravirtual device moves the translation to native host code;
+on Apple Silicon that is the difference between "works" and "plays". No
+community D3D9 paravirt device exists (VirtualBox's is Vista+,
+VMware's SVGA3D closed and Win7+).
 
-- Every fix so far was in a 2015 fork with no upstream: 24-bit desktop
-  modes (`patches/wine9x/01`), front-buffer presentation on our FBO stand-in
-  (`embed/mglcntx_embed.c`), and the open ones (palettized/dynamic texture
-  corruption, per-flush flicker, DirectInput focus after the mode switch).
-  Each is diagnosable, none is the last.
-- The structural cost is unfixable there: WineD3D does all state tracking
-  and D3D→GL translation *inside the emulated x86 guest*, at TCG speed,
-  and then ships GL calls through the FIFO one by one. A paravirtual device
-  moves that translation to native host code; the guest only serializes.
-  On Apple Silicon that is the difference between "works" and "plays".
-- Doc 04 already listed "a community D3D9 paravirt device, if it
-  materializes" as the adoption target. None has (VirtualBox's WDDM/DX
-  path is Vista+, VMware's SVGA3D is closed and Win7+). We build it.
+**Rejected.** Proton (a different product: no Windows guest, no
+macOS). DXVK in the guest (no Vulkan driver for XP). Fixing WineD3D
+1.7.55 further.
 
-**Alternatives rejected.** *Proton*: a different product (Windows games on a
-Linux host, no Windows guest, no macOS) — its components, not its shape, are
-relevant. *DXVK in the guest*: needs a Vulkan driver in XP; none exists.
-*Keep fixing WineD3D 1.7.55*: see above; it remains the fallback.
+**Licensing.** Wine is LGPL-2.1+, so copying its D3D behaviour *and
+code* into the guest DLLs and the executor is allowed (those parts carry
+the LGPL, ship with source). DXVK is zlib, d3d8to9 BSD-2; all combine
+with GPL-2.0 QEMU. Nothing from Microsoft's SDK ships: headers come
+from mingw-w64.
 
-**Licensing.** Wine is LGPL-2.1-or-later: copying Direct3D behaviour *and
-code* from current Wine (d3d9/d3d8 COM plumbing, d3d8→d3d9 mapping, format
-tables, tests) into the guest DLLs and the host executor is allowed; those
-components carry the LGPL, ship with source, keep their headers. DXVK is
-zlib. d3d8to9 is BSD-2. QEMU is GPL-2.0 and qemu-3dfx GPL-2.0; all of these
-combine (LGPL/zlib/BSD code inside a GPL-2.0 program is fine). Nothing from
-Microsoft's SDK ships: headers come from mingw-w64 (public domain / ZPL).
+**Consequences.** M4 becomes the device (doc 08). qemu-3dfx's FIFO/MMIO
+model, the FXPTL/MAPMEM guest driver, the embed frame path and the
+player's 3D layer are reused. C++ enters the host side behind a C shim;
+guest DLLs are C. The x87 work is unaffected (games still set PC=24
+through our `CreateDevice`).
 
-**Consequences.** New milestone in doc 08 (M4 becomes the device). The
-qemu-3dfx FIFO/MMIO model, the FXPTL/MAPMEM guest driver, the embed frame
-path (IOSurface / dma-buf) and the player's 3D layer are reused as-is; the
-new pieces are the guest DLLs, a `d3dpt` device in QEMU, and a host executor
-linking DXVK. C++ enters the host side (DXVK) behind a C shim; guest DLLs
-are C. Apple Silicon depends on DXVK-over-MoltenVK being good enough for
-D3D9-era feature levels: spike first (doc 14 P0), fallback is a host-side
-WineD3D or a wgpu backend later. The x87 work (patch 06, doc 13) is
-unaffected: games still set PC=24 through our d3d9.dll's CreateDevice.
+## ADR-007: The host executor is DXVK everywhere; macOS runs it over KosmicKrisp (2026-09-03, amended 2026-09-17 and 2026-09-21)
 
-## ADR-007: The host executor is DXVK on every platform; macOS runs it over KosmicKrisp (2026-09-03)
-
-**Decision.** The paravirtual Direct3D device's host executor (ADR-006,
-doc 14) is DXVK's d3d9, built natively as a library next to QEMU, on Linux
-and macOS alike. On macOS the Vulkan implementation under it is **Mesa's
-KosmicKrisp** (LunarG's Vulkan-on-Metal-4 driver, Vulkan 1.4 conformant on
-Apple Silicon, prebuilt in the LunarG macOS SDK), which requires **macOS 26**
-— the Air gets upgraded. MoltenVK is not a supported configuration.
-DXVK is carried as a submodule (`third_party/dxvk`) plus a patch queue
-(`patches/dxvk/`), the same discipline as the QEMU fork.
+**Decision.** The executor is DXVK's d3d9 built natively as a library
+beside QEMU. On macOS the Vulkan under it is Mesa's **KosmicKrisp**
+(Vulkan on Metal 4, in the LunarG SDK), which needs **macOS 26**;
+MoltenVK is not supported. DXVK is a submodule (`third_party/dxvk`)
+plus a patch queue (`patches/dxvk/`), the same discipline as QEMU.
 
 **Why.** Spike C (`docs/spikes/spike-c-dxvk-native-macos.md`): DXVK
-master refuses MoltenVK 1.4.2 outright — five hard-required features are
-missing (geometry shaders, cull distance, depth-clip-enable,
-robustBufferAccess2, nullDescriptor), and the two robustness ones are
-unimplementable without shader-side bounds checks Metal lacks (MoltenVK
-issue open since 2025-02). KosmicKrisp advertises all of them except
-geometry shaders, which d3d9 never uses: a one-line "required → optional"
-patch. DXVK's core compiles on macOS; only its Linux-only Windows shim
-needs ~30 lines.
+refuses MoltenVK outright — five required features missing, two of
+them (robustBufferAccess2, nullDescriptor) unimplementable on Metal.
+KosmicKrisp has all but geometry shaders, which d3d9 never uses: a
+one-line "required → optional" patch. Verified 2026-09-03 on the Air
+(one more optional feature, `fillModeNonSolid`, patch 05): the
+reference frame matches the rig as closely as on RADV.
 
-**Alternatives rejected.** *Implement the features in MoltenVK*: harder than
-patching DXVK for the same result. *DXVK-on-MoltenVK with a dummy-resource
-patch queue* (the Gcenx DXVK-macOS pattern): viable as a bridge but fights
-DXVK's descriptor-heap design on every rebase; not pursued since the OS
-upgrade is accepted. *A native D3D9-on-Metal executor inspired by DXVK*:
-a rewrite of ~40 k lines plus years of fidelity work, and a second executor
-to keep bug-for-bug equal with Linux; last resort only. *wgpu translator*:
-same magnitude.
+**Rejected.** Implementing the features in MoltenVK (harder). DXVK on
+MoltenVK with dummy resources (fights DXVK's descriptor design on every
+rebase). A native D3D9-on-Metal executor or a wgpu translator (~40 k
+lines, and a second executor to keep bug-for-bug equal).
 
-**Consequences.** Minimum macOS for the player's Direct3D path is 26
-(Tahoe); GL pass-through and everything else keep working on 15. The
-player links DXVK through a C shim; a window-less WSI backend replaces
-SDL2 (the device renders off-screen into the existing IOSurface / dma-buf
-frame path). KosmicKrisp is young: Metal 4 workarounds for M1/M2 on macOS
-26 live in the driver (fixed in 27); the rig goldens (`reference/d3d`)
-are the acceptance test for both drivers. **Verified 2026-09-03** on the
-Air (macOS 26.6.2, SDK 1.4.357.1): one more required feature had to be made
-optional (`fillModeNonSolid`, patch 05), then the reference frame matches
-the rig as closely as on RADV (spike C, "Verified on KosmicKrisp").
+**Consequences.** The Direct3D path needs macOS 26; everything else
+runs on older macOS (ADR-013, ADR-018, ADR-019 cover what a pre-26 Mac
+gets). A window-less WSI backend (patch 04) replaces SDL2; the device
+renders into the existing IOSurface / dma-buf frame path. The rig
+goldens (`reference/d3d`) are the acceptance test on every driver.
 
-**Windows too, since 2026-09-17** (user decision, reversing the M11
-track's 2026-09-08 choice of the system Direct3D 9): the executor's first
-real run on Windows' own d3d9 drew black frames, and a second rasteriser
-to keep bug-for-bug equal is exactly what this ADR rejected for macOS.
-The Windows package carries DXVK's own `d3d9.dll` as `dxvk_d3d9.dll`
-(patch 08 adds the headless WSI there), the executor loads nothing else,
-and a Windows host below Vulkan 1.3 is under ADR-013 like any other
-(docs/tracks/m11-windows-host.md, item 5).
+**Amendment, 2026-09-17: Windows runs DXVK too** (user decision,
+reversing M11's choice of the system d3d9). The executor's first run on
+Windows' own d3d9 drew black frames, and a second rasteriser is what
+this ADR rejected for macOS. The Windows package carries DXVK's d3d9 as
+`dxvk_d3d9.dll` (patch 08: the headless WSI on Windows).
 
-**…and Windows' own Direct3D 9 comes back as the fallback, 2026-09-21**
-(user decision). DXVK stays the rasteriser: the default on every host, the
-one the goldens are taken with, the only one a frame is compared against.
-What changes is what a **Windows host below the Vulkan 1.3 floor** gets
-instead of nothing. ADR-013 sends such a host to WineD3D in the guest, and
-that path is a poor one on Windows in particular — the user's words: "the
-wine path is just not very good" — while the machine itself has a Direct3D
-9 driver that its card was sold for. Pre-Broadwell Intel, Kepler and older,
-TeraScale: all of them run D3D9-era games natively at full speed and none
-of them will ever answer Vulkan 1.3.
+**Second amendment, 2026-09-21: Windows' own Direct3D 9 as the
+fallback** (user decision: "the wine path is just not very good"). DXVK
+stays the rasteriser — the default on every host, the one goldens are
+taken with, the only one a frame is compared against. A **Windows host
+below the Vulkan 1.3 floor** (ADR-013's table) gets the same executor on
+`system32\d3d9.dll` instead of WineD3D in the guest: those cards all run
+D3D9 natively at full speed.
 
-*Why it drew black in September, and what makes it work now.* Nothing was
-ever built for that backend: it was `LoadLibrary("d3d9.dll")` and the same
-calls DXVK takes. The system implementation refuses four of them, and each
-one is now handled behind `Exec::native` (`d3dpt/exec/d3dpt_exec.cpp`):
-a device created with **no window at all** (it gets a hidden 1x1 popup),
-a **draw outside a scene** — the display driver's DP2 stream has no
-BeginScene anywhere, because the DirectDraw/Direct3D 7 DDI has no such
-call — a **backbuffer read after Present**, which SWAPEFFECT_DISCARD
-leaves undefined on real hardware and which is where the frames went, and
-a **device that can be lost**, which DXVK's never is. Two smaller ones are
-retried rather than refused: hardware vertex processing, and a windowed
-backbuffer format that is not the desktop's.
+- *Why it drew black before*: nothing had been adapted to it. The
+  system d3d9 refuses four things DXVK allows, each now handled in
+  `Exec::native` (`d3dpt/exec/d3dpt_exec.cpp`): a device with no window
+  (a hidden 1x1 popup), a draw outside a scene (the DP2 stream has no
+  BeginScene), a backbuffer read after Present (undefined under
+  SWAPEFFECT_DISCARD — where the frames went), and a lost device. Two
+  more are retried: hardware vertex processing, and a windowed
+  backbuffer format other than the desktop's.
+- *What picks it*: the machine form's **Direct3D** row (`bundle::D3d9`)
+  writes `-device d3dpt-vga,d3d9=…`; `auto` is resolved by the
+  launcher's Vulkan probe, the only side that can tell software Vulkan
+  from real (a card's own d3d9 beats lavapipe). The executor has its own
+  `auto` behind it (DXVK, then the system library), and
+  `D3DPT_D3D9=dxvk|system` forces either.
+- *What it costs*: a second rasteriser's driver gaps are ours (NVIDIA's
+  d3d9 draws D3DFMT_L6V5U5 with no luminance, so this backend sends it
+  as X8L8V8U8). What makes it defensible is an **oracle**:
+  `d3dpt-dp2-test.exe` and `d3dpt-exec-test.exe` run on either backend;
+  on the user's PC both pass on both and the frames are byte-identical
+  between DXVK and NVIDIA's Direct3D 9.
 
-*What picks it.* The machine form has a **Direct3D** row
-(`bundle::D3d9`), which writes `-device d3dpt-vga,d3d9=…`; `auto` is the
-default and is resolved by the **launcher's** own Vulkan probe, because
-only that side can tell a software Vulkan device from a real one — and on
-Windows a card's own D3D9 driver beats lavapipe every time. The executor
-has its own `auto` behind that (DXVK, then the system library when DXVK
-opens no adapter), so a bare `qemu-system-i386` on such a host still gets
-3D. `D3DPT_D3D9=dxvk|system` forces either, which is how the two are
-compared on a host that has both.
-
-*What it costs, said plainly.* A second rasteriser is still a second
-rasteriser: a frame drawn here is not the frame the rig goldens were taken
-with, and driver-specific gaps are ours to meet — the first one found is
-D3DFMT_L6V5U5, which NVIDIA's d3d9 lists and draws with no luminance, so
-on this backend it goes up as X8L8V8U8. What makes it defensible this time
-is that it has an **oracle**: `d3dpt-dp2-test.exe` (the display driver's
-107 checks) and `d3dpt-exec-test.exe` (the guest DLLs' path, with the
-swapchain and the Present the other one has not got) both run on either
-backend by the environment variable. On the user's PC, 2026-09-21: both
-pass on both, and both frames are **byte-identical** between DXVK and
-NVIDIA's own Direct3D 9.
+ADR-018 is the same answer for Linux and macOS, which have no system
+d3d9.
 
 ## ADR-008: A real guest display driver is the long-term shape; staged after the DLL device (2026-09-04)
 
-**Decision.** The paravirtual Direct3D device keeps ADR-006's shape today
-(guest `d3d9.dll` / `d3d8.dll` serializers → `d3dpt` device → DXVK
-executor), and we commit to growing a **real Windows display driver** on
-top of the same transport and executor, in stages, as milestone M7 (doc
-08). The driver replaces the DLL copies per game folder, replaces the
-emulated Cirrus as the guest's display adapter, and is the only road to
-Vista/7/10 acceleration should we ever want it. Nothing below the guest
-side changes: the shared window, the doorbell, the record protocol
-(`d3dpt/d3dpt_proto.h`) and `libd3dpt_exec` are the driver's back end as
-they are the DLL's.
+**Decision.** Keep ADR-006's DLL device, and grow a **real Windows
+display driver** on the same transport and executor as milestone M7.
+The driver replaces the per-game DLLs and the emulated Cirrus, and is
+the only road to Vista+ acceleration should it ever be wanted. The
+shared window, doorbell, record protocol (`d3dpt/d3dpt_proto.h`) and
+`libd3dpt_exec` are its back end unchanged.
 
-**Why.** After P1/P2 (2026-09-03/04) the DLL device works and matches the
-rig, so the question is no longer "can the host run D3D9 for the guest"
-but "how do games reach it". The DLL answer has structural limits:
-- **Per-game installs.** A D3D9.DLL must sit next to every EXE (system-wide
-  replacement fights Windows File Protection on XP), games that resolve
-  `system32\d3d9.dll` by path, load through DirectDraw 7 in the same
-  process, or check DirectX versions do not see it. On the rig the same
-  folder-level fiddling already bit the reference workloads.
-- **We re-implement the runtime.** State shadowing, managed pool, lost
-  device, state blocks, software vertex processing: every semantic of
-  Microsoft's d3d9.dll has to be re-done in our DLL. With a display driver
+**Why.** Once the DLL device matched the rig, the question became how
+games reach it, and DLLs have structural limits:
+
+- **Per-game installs.** A `D3D9.DLL` must sit beside every EXE
+  (Windows File Protection fights a system-wide one); games that load
+  `system32\d3d9.dll` by path, go through DirectDraw 7, or check the
+  DirectX version never see it.
+- **Re-implementing the runtime.** State shadowing, the managed pool,
+  lost devices, state blocks, software vertex processing. With a driver,
   Microsoft's runtime stays in the guest and talks to us through the
-  **Direct3D DDI**, which on 2000/XP is *already a serialized command
-  stream*: `D3dDrawPrimitives2` hands the driver DP2 token buffers (render
-  states, texture stage states, draws, shader creation and constants —
-  `d3dhal.h`, 32 opcodes), surfaces come through the DirectDraw DDI
-  (`DdCreateSurface`, `DdLock`, `DdBlt`), GDI through `winddi.h`. That is
-  our record stream with Microsoft doing the validation.
-- **The desktop becomes ours.** A display driver owns the framebuffer and
-  the mode list: any resolution and refresh the CRT shader wants (M2's
-  mode table and pixel aspect), no Cirrus limits (XP has no driver for
-  QEMU's standard VGA), DirectDraw and Direct3D 7 for free, a zero-copy
-  2D path through the shared window. This is what VMware (SVGA II +
-  SVGA3D) and VirtualBox (their XPDM/WDDM additions) do; both prove the
-  shape and both show the cost.
+  **Direct3D DDI**, which on 2000/XP is already a serialized stream:
+  `D3dDrawPrimitives2` hands over DP2 token buffers (`d3dhal.h`),
+  surfaces arrive through the DirectDraw DDI, GDI through `winddi.h`.
+- **The desktop becomes ours.** Any mode the CRT shader wants, no Cirrus
+  limits (XP has no driver for QEMU's standard VGA), DirectDraw and D3D 7
+  for free. VMware and VirtualBox prove the shape, and its cost.
 
-**Alternatives kept in their place.** *The DLL device* stays: it is the
-Win98 path regardless (9x has no comparable driver model worth targeting),
-it is the debugging harness for the executor, and it ships now. *WineD3D
-in the guest* stays the DX7 fallback until the driver's DirectDraw DDI
-exists. *Vista/7/10 (WDDM: kernel miniport under dxgkrnl plus user-mode
-D3D9/D3D10/D3D11 UMDs)* is explicitly **not** in scope for v1; the
-decision only keeps the door open by choosing the transport that leads
-there. A D3D11 UMD over our device is the size of VBoxDX, a multi-year
-team effort.
+**Kept in place.** The DLL device (Win98's path until ADR-012, and the
+executor's harness). WineD3D in the guest as the DX7 fallback. WDDM
+(Vista/7/10) out of scope: a D3D11 UMD is VBoxDX-sized.
 
-**Staged plan (M7).**
-1. **M7a — framebuffer driver (2D).** A video miniport (`video.h`, loaded by
-   videoprt.sys) that exposes our shared window as the frame buffer and a
-   mode list we control, plus a display driver DLL (`winddi.h`) that does
-   GDI in software on that buffer (the `framebuf`/`vga` shape; ReactOS
-   builds the same kind with GCC, ~3 k lines). QEMU side: a paravirtual
-   framebuffer register set on the `d3dpt` device (mode, pitch, dirty
-   rectangles, vsync) and the player showing it through the existing frame
-   path. Exit: XP desktop at 1024×768@85 on the driver, zero-copy, no
-   Cirrus, ScanDisk-clean shutdowns, a mode table the CRT presets pick
-   from. This step pays for itself (M2) and teaches the kernel-side
-   workflow: BSOD debugging over serial with WinDbg or the ReactOS tools,
-   a `.inf` install, driver signing not required on XP.
-2. **M7b — DirectDraw DDI.** `DdCreateSurface`/`DdLock`/`DdBlt`/`DdFlip` on
-   the same driver → surfaces in the device's handle table, blits by the
-   executor (DXVK `StretchRect`/`UpdateSurface`), overlays refused. Exit:
-   DirectX 5–7 titles (FIFA 2000, doc 00) without WineD3D.
-3. **M7c — Direct3D DDI.** `D3dContextCreate`, `D3dDrawPrimitives2`: the DP2
-   token consumer that translates into our records (mostly 1:1), texture
-   and shader DDIs, caps from the executor. Exit: the doc 04 matrix
-   through Microsoft's own d3d8/d3d9 with no DLL in the game folder; the
-   DLL device becomes the 9x path only.
-4. **M7d — later, if ever:** WDDM for Vista+ (out of scope for v1).
+**Stages.** M7a framebuffer driver (miniport + display DLL, GDI in
+software on the shared window, a mode table the CRT presets pick
+from). M7b DirectDraw DDI (surfaces, blits, flips; overlays refused).
+M7c Direct3D DDI (the DP2 consumer, caps from the executor): the doc 04
+matrix through Microsoft's own d3d8/d3d9 with no DLL in the game
+folder. M7d WDDM, if ever.
 
-**Toolchain and licensing.** mingw-w64 ships the DDI headers (`ddk/winddi.h`,
-`ddk/video.h`, `d3dhal.h`) under its permissive terms; kernel-mode display
-DLLs and miniports are plain PE files with no CRT, buildable with the
-same cross toolchain as the wrappers (the build script's msvcrt/ISA
-checks extend to them). ReactOS (GPL-2.0) is the reference for building
-such drivers with GCC and for DDI behaviour; Wine has no display-driver
-side. Nothing from Microsoft's DDK ships.
+**Toolchain and licensing.** mingw-w64 ships the DDI headers; display
+DLLs and miniports are plain PE files built with the same cross
+toolchain. ReactOS (GPL-2.0) is the reference for DDI behaviour. Nothing
+from Microsoft's DDK ships.
 
-**Consequences.** Doc 08 gains M7 after M4; doc 14 P5's "proper PnP driver
-instead of MAPMEM" becomes M7a. ADR-006 stands. The record protocol must
-stay driver-neutral: no guest-DLL-only assumptions (handles are guest
-chosen, resources are host objects, nothing in it knows about COM). The
-executor grows the DDI-shaped operations M7b/c need (blits between
-surfaces, DP2 semantics such as per-primitive vertex buffers) when those
-stages start, not before.
+**Consequences.** The record protocol stays driver-neutral (guest-chosen
+handles, host-object resources, nothing about COM). The executor grows
+DDI-shaped operations when a stage needs them, not before.
 
-## ADR-009: The launcher (and `shader-chain`) are GPL-2.0-or-later (2026-09-05)
+## ADR-009: The launcher and `shader-chain` are GPL-2.0-or-later (2026-09-05)
 
-**Decision.** `launcher` and `shader-chain` declare `GPL-2.0-or-later`
-instead of the workspace's `GPL-2.0-only`. Everything that links QEMU —
-`player`, `qemu-embed` — and `libdisc`, which is compiled into QEMU
-itself, stay `GPL-2.0-only`.
+**Decision.** The launcher crates and `shader-chain` declare
+`GPL-2.0-or-later`; everything that links QEMU (`player`, `qemu-embed`)
+and `libdisc`, which is compiled into QEMU, stay `GPL-2.0-only`.
 
-**Why.** The launcher's dependency tree contains crates licensed
-**Apache-2.0 with no alternative**, and Apache-2.0 is incompatible with
-GPLv2 (the patent-termination clause) while being fine with GPLv3. It is
-not one stray crate and it did not arrive with the preset downloader:
-egui/eframe brings `ab_glyph`, `ab_glyph_rasterizer`, `accesskit_winit`
-and `glutin`; winit brings `dpi` (`Apache-2.0 AND MIT` — an *and*); the
-download added `ring` (`Apache-2.0 AND ISC`) under `ureq`'s rustls. The
-conflict was there from the day the launcher was an egui app; the
-downloader is what made someone look. `GPL-2.0-or-later` resolves it,
-because a recipient may take the combined binary under v3.
+**Why.** The launcher's dependency tree has **Apache-2.0-only** crates
+(then egui's `ab_glyph` and `glutin`, winit's `dpi`, `ring` under
+`ureq`'s rustls). Apache-2.0 is incompatible with GPLv2 (the
+patent-termination clause) and fine with GPLv3, so "or later" resolves
+it. The launcher can do this because it **links no QEMU code**: it
+writes bundles, spawns the player and talks QMP over a socket.
+`shader-chain` moves with it because it is linked into both binaries.
 
-The launcher can do this and the player cannot: **the launcher links no
-QEMU code.** It writes bundles, spawns `player` as a separate process
-and talks to it over a QMP socket (doc 07 — the launcher is optional by
-design). The `GPL-2.0-only` pin exists for the in-process QEMU library,
-which the launcher never touches. `shader-chain` moves with it because
-it is linked into *both* binaries: relicensing the launcher would be
-worth nothing if a v2-only crate rode along into the same binary, and
-"or later" still combines into the player's v2-only whole exactly as
-before.
+**Rejected.** Moving the preset download out of process (leaves the
+other crates). `aws-lc-rs` or `native-tls` for `ring` (OpenSSL's
+licence instead). Shipping the 80 MB preset collection in packages.
 
-**What this does not settle.** The *player* has the same Apache-2.0
-exposure — `ab_glyph` (egui overlay), `cpal` (audio), `codespan-
-reporting` (via naga) — and it links QEMU, so "or later" is not
-available to it. That is a real open question for anyone distributing
-player binaries, not something this ADR fixes; it needs its own pass
-over which of those crates are replaceable. There is also no `COPYING`
-or per-crate licence file in the tree yet, only the Cargo metadata and
-the README section.
+**Addendum, 2026-09-05: permissive dual-licensing rejected.** `MIT OR
+Apache-2.0` for our own code was tried and reverted the same day;
+everything of ours stays GPL. It fixes nothing (the player is GPLv2
+because QEMU is), a permissive label on player-side code would be true
+and meaningless, and the most reusable piece — the guest serializer
+DLLs — is transient once M7c lands. Copyleft keeps the novel work (the
+D3D protocol, the display drivers, the CD model) open, and its likeliest
+reusers (86Box, DOSBox-X) are GPL already. Permissive release is a
+one-way door.
 
-**Alternatives rejected.** Moving the preset download out of process
-(`curl`/`git`) removes one instance and leaves the egui/winit ones
-standing. `aws-lc-rs` in place of `ring` brings the OpenSSL licence in;
-`native-tls` on Linux *is* OpenSSL 3, also Apache-2.0. Shipping the
-presets as a packaging payload was rejected on its merits anyway: the
-collection is 80 MB unpacked and is upstream's to update.
+## ADR-010: The player ships as a binary despite the GPLv2 / Apache-2.0 conflict (2026-09-05)
 
-## ADR-010: The player ships as a binary despite the GPLv2/Apache-2.0 conflict (2026-09-05)
+**Decision.** The player links GPL-2.0-only QEMU and has Apache-2.0-only
+code in its tree, which on the FSF's reading cannot combine. **We ship
+player binaries anyway**, state the position in the README and
+`THIRD-PARTY-NOTICES.md` (with `COPYING`), and distribute complete
+source and build scripts.
 
-**Decision.** The player's dependency tree contains Apache-2.0-only code
-and the player links GPL-2.0-only QEMU. The two are, on the FSF's reading,
-incompatible in one binary. **We ship player binaries anyway** (M6 step 6:
-signed macOS .app, Windows installer, Linux Flatpak), state the position
-in the README and in `THIRD-PARTY-NOTICES.md`, and distribute the complete
-source and build scripts as we always have. This ADR records why that is a
-considered position rather than an oversight.
+**Why the player cannot follow the launcher.**
 
-**The conflict, precisely.** Apache-2.0's patent-termination clause is an
-additional restriction GPLv2 does not permit (it is fine with GPLv3, which
-is why ADR-009 could move the launcher). The player cannot follow the
-launcher, for two independent reasons:
+1. *QEMU pins it to v2.* Of what an i386 softmmu build compiles, 411
+   files are v2-or-later, 605 have no header, and **35 are v2-only**
+   (`util/bitmap.c`, `util/qemu-sockets.c`, `hw/audio/ac97.c`, …).
+   Re-check with `tools/gpl-scan.py` after a QEMU bump.
+2. *The crates are not swappable.* `codespan-reporting` comes with naga
+   and `rspirv` with librashader, so a clean tree means dropping wgpu
+   and librashader — the CRT chain is the product. Partial removal
+   changes nothing legally.
 
-1. *QEMU pins it to v2.* QEMU's LICENSE is encouraging at first read —
-   files with no header are GPLv2-**or-later**, and it says v2-only
-   contributions are accepted only for `bsd-user/`, `linux-user/`,
-   `hw/vfio/`, `hw/xen/xen_pt*`, none of which we link. Scanning the
-   headers of what an i386 softmmu build actually compiles: 411 v2-or-later,
-   605 with no licence header, and **35 genuinely v2-only** — among them
-   `util/bitmap.c` (taken from Linux), `util/qemu-sockets.c`,
-   `migration/migration.h`, `system/runstate-action.c`, and
-   `hw/audio/ac97.c`, which is the XP machine's own sound card. Re-check
-   with `tools/gpl-scan.py` after a QEMU bump; one v2-only file is enough.
-2. *The crates are not swappable.* `winit` and `cpal` could go (SDL2 is
-   Zlib and covers both), but `codespan-reporting` comes with naga and
-   `rspirv`/`spirv` with librashader-reflect, so being clean means dropping
-   **wgpu and librashader** — ADR-005's whole stack, and the CRT chain is
-   the product. Partial removal changes the legal position not at all, so
-   it is not worth doing for licence reasons.
+**Why it is defensible.** Every GPLv2 program on the modern Rust GUI
+stack is in this position (`winit` alone settles it). The source we
+distribute is complete and buildable, which is what GPL enforcement
+protects. The residual risk is a strict distribution declining to
+package the player, or a QEMU copyright holder objecting.
 
-**Why shipping anyway is defensible.** Every GPLv2 program built on the
-modern Rust GUI stack is in this position — `winit` alone settles it — so
-this is a property of the ecosystem, not a careless dependency choice. The
-obligation attaches to distributing the combined binary; the source we
-distribute is complete, buildable and unencumbered, which is the thing GPL
-enforcement actually exists to protect. The residual risk is a strict
-distribution (Debian, Fedora legal) declining to package the player, and a
-QEMU copyright holder objecting — remote, and neither is silenced by any
-alternative short of the process split below.
+**Rejected: `dlopen` instead of linking.** The FSF treats static and
+dynamic linking alike, and our coupling is deep (one address space,
+callbacks on QEMU's vCPU threads under the BQL, a shared audio ring).
+The contrary reading is held in good faith and settled nowhere; an
+"everything open source" project should not lean on it.
 
-**Rejected: `dlopen` instead of linking.** `qemu-embed/build.rs` already
-links `libqemu-embed-<target>` as a shared library, and resolving symbols
-later changes nothing: the FSF treats static and dynamic linking alike, and
-our coupling is at the far end of the scale it describes — one address
-space, C structs and function pointers both ways, display callbacks on
-QEMU's own vCPU threads with the BQL held, a lock-free audio ring both
-sides write. The contrary reading (dynamic linking creates no derivative
-work) is held in good faith by competent people and settled nowhere; a
-project whose stance is "everything open source" should not lean on it.
-
-**Rejected for now, and kept on the table: QEMU in its own process.** This
-is the one structurally clean answer — separate address spaces, a versioned
-protocol, each side independently implementable, which is the FSF's own
-"arm's length" description and the shape `d3dpt_proto.h` and
-`cdshelf_proto.h` already have here. **ADR-002 put QEMU in-process for
-latency, and that premise was measured rather than assumed**
-(`tools/ipc-latency-spike.c`, on the x86-64 rig, 16 cores):
+**Kept on the table: QEMU in its own process** — the structurally clean
+answer. ADR-002's latency premise, measured
+(`tools/ipc-latency-spike.c`, x86-64 rig, 16 cores):
 
 | | idle | all cores busy |
 |---|---|---|
@@ -416,745 +296,391 @@ latency, and that premise was measured rather than assumed**
 | buffer fd over `SCM_RIGHTS`, once per ring slot | 12–43 µs | 17–2800 µs |
 | in-process callback (today) | 0.02 µs | 0.02 µs |
 
-Against a 16.7 ms frame that is 0.1 % typical and ~1.4 % at p99, and with a
-three-slot ring the VM side never blocks on a release. **Latency is not
-what stops this.** What stops it today is the work: the VGA surface would
-have to reach the frontend through shared memory (a patch so QEMU allocates
-its `DisplaySurface` from our mapping, or a dirty-rect copy), macOS would
-need IOSurface handles over a mach port rather than `SCM_RIGHTS`, and the
-lifecycle rules, headless dumps and `tools/xp-game-test.sh` all assume one
-process. The seam is good — `player/src/qemu_vm.rs` is already the only
-module that touches the embed API — so this is a track, not a rewrite.
-Re-run the spike on the M1 Air before committing to it; the answer could
-differ there.
+0.1 % of a frame typically, ~1.4 % at p99: **latency is not what stops
+it**. The work does: the VGA surface through shared memory, IOSurface
+handles over a mach port on macOS, and lifecycle rules, headless dumps
+and the guest harnesses that assume one process. `player/src/qemu_vm.rs`
+is the only module touching the embed API, so it would be a track, not
+a rewrite. Re-run the spike on the Air first. A distribution refusing
+the player is the signal to open that track.
 
-**Consequences.** `COPYING` (GPLv2) and `THIRD-PARTY-NOTICES.md` are now in
-the tree, and the README says the position in plain language so a packager
-meets it up front. If a distribution refuses the player on these grounds,
-that is the signal to open the process-split track, with the numbers above
-already in hand rather than re-derived under pressure.
+## ADR-011: The product is 2ksbox; the application ID is `com._2ksbox.Launcher` (2026-09-05, amended 2026-09-06)
 
-### ADR-009 addendum: permissive dual-licensing considered and rejected (2026-09-05)
+**Decision.** The project is **2ksbox** (the user registered
+`2ksbox.com`); `win98-xp-virt` was a working name. At first only the
+packaged identity moved; **amended 2026-09-06**, the working name is
+gone everywhere: the repository (`github.com/davidrios/2ksbox`), the
+checkout, the docs and the user's data directory.
 
-Dual `MIT OR Apache-2.0` for our own code — the Rust ecosystem norm, and a
-way to make `libdisc`, the protocol headers and the guest-side programs
-reusable outside a GPL project — was tried (25 SPDX headers flipped) and
-**reverted the same day. Everything of ours stays GPL.** Three reasons, in
-the order they decided it:
+**Why the underscore.** No segment of a D-Bus-style name may start with
+a digit — `flatpak build-init` refuses `com.2ksbox.Launcher` ("Name
+segment can't start with 2"). Escaping the digit is the established fix
+(`org._7zip`).
 
-- **It fixes nothing.** The player binary is GPLv2 because QEMU is, so the
-  Apache-2.0 crate conflict of ADR-010 is untouched by our own terms.
-- **The player side is GPL by design.** Its source is barely usable without
-  linking a GPL library, so a permissive label there would be true and
-  meaningless, and would invite the misreading that the binary is permissive.
-- **The piece with the clearest reuse value is transient.** The guest D3D
-  serializer DLLs are the obvious thing another project would want, and
-  ADR-008 already demotes them: once M7c lands, the XP path is the display
-  driver's own DDI and the DLLs are the 9x fallback.
+**Which name goes where.** `2ksbox` (`launcher-core/src/paths.rs::NAME`)
+is the product: the commands `2ksbox` and `2ksbox-player`, the resource
+directories (`share/2ksbox`, `lib/2ksbox`, `libexec/2ksbox`), the
+tarball, the window title. `com._2ksbox.Launcher` (`paths.rs::APP_ID`)
+is the application: the desktop entry's file name, the icon, the
+Wayland `app_id` that matches the two, the Flatpak and AppStream ID.
 
-Weighed against that, copyleft keeps derivatives of the novel work (the
-paravirtual D3D protocol, the XP display driver, the CD-ROM model) open, and
-the GPL projects most likely to reuse any of it — 86Box, DOSBox-X — are
-GPL-compatible already. Permissive release is a one-way door; this side of it
-stays open.
-
-"Everything GPL" includes ADR-009's `GPL-2.0-or-later` for `launcher` and
-`shader-chain`, which is what keeps the launcher's Apache-2.0 dependencies
-permissible; only the QEMU-linking crates need `GPL-2.0-only`.
-
-## ADR-011: the product is 2ksbox; the application ID is `com._2ksbox.Launcher` (2026-09-05, amended 2026-09-06)
-
-**Decision.** The project's name is **2ksbox** (the user registered
-`2ksbox.com`), and the application ID everything desktop-facing keys off
-is **`com._2ksbox.Launcher`**. `win98-xp-virt` was always a working name;
-when the decision was first written only the *packaged identity* had
-moved (M6 step 6a). **Amended 2026-09-06:** the working name is gone
-entirely — the repository is `github.com/davidrios/2ksbox`, the checkout
-directory, the docs and the user's data directory all say 2ksbox.
-
-**Why the underscore.** `com.2ksbox.Launcher` is not a legal application
-ID: no segment of a D-Bus-style name may start with a digit, and
-`flatpak build-init` refuses it outright — *"Name segment can't start
-with 2"* (checked, not assumed; `appstreamcli validate` accepts the
-underscore form). Escaping the leading digit is the established fix, the
-same one that gives `7-zip.org` `org._7zip.…`.
-
-**What carries which name.**
-
-- **`2ksbox`** is the product: the installed commands (`2ksbox`,
-  `2ksbox-player`), the resource directories (`share/2ksbox`,
-  `lib/2ksbox`, `libexec/2ksbox`), the tarball, the window title.
-  `launcher/src/paths.rs::NAME`.
-- **`com._2ksbox.Launcher`** is the application: the desktop entry's
-  filename, the icon's name, the Wayland `app_id` a compositor matches
-  between the two, and — when 6b lands — the Flatpak and AppStream ID.
-  `launcher/src/paths.rs::APP_ID`. Verified end to end: an installed
-  launcher's window reports `app_id: com._2ksbox.Launcher`, exactly the
-  basename of the installed `com._2ksbox.Launcher.desktop`.
-
-**The data directory (the 2026-09-06 amendment).** The user's library —
-machines, `discs.toml`, shader profiles, a downloaded preset collection —
-is `~/.local/share/2ksbox`, and the runtime files are under
-`$XDG_RUNTIME_DIR/2ksbox`. Moving a real user's library is the reason
-this waited for a decision of its own rather than riding along with a
-packaging change; it is done by `launcher/src/paths.rs::data_dir`, once,
-the first time anything asks for the directory:
-
-- a **rename inside the same parent**, so it is atomic — there is no
-  window in which half a library exists in each place, which is what a
-  copy-then-delete migration would have to defend against;
-- **only when the new name does not exist**. Someone running two versions
-  side by side has both directories; they are told which one is in use
-  (a stderr line) and neither is touched, because merging two libraries
-  behind the user's back is not a thing a rename should decide;
-- **never fatal**. A failed move is a warning and an empty library, which
-  the user can fix with one `mv`; refusing to start would leave them with
-  no way to reach the UI that explains it.
-
-The runtime directory is not migrated: what lives there belongs to a
-running process, and a stale socket path outlives nothing.
+**The data directory.** The library is `~/.local/share/2ksbox`, runtime
+files under `$XDG_RUNTIME_DIR/2ksbox`. `paths.rs::data_dir()` migrates
+the old directory once: a **rename in the same parent** (atomic, never
+half a library in each place), **only when the new name is absent** (two
+versions side by side get a stderr line and neither is touched), and
+**never fatal** (a failed move is a warning and an empty library, fixed
+with one `mv`). The runtime directory is not migrated.
 
 ## ADR-012: Win98 gets the same display driver as XP, over one shared core (2026-09-06)
 
-**Decision.** Windows 98/Me gets a **native display driver for our
-`d3dpt-vga` adapter**, the way XP already has one (ADR-008, doc 15) —
-desktop modes from our table, a DirectDraw HAL, a Direct3D HAL feeding
-the same `d3dpt` protocol and the same host executor. And before that 9x
-driver is written, XP's driver is **split into an OS-independent core
-plus a thin per-OS layer**, with XP rebuilt on the core first. Track M10,
-design in doc 19.
+**Decision.** Win98/Me gets a native display driver for `d3dpt-vga` —
+desktop modes from our table, a DirectDraw HAL, a Direct3D HAL on the
+same protocol and executor. Before it is written, XP's driver is split
+into an **OS-independent core plus a thin per-OS layer**, XP rebuilt on
+it first. Track M10, design in doc 19.
 
-**Why a native driver.** The Glide + WineD3D stack Win98 uses today needs
-per-game files in per-game folders and cannot accelerate the desktop at
-all; the driver needs nothing next to a game, because 98's own
-`ddraw.dll` / `d3dim.dll` drive it. It is also the cheap half of a job
-already done: the DirectX 3–7 behaviour the 98 title matrix depends on —
-execute buffers, colour keys, palettized textures, 8 bpp modes, the flip
-chain's vertical blank — is exactly what M7 spent itself on for XP.
+**Why a driver.** The Glide + WineD3D stack needs per-game files and
+cannot accelerate the desktop; the driver needs nothing beside a game,
+because 98's own `ddraw.dll` / `d3dim.dll` drive it. And the DirectX
+3–7 behaviour 98 titles depend on (execute buffers, colour keys,
+palettized textures, 8 bpp, the flip chain's vertical blank) is what M7
+already built.
 
-**Confirmed by step 0 (2026-09-06).** Reading `vmdisp9x` and `vmhal9x`
-settled the premises rather than leaving them assumed: the per-call DDI
-structures are field-for-field identical to NT's (`D3DHAL_` vs
-`D3DNTHAL_DRAWPRIMITIVES2DATA`: same fourteen fields, same order) and the
-DP2 opcode values agree, so the walker is portable as it stands; the
-DirectDraw *object* structures are laid out differently, so the neutral
-descriptor is required rather than merely prudent; and DDI 8 works on 9x,
-so the whole of M7c is in scope. The one structural surprise is that on
-9x the DirectDraw/Direct3D HAL is a **ring-3 DLL in the game's process**,
-not part of the display driver — which is why the core may call no
-operating-system service at all: it is linked into a kernel-mode DLL on
-NT and a user-mode one on 9x. Details in doc 19.
+**Confirmed by step 0.** Reading `vmdisp9x` / `vmhal9x`: the per-call
+DDI structures match NT's field for field and the DP2 opcodes agree, so
+the walker ports as it is; the DirectDraw *object* structures differ, so
+a neutral surface descriptor is required; DDI 8 works on 9x, so all of
+M7c is in scope. On 9x the HAL is a **ring-3 DLL in the game's
+process**, which is why the core may call no OS service at all.
 
-**Why the core, and why first.** `d3dptdisp.c` is 3 708 lines of which
-roughly three quarters — the DP2 walker, the surface table and its format
-arithmetic, the caps tables, contexts and readback, the flip chain, the
-encoder and the debug log — states facts about *our adapter and our
-protocol*, not about NT. Copying that into a second tree would double
-every future protocol bump and guarantee the two drivers drift apart at
-the first bug fixed on one side only. The core must not see either OS's
-DirectDraw structures: the per-OS layer fills a neutral surface
-descriptor, so NT's `DD_SURFACE_LOCAL` and 9x's `DDRAWI_DDRAWSURFACE_LCL`
-stay behind the boundary even if they turn out to agree field for field.
+**Why the core, and first.** About three quarters of `d3dptdisp.c`
+(3,708 lines) states facts about our adapter and protocol, not NT; a
+second copy would double every protocol bump and drift at the first
+one-sided fix. The split lands alone and is proven a refactor by the M7
+suite being byte-identical across it; only then does the 9x layer start
+("a 9x bug on top of an unproven refactor is two bugs wearing one
+coat").
 
-**Sequencing.** The split lands on its own, proven to be a refactor by
-the M7 suite being byte-identical across it (the same golden BMPs, the
-same case counts, the same games drawing). Only then does the 9x layer
-start — a 9x bug on top of an unproven refactor is two bugs wearing one
-coat.
+**Unchanged.** The M4 DLL device stays the path wherever the driver is
+not installed. The adapter should need no change for 9x; if it does,
+that is a finding, not a licence to fork the register set.
 
-**What this does not change.** The M4 paravirtual device and its guest
-DLLs stay exactly as they are and remain the path wherever the driver is
-not installed. The adapter itself should need no change for 9x; if it
-does, that is a finding worth writing down rather than a licence to fork
-the register set.
-## ADR-013: hosts without Vulkan 1.3 keep the GL path; no second executor (2026-09-06, amended the same day and on 2026-09-21)
+## ADR-013: Below the Vulkan 1.3 floor, no DXVK device; no second executor (2026-09-06, amended the same day, 2026-09-21 and 2026-09-22)
 
-**Amended 2026-09-21:** on **Windows** such a host no longer falls back to
-WineD3D-in-guest as its only answer. It runs the same executor on the
-system's own `d3d9.dll` — ADR-007's second amendment has the shape, the
-four accommodations and the oracle. Point 3 below is untouched in the
-letter that matters: no second *executor* is built, the decoder and the
-protocol are the one set of code, and what changes is which D3D9 library
-that one executor calls. Point 2 stands: the launcher still probes and
-says what this host will do, now including "on this PC's own Direct3D 9".
+**Status.** Amended three times; read with them:
 
-**And point 1 fell the next day.** ADR-018 (2026-09-22) does for a Linux
-or macOS host below the floor what this did for a Windows one — the same
-executor on Wine's `d3d9.dll`, out of process because that is where Wine's
-lives — and **retires WineD3D-in-guest** with it, in M15's last step,
-after the host path is measured. The two amendments were written a day
-apart without knowledge of each other and are one answer for two
-platforms: below the floor the executor gets a real D3D9 from wherever the
-host keeps one, in process on Windows and under Wine elsewhere. Until that
-last step, everything this ADR says about the guest-side stack is still
-what a below-floor host runs.
+- *2026-09-06*: software Vulkan counts as available (below).
+- *2026-09-21*: a **Windows** host below the floor runs the same
+  executor on its own `d3d9.dll` (ADR-007's second amendment).
+- *2026-09-22*: a **Linux or macOS** host below the floor runs it on
+  Wine on the host, and WineD3D-in-guest is retired in M15's last step
+  (ADR-018). That supersedes points 1 and 3 below; point 2 stands.
 
-**Amended 2026-09-06:** software Vulkan is no longer refused. The first
-version of this decision turned lavapipe down on the user's behalf —
-reasoning that a software rasteriser competes for the host CPU that TCG
-is already using, so it could not be worth having. That is a judgement
-about someone else's hardware, and it is not ours to make: DXVK ranks a
-`CPU` device last but never excludes it, so the executor *does* run
-there, and whether the result beats WineD3D-in-guest on a given box is
-something only that box can answer. So a software driver now counts as
-available, with the warning that it will be very slow and the note that
-the other path may well be faster. Everything else below stands; the
-paragraphs affected say so where they used to say "refused".
+Until M15's last step, what this ADR says about the guest-side stack is
+still what a below-floor host with no Wine runs.
 
-**Decision.** The paravirtual Direct3D device (ADR-006) requires a
-**Vulkan 1.3 device** on the host, because its executor is DXVK
-(ADR-007) and DXVK asks for exactly that. Hosts that fail the bar are
-still supported machines — they simply do not get the device. What they
-get is the path that predates it: qemu-3dfx's OpenGL pass-through with
-the Glide wrappers and **WineD3D-in-guest**, which needs no Vulkan at
-all. Three things follow, and they are the decision:
+**Decision as written.** The paravirtual device needs a **Vulkan 1.3
+device** on the host, because DXVK asks for exactly that. Hosts below
+it are still supported and get the path that predates the device:
+qemu-3dfx's OpenGL pass-through with the Glide wrappers and
+**WineD3D-in-guest**, which needs no Vulkan.
 
-1. **WineD3D is not retired by M10.** Doc 04's fallback row and doc 08's
-   "WineD3D-in-guest stays the fallback and the DX7 path" stand *after*
-   Win98 has its own display driver (ADR-012). M10 step 5 compares the
-   two stacks and picks a default per host; it does not delete one.
-   The ISO keeps `WINED3D\`, and `SETUP /GAME`'s renames stay the
-   supported way to install it next to a game.
-2. **The launcher probes and says so** rather than letting a machine
-   have no 3D in silence.
-3. **No second executor is built** on the strength of this. Doc 14 P0b's
-   escape hatch — "the executor becomes host WineD3D-over-GL or a wgpu
-   translator; the guest side is unchanged either way" — stays open and
-   stays unbuilt.
+1. **WineD3D is not retired by M10**: the ISO's `WINED3D\` and `SETUP
+   /GAME`'s renames stay. *(Superseded by ADR-018.)*
+2. **The launcher probes and says so**, rather than a machine silently
+   having no 3D.
+3. **No second executor is built.** Doc 14 P0b's escape hatch (host
+   WineD3D over GL, or a wgpu translator) stays open and unbuilt.
+   *(ADR-018 takes the hatch — not a second executor, the one executor
+   on Wine's d3d9.)*
 
-**What the bar actually is.** Not "supports Vulkan": `third_party/dxvk`
-(v3.1) sets `DxvkVulkanApiVersion = VK_API_VERSION_1_3`
-(`src/dxvk/dxvk_instance.h`) and enforces it twice — as
-`VkApplicationInfo::apiVersion` at instance creation, which a pre-1.3
-loader answers with `ERROR_INCOMPATIBLE_DRIVER`, and per adapter in
-`DxvkDeviceCapabilities` (`dxvk_device_info.cpp`), which returns early on
-`properties.apiVersion < DxvkVulkanApiVersion` and leaves the adapter
-with no capabilities. Its own diagnosis for the second case is *"No
-adapters found … A Vulkan 1.3 capable setup is required."*
+**The bar exactly.** `third_party/dxvk` (v3.1) sets
+`DxvkVulkanApiVersion = VK_API_VERSION_1_3` and enforces it at instance
+creation (a pre-1.3 loader answers `ERROR_INCOMPATIBLE_DRIVER`) and per
+adapter (`dxvk_device_info.cpp`: "No adapters found … A Vulkan 1.3
+capable setup is required").
 
-**Why it is worth a decision.** The hosts that miss the bar are not
-antiques we can wave off; several of them are *good* boxes for this
-project, because a 2012-era x86 laptop runs KVM and is the right speed
-for the guests we target:
+**Who misses it.** Good hosts for this project, not antiques — a
+2012-era x86 laptop runs KVM at the right speed for these guests:
 
 | Host | Vulkan | Why it misses |
 |---|---|---|
-| Intel pre-Broadwell (HD 3000/4000, Sandy/Ivy Bridge) | none | Mesa's `anv` starts at Gen8 |
-| Nvidia Kepler (GTX 600/700) | 1.2 | stuck on the 470 legacy branch; NVK starts at Turing |
-| Nvidia Fermi, AMD TeraScale (HD 5000/6000) | none | no driver, either vendor's or Mesa's |
-| **macOS before 26; every Intel Mac** | none usable | ADR-007: MoltenVK is not a supported configuration and KosmicKrisp needs macOS 26 on Apple Silicon |
+| Intel pre-Broadwell (HD 3000/4000) | none | Mesa's `anv` starts at Gen8 |
+| Nvidia Kepler (GTX 600/700) | 1.2 | the 470 legacy branch; NVK starts at Turing |
+| Nvidia Fermi, AMD TeraScale (HD 5000/6000) | none | no driver |
+| macOS before 26; every Intel Mac | none usable | MoltenVK unsupported, KosmicKrisp needs 26 on Apple Silicon (ADR-007) |
 
-The last row is the one that makes this concrete rather than
-hypothetical: it is the Air before it was upgraded, and it is every Intel
-Mac permanently. Each of these hosts has OpenGL 2.1 or better, which is
-all the GL pass-through has ever wanted.
+All have OpenGL 2.1 or better, all the GL pass-through wants.
 
-**Software Vulkan is used, and warned about** (the amendment). Mesa's
-lavapipe is 1.3-conformant on any CPU and costs us no code, and DXVK
-takes it: its adapter sort ranks `CPU` behind discrete, integrated and
-virtual, but the list it ranks is the list it uses, and a lavapipe-only
-host gets an adapter like any other. It will be slow — a software
-rasteriser spends the host CPU that TCG needs for the guest, on the very
-hosts that have the least of it, and the acceptance titles are DX8 with
-hardware T&L and shaders rather than a 640×480 DX7 scene. That is a
-warning, not a veto: which of the two stacks wins on a given box is a
-measurement, and refusing to start the one that might win means nobody
-ever takes it. So the probe **counts** a `VK_PHYSICAL_DEVICE_TYPE_CPU`
-device, reports "available, in software (slow)", and says in the same
-breath that WineD3D-in-guest may well be faster and both are worth
-trying. Verified against the real driver: it presents `llvmpipe` at
-Vulkan 1.4.354 and is now taken rather than turned down.
+**Software Vulkan is used, and warned about** (the first amendment).
+The first version refused lavapipe on the user's behalf, a judgement
+about someone else's hardware. DXVK ranks a `CPU` device last but never
+excludes it, so the probe counts it, reports "available, in software
+(slow)", and says the other path may be faster. Which wins on a box is
+that box's measurement.
 
-**Alternatives rejected.** *Pinning an
-older DXVK for old hosts*: 1.10.3 was the last Vulkan-1.1 release, so
-this means carrying a second DXVK branch and its own patch queue for
-strictly fewer d3d9 features — the patch-queue discipline of ADR-007 is
-affordable once, not twice. *Lowering DXVK's own bar*: the 1.3 features
-are load-bearing in current DXVK, unlike the one-line geometry-shader
-patch KosmicKrisp needed. *Building the GL executor now*: it is a second
-implementation of D3D9 semantics, and nothing yet says how many users
-are behind the bar — build it when that is measured, not on a guess.
+**Rejected.** Pinning DXVK 1.10.3 (the last Vulkan 1.1 release) for old
+hosts: a second DXVK branch and patch queue for fewer features. Lowering
+DXVK's bar: the 1.3 features are load-bearing. Building a GL executor
+now: a second implementation of D3D9 semantics on a guess.
 
-**Consequences.** The Win98 3D matrix stays two-stacked for as long as
-M10 runs, which is also what gives M10 its control measurement.
-`launcher-core/src/host_gpu.rs` is the probe: it loads the Vulkan loader
-dynamically (no link-time dependency, an absent `libvulkan` is a report
-and not a crash), asks for the loader version, creates an instance at
-`min(loader, 1.3)` with `VK_KHR_portability_enumeration` when it is
-offered — the same opt-in DXVK makes, without which a Vulkan-on-Metal
-driver is invisible — and classifies every physical device by type and
-`apiVersion`.
+**Consequences.** `launcher-core/src/host_gpu.rs` is the probe: it loads
+the Vulkan loader dynamically (no libvulkan is a report, not a crash),
+creates an instance at `min(loader, 1.3)` with
+`VK_KHR_portability_enumeration` when offered, and classifies every
+device by type and `apiVersion`. `launcher --host-check`
+(`launcher_core::cli`) prints the report and exits non-zero only when
+there is no Direct3D at all — software Vulkan, and later Wine, are yes.
+The form's sentence is shared-model text, never a front end's own:
+`wizard::Form::d3d9_note()` under the Direct3D picker, with
+`graphics_note()` kept for a front end without that picker; it is orange
+only for the software case. The `host-check` check in `scripts/test.sh`
+holds it. QEMU's backstop is unchanged: with no executor the device
+reports it and the machine boots normally.
 
-It is said in two places, because a verb nobody types is not the promise
-this ADR makes. `launcher --host-check` (`launcher_core::cli`, so both
-binaries answer it identically — ADR-014) prints the whole report and
-exits non-zero **only when the device is unavailable**: a software
-driver is slow, not absent, and a script asking "can this host do 3D"
-should hear yes. And the wizard says the one-line version under the
-acceleration row, for Windows machines only — DOS has no Direct3D to
-place. That sentence is `wizard::Form::graphics_note()`, in the shared
-model with every other note (ADR-014), so the egui build, the Qt build
-and the C ABI cannot end up telling someone different things about the
-same host; the form takes the verdict once when it opens, like
-`have_kvm`, because a probe is a whole `VkInstance` and no window should
-make one per frame. It is a warning — orange — only for the software
-case, the one that runs and disappoints; a host with no Vulkan at all
-gets a plain note, because nothing is wrong and every machine still
-runs. The `host-check` check in `scripts/test.sh` holds all of it to
-what is true on every host: no Vulkan driver must mean "unavailable", a
-non-zero exit and a pointer at WineD3D; a software driver must mean
-available, exit zero and the word "slow"; and any report must name both
-the loader and the bar. QEMU's own answer is unchanged
-and remains the backstop: `d3dpt_exec_load.c` already boots a machine
-normally and reports "no executor" when the library or the Vulkan device
-is missing.
+## ADR-014: One launcher library; front ends draw it (2026-09-06)
 
-## ADR-014: two launcher front ends over one library; the toolkit gets only the widgets (2026-09-06)
+**Status.** The line between core and front end stands. "Two maintained
+front ends" was ended by ADR-017; which one ships is ADR-015.
 
 **Decision.** The launcher is **`launcher-core`** plus front ends that
-draw it. `launcher/` (egui/eframe) and `launcher-qt/` (Qt 6 / QML through
-cxx-qt) are both maintained; `launcher-capi/` is the same core as a C
-ABI, for a front end in another language. The line between core and front
-end is drawn at *behaviour*, not at data: a front end owns the widgets,
-when to redraw, the file dialog, and how it confirms something
-destructive. **Everything else is the core** — including each window's
-state machine, its derived labels, and the sentences it prints.
+draw it (then `launcher/` on egui and `launcher-qt/` on Qt 6 / QML via
+cxx-qt); `launcher-capi/` is the same core as a C ABI. A front end owns
+the widgets, when to redraw, the file dialog and how it confirms
+something destructive. **Everything else is the core** — each window's
+state machine, its derived labels, and the sentences it shows.
 
-**Why the line is there and not at the file formats.** It was at the file
-formats, from 2026-09-06 until later the same day: the Qt build
-`#[path]`-included ten toolkit-free modules from `launcher/src/` and
-rewrote everything else. That arrangement proves a real thing (the bundle
-format, the library, the shelf and the subprocess handling are portable —
-they compiled unchanged under a second toolkit) and it is not enough,
-because a window's *behaviour* is not a widget. Four divergences had
-already accumulated, none of which a compiler could see:
+**Why at behaviour, not at file formats.** For a few hours the Qt build
+shared only the toolkit-free modules, and four divergences had already
+appeared that no compiler could see: its wizard had no processor field,
+so a DOS machine came out unthrottled; its network checkbox did not
+follow the family; the note under it said "Windows won't see a card" on
+DOS machines; and a new shader profile kept its overrides in one build
+and dropped them in the other. Each was a rule in a `show()` function,
+copied once. The fix is having nowhere to put the second copy.
 
-- the Qt wizard had **no processor, floppy or boot-order field**, so a
-  DOS machine created there came out unthrottled — and a DOS machine's
-  processor is the setting that decides whether an era game runs at all
-  (doc 06);
-- its networking checkbox **did not follow the family**, so it and
-  `Machine::reference` disagreed about a new DOS machine;
-- the line under that checkbox said `Windows won't see a card`, on
-  machines that may run DOS;
-- and saving a *new* shader profile **dropped the parameter overrides**
-  in the egui build and kept them in the Qt build. Exactly one of those
-  was correct, and it was not the older one.
+**What it buys.** Every toolkit-free debug verb is `launcher_core::cli`,
+so all callers answer `--paths`, `--discs`, `--wizard-new`,
+`--preview-shader` and the rest with one implementation. `launcherx`
+(`launcher-core/src/bin/launcherx.rs`, 2026-09-07) is `cli::run` alone:
+the test suite drives the models through it with no toolkit built.
 
-Each is the same shape: a rule that lived in a `show()` function, copied
-once and then maintained in one copy. The fix is not discipline, it is
-having nowhere to put the second copy.
+**Rejected.** A Rust-only core: `launcher-capi` is a thin C ABI (opaque
+handles, index-addressed rows, caller-owned strings) that Swift can
+import directly; `launcher-capi/examples/smoke.c` (the `capi` check) is
+a working miniature front end that fails when a model's default
+changes.
 
-**What it costs.** Not fewer lines: the two front ends together lost
-2,171 while the core gained 2,469 of new shared modules on top of the
-1,966 that merely moved. The core is bigger than the sum of what it
-replaced because it is documented once and has an API — `ram_note()`,
-`choose_family()` — where the duplicated versions poked fields inline.
-The saving is that there is one place to change any of it, and one place
-to read it.
+**Consequences.** Nothing a second front end could get differently goes
+in a front end: not a default that follows the family, not a note under
+a checkbox, not a combo box's labels. `launcher-qt` has its own cargo
+workspace, so a root `cargo build` never needs Qt 6.
 
-**What it buys beyond that.** Every toolkit-free debug verb is
-`launcher_core::cli`, so both binaries answer `--paths`, `--discs`,
-`--snapshots`, `--wizard-new`, `--preview-shader` and the rest with the
-same code — where the Qt build previously reimplemented two of them and
-lacked twenty. And `--preview-shader` on the two binaries renders
-byte-identical PNGs, which is a check that they really are linking one
-implementation rather than two that agree today.
+## ADR-015: The Qt front end is the one the packages ship (2026-09-07)
 
-**And a third caller, with no toolkit at all** (2026-09-07).
-`launcher-core/src/bin/launcherx.rs` is `cli::run` and nothing else, ~20
-lines. It exists because the debug verbs are how the launcher is tested
-— `scripts/test.sh` invokes them 62 times — and until then the suite got
-them out of the egui binary, which meant that every build on every host
-paid for eframe and its ~70 exclusive crates (accesskit, harfrust, icu)
-to answer `--print-args`. With `launcherx` the suite needs neither
-toolkit, and `launcher` could leave the root workspace's
-`default-members`: `scripts/build.sh` builds the default members and then
-`cargo check --release --workspace`, so the front end ADR-015 keeps
-maintained still cannot rot, and no build links a 25 MB binary that no
-packager installs. The verbs `launcherx` deliberately cannot answer are
-the two that *are* a toolkit — `--pick-file` / `--pick-folder`, and the
-`--diag-*` frame grabs.
+**Status.** Accepted. Its "keep `launcher/` as an unshipped second
+front end" was reversed by ADR-017.
 
-**Rejected: pick one toolkit.** The 2026-09-06 spike's finding stands —
-nothing justifies switching to Qt (egui is pure Rust, one `cargo build`
-on every platform, and its shader preview is a texture id where Qt needs
-a CPU readback), and nothing rules it out (real windows, native file
-dialogs, and a headless screenshot that is four lines of QML against
-~150 of synthetic-input plumbing). Keeping both is what makes the core's
-boundary *testable* instead of aspirational: a rule that only one front
-end can express is a rule in the wrong place, and with a second front end
-that shows up as a missing widget rather than as a design opinion.
+**Decision.** `launcher-qt` is **the** launcher: every packager installs
+it as `2ksbox` — Linux, the Flatpak, macOS, Windows.
 
-**Rejected: a Rust-only core.** A front end that is not Rust would
-otherwise need a bridge crate per language. `launcher-capi` is a thin C
-ABI — opaque handles, index-addressed rows, caller-owned strings — and
-Swift imports a C header directly, so a native macOS front end is a view
-over the same models rather than a third implementation of the launcher.
-It adds no behaviour, and `launcher-capi/examples/smoke.c` (the `capi`
-check in `scripts/test.sh`) is a working miniature front end that fails
-when a model's defaults change, exactly as the two GUIs would.
+**Why one, and why Qt.** A product has one launcher, one set of
+screenshots, one name in a bug report; shipping both asks users a
+question they cannot answer. The front ends were equal on behaviour by
+construction, so the tie went to what a shipped one needs beyond
+drawing: real windows and the platform's own file dialog; decorations,
+HiDPI, colour scheme, accessibility and input methods as Qt's job; it
+already ran as the Windows launcher (M11, after the `std::call_once`
+emutls fix); and it idles, where egui drew every 16 ms.
+
+**Costs.** The Linux tarball depends on the host's `qt6-base` +
+`qt6-declarative` (bundling ~38 MB of Qt that every distribution ships
+was rejected; the Flatpak is for a host without Qt). The Flatpak moved
+to `org.kde.Platform` 6.10. macOS and Windows carry Qt themselves. The
+shader preview does a CPU readback through a second wgpu device (doc
+07; a `QQuickRhiItem` is the fix).
 
 **Consequences.**
 
-- Nothing that a second front end could get differently goes in a front
-  end: not a default that follows the family, not a note under a
-  checkbox, not a combo box's labels.
-- `launcher-qt` declares its own workspace, so `cargo build` at the root
-  never needs Qt 6 development files (the Mac, CI, the Flatpak). The
-  `launcher-core` path dependency crosses that boundary; Qt does not come
-  back the other way.
-- `launcher-capi` is a workspace member but not a *default* one: it
-  builds a cdylib and a staticlib of the whole launcher, which nobody
-  needs unless they are writing such a front end.
-- Packaging still ships the egui build (ADR-011's `bin/2ksbox`). Shipping
-  the Qt one would mean moving the Flatpak from `org.freedesktop.Sdk` to
-  `org.kde.Platform` and carrying Qt in the AppImage/macOS/Windows
-  builds — a packaging decision, not a code one, and not taken here.
-  **Superseded by ADR-015 (2026-09-07): that decision was taken, and the
-  Qt build is the one every package installs.** The rest of this ADR
-  stands: both front ends are still maintained, and the core still owns
-  every rule. **Amended by ADR-017 (2026-09-13): the egui front end is
-  deleted; the core still owns every rule.**
+- `scripts/build.sh` has a `qt` stage in its default set, over its own
+  workspace; a host with no Qt 6 builds everything else and can roll no
+  package (the summary and `scripts/test.sh` say so).
+- Every packager opens a **real window offscreen**
+  (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`) and requires a PNG:
+  Qt resolves its platform plugin and QML modules by name at run time,
+  invisible to every import-table check.
+- On macOS `macdeployqt` runs before our dylib closure, with
+  `-qmldir=launcher-qt/qml` (our QML is a Qt resource, so the scanner
+  sees nothing without it).
+- The Flatpak's offline `cargo-sources.json` covers both lock files
+  (`scripts/gen-flatpak-cargo-sources.sh`).
 
-## ADR-015: the Qt front end is the one the packages ship (2026-09-07)
+## ADR-016: The Voodoo 2 is emulated, beside the Glide pass-through, not instead of it (2026-09-12)
 
-**Decision.** `launcher-qt` (Qt 6 / QML through cxx-qt) is **the**
-launcher of the product: it is what every packager installs as
-`bin/2ksbox` / `2ksbox.exe` / `2ksbox.app`, on Linux, in the Flatpak, on
-macOS and on Windows. `launcher/` (egui) stays a **maintained second
-front end that no package installs** — ADR-014's arrangement is unchanged
-in every other respect, and the reason for keeping it is unchanged too.
+**Decision** (user decision). 2ksbox carries a real 3dfx Voodoo 2 on the
+PCI bus: 86Box's emulation (PCem's rasterizer, 86Box's x86-64 and ARM64
+recompilers; GPL-2.0+), vendored **verbatim** under `voodoo/` and
+wrapped as `-device voodoo2` through a shim of 86Box's platform headers
+— no fork, no edits to the vendored files (doc 21). The planned first
+step (measure Diablo II in 86Box) was overtaken by doing the port and
+measuring our own device.
 
-**Why one of them had to become the shipped one.** ADR-014 kept both
-because the second view is what makes the core's boundary testable. It
-deliberately did not say which one a stranger gets, and that is a
-question a package has to answer: a product has one launcher, its
-screenshots show one launcher, and a bug report names one launcher. Two
-shipped front ends would double the surface every packager, every
-platform note and every support answer has to carry, for a choice no user
-asked to make.
+**What it is for.** Completeness: the guest runs 3dfx's own drivers and
+the game's own Glide, so Glide 3, LFB tricks and statically linked
+Glide 2 come for free, and there is no translation for a game to find a
+hole in.
 
-**Why the Qt one.** They are equal on behaviour by construction (the core
-owns it), so the tie is broken by what a *shipped* front end has to do
-beyond drawing:
+**What it does not replace.** qemu-3dfx's Glide half (`hw/3dfx` +
+OpenGLide) stays as the fast path — the host GPU draws, where the chip
+is a software rasterizer on host cores — and the machine form picks.
+Its OpenGL half (`hw/mesa`) is what GLQuake, Quake II, Half-Life GL and
+wglgears use; a Voodoo 2 reaches those only through 3dfx's MiniGL at
+rasterizer speed. Never propose retiring `hw/3dfx`, `hw/mesa` or
+OpenGLide on the strength of this device. Direct3D (docs 14/15) is a
+third thing.
 
-- **Real windows, and a native file dialog.** `QtQuick.Dialogs` is the
-  platform's own picker on all three systems; the egui build needs `rfd`
-  because egui has none, and its secondary screens are panels inside the
-  one window rather than windows a desktop can manage.
-- **The desktop integrations a launcher is judged by** — window
-  decorations, HiDPI, the system colour scheme, accessibility, input
-  methods — are Qt's job and not ours. They are exactly the things that
-  are nobody's fault and everybody's complaint.
-- **It is already the Windows package's launcher** (M11, 2026-09-06) and
-  the port survived that: `std::call_once` across a libstdc++ DLL
-  boundary was the last thing between it and `main`, and it was fixed
-  rather than worked around.
-- **It idles.** A `Timer` per thing being watched, off when there is
-  nothing to watch, against a frame every 16 ms whether or not anything
-  changed. On a launcher that sits open beside a running machine that is
-  the honest difference.
-
-**What it costs, plainly.** Qt is not in the binary. The Linux tarball
-gains a runtime dependency on `qt6-base` + `qt6-declarative`, the Flatpak
-moves from `org.freedesktop.Platform` 25.08 to `org.kde.Platform` 6.10
-(the same freedesktop base, so nothing else about that build changes),
-and the macOS and Windows packages carry Qt themselves — frameworks or
-DLLs, the platform plugin and the QtQuick QML module tree, none of which
-is in a load command. The one place the Qt build is *worse* also comes
-along: the shader preview goes through a second, windowless wgpu device
-and a CPU readback to a temp BMP, where eframe hands egui a live device
-and the frame is a texture id. That is doc 07's "fixable, in C++"
-(`QQuickRhiItem`), and it is now on the shipped path, which is the reason
-to fix it.
-
-**Why `launcher/` is kept.** Nothing about ADR-014's argument depended on
-which front end shipped. A rule that only one front end can express is a
-rule in the wrong place, and a second view is how that shows up as a
-missing widget instead of a design opinion — four such divergences were
-found that way. It is also the honest fallback for a host where Qt is a
-problem, and it is where the headless `--diag-*-frame` verbs live. What
-changes is that it is not installed by anything.
-
-**Rejected: ship both, side by side.** A package with `2ksbox` and
-`2ksbox-egui` in it asks the user a question they have no way to answer,
-doubles what every platform note has to say, and makes "which one were
-you running?" the first line of every bug report.
-
-**Rejected: retire `launcher/`.** It costs ~1,700 lines of view code that
-the compiler checks on every build, and it is the only thing that makes
-the core's boundary a fact rather than an intention. **Reversed by
-ADR-017 (2026-09-13): `launcher/` is deleted.**
-
-**Rejected: bundle Qt in the Linux tarball.** ~38 MB of libraries, QML
-modules and plugins that every distribution already ships — and a copy of
-our own would still have to agree with the host's Wayland, OpenGL and
-fontconfig. The Flatpak is the build for a host that has no Qt.
-
-**Consequences.**
-
-- `scripts/build.sh` grows a `qt` stage, and it is in the default set. It
-  is still a separate stage over a separate cargo workspace: a plain
-  `cargo build` at the root must never start needing Qt 6, which is what
-  lets the rest of the tree build on a host without it.
-- A host with no Qt 6 can build everything except the launcher, and
-  therefore cannot roll a package. `build.sh` says so in its summary and
-  `scripts/test.sh` skips the `package` check with the reason.
-- Every packager gained a check that `--paths` could never make: the
-  staged launcher opens a **real window offscreen**
-  (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`, doc 07) and has to
-  produce a PNG. Qt resolves its platform plugin and its QML modules by
-  name at run time, out of directories no import table mentions, so a
-  package can pass every other check and still open nothing.
-- The macOS bundle is deployed by `macdeployqt` before our own dylib
-  closure runs, and `-qmldir=launcher-qt/qml` is not optional: our QML is
-  compiled into the binary as a Qt resource, so the import scanner reads
-  nothing without it and deploys no modules.
-- The Flatpak's offline `cargo-sources.json` now covers **both** lock
-  files (the workspace's and `launcher-qt`'s), merged into one vendor
-  directory by `scripts/gen-flatpak-cargo-sources.sh`.
-
-## ADR-016: the Voodoo 2 is emulated, beside the Glide pass-through, not instead of it (2026-09-12)
-
-**Decision.** 2ksbox carries a real 3dfx Voodoo 2 on the PCI bus:
-86Box's emulation of the chip (PCem's rasterizer, 86Box's x86-64 and
-ARM64 recompilers; GPL-2.0-or-later), vendored verbatim under `voodoo/`
-and wrapped as the QEMU device `voodoo2` through a shim of 86Box's
-platform headers — no fork, no edits to the vendored files (doc 21).
-The user decided this on 2026-09-12; the decision procedure of
-2026-09-10 (measure Diablo II in 86Box first) was overtaken by doing the
-port and measuring on our own device.
-
-**What it is for.** Completeness: the guest runs 3dfx's own drivers
-and the game's own `glide2x.dll` / `glide3x.dll` / `GLIDE2X.OVL`, so
-Glide 3, every LFB trick, statically linked Glide 2 and 3dfx's released
-Glide source as a driver all come for free, and a game cannot find a
-hole in a translation because there is none.
-
-**What it does not replace.** qemu-3dfx has two halves. Its Glide half
-(`hw/3dfx`, OpenGLide on the host) is what the chip stands beside: a
-Glide title then has the wrapper for speed (the host GPU draws) and the
-chip for fidelity (a software rasterizer on host cores, at Voodoo 2
-resolutions and formats), and the machine form picks. Its OpenGL half
-(`hw/mesa`, the guest `opengl32` wrapper) is what GLQuake, Quake 2,
-Half-Life in GL mode and wglgears use, and a Voodoo 2 reaches those only
-through 3dfx's period MiniGL/ICD at rasterizer speed — so the
-pass-through stays for OpenGL titles and for hosts where the rasterizer
-does not keep up. Never propose retiring `hw/3dfx`, `hw/mesa` or
-OpenGLide on the strength of this device; the Direct3D path (docs 14/15)
-is a third thing and untouched.
-
-**Costs accepted.** Every register write is an MMIO trap on the one vCPU
-thread with a BQL round trip (86Box's CPU core calls the handler
-directly); the two known mitigations — the command-FIFO window as RAM,
-the region without the BQL under a lock of our own — are steps on the
-track, taken if the profile asks. 86Box's `fatal()` contract (a
-malformed command-FIFO packet aborts the process) is kept until the
-device is seen to work with a real driver, then hardened. SLI and the
+**Costs accepted.** Every register write is an MMIO trap with a BQL
+round trip. The mitigations were to be taken if the profile asked: the
+command FIFO as guest RAM has been (`ramfifo=on`, doc 21 §9); the
+BQL-free region has not, since what still traps is mostly status polls.
+86Box's `fatal()` returns in our shim rather than aborting. SLI and the
 Voodoo Graphics type are not offered.
 
-## ADR-017: the egui front end is retired (2026-09-13)
+## ADR-017: The egui front end is retired (2026-09-13)
 
 **Decision** (user decision). `launcher/`, the egui/eframe front end, is
-deleted. `launcher-qt` is the launcher's only front end;
-`launcher-core` keeps every rule it held; `launcher-capi` (and its
-`smoke.c`) and `launcherx` stay as the core's other callers. This
-reverses ADR-015's "Rejected: retire `launcher/`" and ends ADR-014's
-"two maintained front ends". ADR-014's line between core and front end
-is unchanged.
+deleted. `launcher-qt` is the only front end; `launcher-core` keeps
+every rule; `launcher-capi` (with `smoke.c`) and `launcherx` remain as
+the core's other callers. Reverses ADR-015's "keep `launcher/`" and
+ends ADR-014's two front ends; ADR-014's line is unchanged.
 
-**Why.** ADR-015 kept the egui build as the second view that makes the
-core's boundary testable. Since then it was installed by nothing,
-opened by no scripted check, and kept alive only by `cargo check`, so a
-rule that it expressed differently would never have been noticed. What
-it still cost was real: ~2,300 lines of view code, ~70 crates in the
-root lock file that only it used (eframe, accesskit, harfrust, icu),
-and a Flatpak that vendored all of them without compiling any. The
-boundary stays checked by the callers that remain: `launcherx` drives
-the models through every verb in `scripts/test.sh`, and `smoke.c` is a
-second front end in C that fails when a model's default changes.
+**Why.** Installed by nothing, opened by no check and kept alive only by
+`cargo check`, it no longer proved the boundary, while costing ~2,300
+lines, ~70 crates only it used (eframe, accesskit, harfrust, icu) and a
+Flatpak vendoring all of them. `launcherx` through `scripts/test.sh` and
+`smoke.c` as a C front end keep the boundary checked.
 
-**What went with it.** The `--diag-*-frame` verbs and `--pick-file` /
-`--pick-folder`, all of which lived in the egui binary; the Qt build's
-offscreen screens (`LAUNCHER_QT_SCREEN`, doc 07) are the headless frame
-grabs now. `launcher-core` lost the API only egui called: `Preview::new`
-on a borrowed device, `output_view`, `device`/`queue`, the first-run
-dialog's button words, and the shelf's immediate-mode `discs_mut` /
-`mark_dirty` / `resort`.
+**What went with it.** The `--diag-*-frame` and `--pick-file` /
+`--pick-folder` verbs (the Qt build's offscreen screens,
+`LAUNCHER_QT_SCREEN`, are the headless frame grabs now), and the core
+API only egui called.
 
 **Consequences.** `launcher-capi` is the root workspace's one
 non-default member, and `scripts/build.sh`'s `cargo check --workspace`
-is there for it alone. `Cargo.lock`, `packaging/flatpak/cargo-sources.json`
-and `THIRD-PARTY-NOTICES.md` were regenerated without the egui crates.
-If a second native front end is ever wanted it goes over
-`launcher-capi` or `launcher-core`, not a revived `launcher/`.
+exists for it. `Cargo.lock`, `cargo-sources.json` and
+`THIRD-PARTY-NOTICES.md` were regenerated. A second native front end
+goes over `launcher-capi` or `launcher-core`, never a revived
+`launcher/`.
 
-## ADR-018: below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest is retired (2026-09-22)
+## ADR-018: Below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest is retired (2026-09-22)
 
-**Decision.** On a Linux or macOS host that fails DXVK's Vulkan 1.3
-bar (ADR-013's table: pre-Broadwell Intel, Kepler and older, TeraScale,
-macOS before 26 on Apple Silicon), the paravirtual Direct3D device
-(ADR-006) keeps running — the **same** guest driver, the **same**
-protocol, the **same** executor — with the executor's D3D9 supplied by
-**Wine's `d3d9.dll` (WineD3D over OpenGL) on the host**, the way the
-executor ran on Windows' own d3d9 on a Windows host before 2026-09-17.
-Because Wine's d3d9 exists only inside a Wine process, the executor
-runs there out of process: the Windows build of `d3dpt_exec.dll` inside
-a small host program under Wine, the command window and VRAM shared
-with QEMU as one file-backed mapping, the five calls of
-`d3dpt_exec.h` carried over the child's stdio. In-process DXVK stays
-the first choice wherever a Vulkan 1.3 device exists; Wine is the
-second; `D3DPT_STATUS_NO_EXEC` is what a host with neither still gets.
+**Decision** (user decision: "running an old unsupported Wine version in
+the guest is bad UX and doesn't make sense"). On a **Linux or macOS**
+host below DXVK's Vulkan 1.3 bar (ADR-013's table), the paravirtual
+device keeps running — same guest driver, same protocol, same executor —
+with the D3D9 supplied by **Wine's `d3d9.dll` (WineD3D over OpenGL) on
+the host**. Wine's d3d9 exists only inside a Wine process, so the
+executor runs out of process: the Windows build of `d3dpt_exec.dll` in a
+small host program under Wine, VRAM and the command window shared with
+QEMU as one file-backed mapping, the five calls of `d3dpt_exec.h` over
+the child's stdio. Order: in-process DXVK wherever Vulkan 1.3 exists;
+then Wine; `D3DPT_STATUS_NO_EXEC` for a host with neither. A Windows
+host's second choice is its own `system32\d3d9.dll` in process
+(ADR-007's second amendment, written a day earlier without knowledge of
+this one): one answer for two platforms. Design: doc 14 §"The executor
+on Wine, in another process"; steps: `docs/tracks/m15-wine-executor.md`.
 
-**On a Windows host the second choice is not Wine** but that host's own
-`system32\d3d9.dll`, in process, which ADR-007's second amendment
-(2026-09-21 — written a day before this one and without knowledge of it)
-already implements, tests on both backends and wires to a picker. This
-ADR is the same idea for the two platforms that have no system Direct3D 9
-to borrow, and the order below the floor is therefore: the system's own
-on Windows, Wine's under a child process on Linux and macOS.
-Track `docs/tracks/m15-wine-executor.md` holds the design and the
-steps; this ADR holds the decision and its reasons.
+**WineD3D-in-guest is retired**: the ISO's `WINED3D\` folders, `SETUP
+/GAME 4`/`5`, `/I 7` with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS`
+switcher, the wine9x build, and the launcher's advice pointing at them.
+**Sequenced, not immediate**: M15's last step, in one commit, once the
+host path has drawn the reference scene within the rig budget and run a
+real game (measure the replacement, then delete). Until then a
+below-floor host keeps what it has.
 
-**WineD3D-in-guest is retired** as the fallback: the `WINED3D\` folders
-on the guest-tools ISO, `SETUP /GAME 4`/`5`, `/I 7` with `D3DPRE.EXE`
-and the `DDRAWME`/`DDSYS` switcher, the wine9x build, and the launcher's
-advice pointing at them. The removal is sequenced, not immediate: it is
-the track's last step, taken in one commit once the host-side path has
-drawn the reference scene within the rig budget and run a real game
-(the rule M10 used — measure the replacement, then delete). Until then
-a below-floor host keeps what it has.
+**Why.** UX, entirely: the fallback asked the user to copy a 2015 Wine
+(1.7.55) beside every game from a CD folder, with a README naming which
+folder — an unsupported copy of what the host runs current and
+maintained. Doc 19 §42–§43's per-session and system-wide workarounds
+exist only because the DLLs were in the guest. On the host, whether the
+executor renders through Vulkan or GL is the host's business. It was
+cheap enough to decide without ADR-013's "measure the users first":
 
-**Why.** The user's reason is UX, and it is the whole of it: the
-fallback asked the user to copy a 2015 Wine (wine9x, Wine 1.7.55) next
-to every game, out of a folder on a CD, with a README saying which of
-two folders that game wanted — a per-game install of an unsupported
-version of the very thing the host runs current, packaged, maintained
-copies of. Every part of that was a workaround for the executor
-needing Vulkan: doc 19 §42's "a per-game WineD3D folder only reaches
-the session's first DirectDraw program" and §43's system-wide switcher
-with a login helper exist only because the DLLs were in the guest.
-Putting WineD3D on the host removes the install, the README, the
-switcher, the helper and the version — the guest sees the display
-driver it always sees, and whether the host renders through Vulkan or
-GL is the host's business, as it should have been.
+- the executor already ran on foreign d3d9s (Microsoft's, then
+  `dxvk_d3d9.dll`), and `package-windows.sh` already ran its host test
+  under Wine;
+- its API was built for a process boundary: five calls, four callbacks,
+  every pointer the window or VRAM;
+- Wine's d3d9 does not refuse what Windows' did (draws outside a scene,
+  a device with no window).
 
-Three things made it cheap enough to decide now rather than "when the
-number of users behind the bar is measured" (ADR-013's condition):
-- **The executor already runs on a foreign d3d9.** It is written to the
-  `IDirect3D9` interface and loads its library by name; on Windows it
-  ran on Microsoft's d3d9, then on DXVK's `dxvk_d3d9.dll`;
-  `package-windows.sh` already runs its host test under Wine in the
-  cross container. The Wine back end is a library name and a hidden
-  window, not a port.
-- **Its API was built for a process boundary.** Five calls and four
-  callbacks over a shared window (`d3dpt_exec.h`: "the QEMU device
-  dlopens it, so QEMU stays C and the protocol evolves without a QEMU
-  rebuild"), with every pointer either the window or VRAM. Sharing
-  those two regions as a file and carrying the calls over a pipe is a
-  few hundred lines on each side and touches no record.
-- **Wine's d3d9 accepts what Windows' refused.** The two reasons the
-  Windows package left Microsoft's d3d9 — draws outside a scene and a
-  device with no window — are not WineD3D's rules: current
-  `dlls/d3d9/device.c` checks `in_scene` only for depth-stencil blits
-  and `EndScene` nesting, and a hidden window is an ordinary window.
+**Supersedes** ADR-013's point 1 (by the sequenced retirement) and
+point 3 (this takes doc 14 P0b's hatch — not a second executor but the
+one executor on a second D3D9, so "a second implementation of D3D9
+semantics" does not apply). ADR-013's point 2 gains a third answer,
+"Direct3D through Wine on the host", and "install Wine" where there is
+none. The Vulkan 1.3 floor stays the floor of the DXVK back end; the
+GL and Glide paths are untouched.
 
-**What this supersedes.** ADR-013's point 3 ("no second executor is
-built") — this is not a second executor, it is the one executor on a
-second D3D9, but the escape hatch doc 14 P0b left open ("the executor
-becomes host WineD3D-over-GL") is exactly what is being taken, and
-ADR-013's reason for leaving it shut (a second implementation of D3D9
-semantics) does not apply to running Wine's. ADR-013's point 1
-("WineD3D is not retired") is superseded by the sequenced retirement
-above. Its point 2 (the launcher probes and says so) stands, with a
-third answer: "Direct3D through Wine on the host", and "install Wine"
-where there is none. The Vulkan 1.3 floor stands as the floor of the
-*DXVK* back end, which is what it always was; ADR-007's choice of DXVK
-as the executor stands where DXVK runs. The OpenGL pass-through and
-the Glide paths (docs 12 and 21) are untouched: they were never
-Direct3D and never needed Vulkan.
+**Rejected.** A native wined3d `.so` (there is none; it is a PE module).
+An executor of our own over GL/Metal/wgpu (a second D3D9 implementation,
+which WineD3D is, twenty years in). Native arm64 Wine on macOS
+(`winemac.drv` gets no OpenGL there), so the Wine process is x86_64
+under Rosetta, running the existing x86_64 cross build.
 
-**Alternatives rejected** (with the track's longer list): a native
-port of wined3d as a Unix library — there is none, `wined3d.dll` is a
-PE module over `opengl32.dll` and Wine's PE/Unix split does not give
-it a `.so`; an executor of our own over GL/Metal/wgpu — ADR-013's
-"second implementation of D3D9 semantics", which WineD3D is, twenty
-years in; native arm64 Wine on macOS — its `winemac.drv` gets no
-OpenGL under native arm64 today (macOS hands the GL compatibility
-renderer only to Rosetta-translated processes), so the Wine process is
-x86_64 under Rosetta, and the executor PE is the x86_64 cross build
-that already exists.
+**Consequences.** Wine is a *runtime* companion found by the player's
+own rule and reported by `player --companions` and `launcher --paths`;
+no package ships a Wine, the form's note says which to install, and the
+Flatpak's shape is decided in M15's last step. mingw-w64 builds the PE
+pair (`scripts/build-d3dpt-exec.sh --wine`). The A/B on a host with both
+back ends is `-global d3dpt-vga.exec=wine`; `no-exec=on` still means no
+executor at all.
 
-**Consequences.** Wine becomes a *runtime* companion of the native
-packages, found (like the Glide wrapper and the executor) by the
-player's own rule and reported by `player --companions` and `launcher
---paths`; the packages bundle none at first and the wizard says what
-to install, with the bundling of a trimmed Wine and the Flatpak's shape
-(extension or from-source) decided by the track's step 6 from what step
-5 measured. mingw-w64 becomes a build dependency of the native stack
-for the PE pair, with a checked-in build as the Flatpak's way out (the
-`firmware/vgabios-*.bin` precedent). The A/B on a host that has both
-back ends is `-global d3dpt-vga.exec=wine`; `no-exec=on` keeps meaning
-"no executor at all", which after this is the host with no Wine.
+## ADR-019: Two macOS builds — App Store on macOS 26+ Apple Silicon; community at Homebrew's floor with the Wine executor, Intel permitted (2026-09-22)
 
-## ADR-019: two macOS builds — the App Store one is macOS 26+ on Apple Silicon, the community one keeps the 14.0 floor, carries the Wine executor and permits Intel (2026-09-22)
+**Decision.** One `scripts/package-macos.sh` rolls two apps:
 
-**Decision.** The macOS app is packaged two ways from one
-`scripts/package-macos.sh`:
+1. **App Store**: macOS 26+, Apple Silicon only. DXVK with the
+   KosmicKrisp ICD and nothing of Wine — no x86_64 helper, no Rosetta
+   prompt — so its sandbox story is QEMU's JIT entitlement alone (UTM
+   is the precedent). `LSMinimumSystemVersion` measures out at 26.
+2. **Community** (`--community`): Homebrew's floor
+   (`scripts/macos-floor.sh`; 14.0 when this was written, **15.0 since
+   Homebrew dropped Sonoma on 2026-09-10** — the number follows `brew
+   update`), no ICD, the M15 Wine executor pair in; a Developer
+   ID-signed, notarized DMG on the GitHub release, with the from-source
+   build as the alternative. It **permits Intel Macs**: the Wine is
+   x86_64 on both architectures and only this build starts it.
 
-1. **The App Store build**: macOS 26 and newer, Apple Silicon only. It
-   carries DXVK with the KosmicKrisp ICD and nothing of Wine — no
-   x86_64 helper, no Rosetta prompt — so its Direct3D is ADR-007's
-   executor everywhere it runs and its sandbox story is QEMU's JIT
-   entitlement alone (UTM is the precedent that passes review). Its
-   `LSMinimumSystemVersion` comes out at 26 by measurement, as the
-   packager already measures it.
-2. **The community build**: the 14.0 floor of `scripts/macos-floor.sh`
-   kept, the ICD left out, and the M15 Wine executor (ADR-018) in — a
-   Developer ID-signed, notarized DMG on the GitHub release, rolled by
-   the same packager under a `--community` flag, with the from-source
-   build as the option for whoever wants it. It runs on every Apple
-   Silicon Mac from macOS 14, and it **permits Intel Macs**: the Wine
-   the executor runs on is x86_64 on both architectures — native on
-   Intel, under Rosetta on Apple Silicon — and only this build ever
-   starts it.
+The App Store never gets a pre-26 version: it keeps one current version
+per app, and two listings with different minimums are reviewed as
+duplicates (guideline 4.3). The pre-26 path lives on the release page.
 
-The App Store gets no pre-26 version, ever. App Store Connect keeps one
-current version per app; an older-OS user is offered the last version
-they can run, which is a freeze, not a second track, and two listings
-with different minimums are reviewed as duplicates (guideline 4.3).
-The pre-26 path is therefore maintained where it can be, on the
-release page.
+*As built*, `package-macos.sh` stages the Vulkan loader and the
+KosmicKrisp ICD in both apps (`--community` only adds the Wine pair), so
+the community app on a 26 Mac still takes DXVK; below 26 the ICD does
+not load and the probe must answer with the Wine executor (an open
+check in `docs/00-status.md`).
 
-**Why.** The Mac hosts split exactly along the executor's line: on 26
-KosmicKrisp gives DXVK its Vulkan 1.3 and Wine is never needed; below
-it there is no Vulkan and the executor runs on Wine, which means an
-x86_64 process under Rosetta — a payload and a prompt the store build
-should not carry, and a sandbox case nobody ships. One build with a
-run-time choice would work (the probe already picks DXVK first and Wine
-second) but would put Wine into every 26 user's download and Rosetta
-into the store review for nothing they use. Splitting by the same line
-the executor splits on costs one packager flag.
+**Why.** Mac hosts split exactly on the executor's line: on 26,
+KosmicKrisp gives DXVK its Vulkan 1.3; below it, the executor runs on
+Wine under Rosetta — a payload and a prompt the store build should not
+carry. One build with a run-time choice would put Wine in every 26
+user's download for nothing. Splitting costs one packager flag.
 
-**Intel Macs**, out of scope since 2026-09-12 (Apple Silicon only, the
-floor decision), are reopened by the user *for the community build
-only*, with the state said plainly: **the build permits them; nobody
-has run it.** Homebrew 7.0.0 (2026-09-13) moved Intel macOS to tier 3 —
-no new bottles, the existing ones frozen, support ending September
-2027, because macOS 27 drops Intel — and our macOS build is
-Homebrew-based, Qt 6 the heavy part. So Intel is realistic for macOS
-14 through 26 on today's bottles and a from-source build after them,
-and it is the *best* case for the Wine executor (everything native, no
-Rosetta, WineD3D on the machine's own OpenGL). It becomes a state the
-day an Intel Mac builds and runs the reference scene; until then the
-docs say "permitted, untested" and no row claims it.
+**Intel Macs** — out of scope since the 2026-09-12 floor decision
+(Apple Silicon only) — are reopened by the user *for the community build
+only*, stated plainly: **permitted, untested.** Homebrew 7.0.0
+(2026-09-13) put Intel at tier 3 (bottles frozen, support ending
+September 2027 as macOS 27 drops Intel), and our build is
+Homebrew-based, so Intel is realistic on today's bottles and from source
+after. It becomes a state the day an Intel Mac runs the reference
+scene; until then no row claims it.
 
 **What stays.** Doc 07's "signed .app, JIT entitlement, notarized" is
 the community build; the store build adds the sandbox and whatever
-review asks. The store's licensing question (GPL-2 QEMU and 86Box code
-under the store's terms; UTM ships QEMU there, the FSF says it cannot)
-is the user's to weigh and is not decided here. The data directory and
-the disc shelf under the sandbox (security-scoped bookmarks instead of
-paths under `~/.local/share`) are the store build's work, tracked in
-M6, not M15.
+review asks. The store's licensing question (GPL-2 QEMU and 86Box under
+store terms; UTM ships there, the FSF says it cannot) is the user's to
+weigh. The data directory and disc shelf under the sandbox
+(security-scoped bookmarks) are M6's work.

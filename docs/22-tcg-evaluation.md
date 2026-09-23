@@ -26,8 +26,8 @@ output checked — against pristine QEMU 9.2.4, against our tree with every
 switch off, and with each switch removed from the default: 2.34x geometric
 mean, 5.3x on x87 code, 3.4x on SSE, 1.1x on plain integer code, with
 identical outputs everywhere. The second is the **games** the patches were
-written for — 3DMark 99 Max, 3DMark2001 SE, Blood, Moto Racer and Quake
-II — on one Windows 98 machine with the same A/B, every number checked
+written for — 3DMark 99 Max, 3DMark2001 SE, Blood, Moto Racer and Quake II
+— on one Windows 98 machine with the same A/B, every number checked
 against a screendump of what was on screen: 2.2x to 30x, because the
 patches for self-modifying code and for Windows 98's memory manager are
 invisible to a benchmark program and decisive under a game. A
@@ -43,11 +43,11 @@ memory census of every workload times microbenchmarks of the access
 sequences projects 1.1–1.2x, with the design's one risk (a working set
 beyond the nested TLB) absent from every workload measured. The tree is,
 on these programs, at the point where the remaining generic ideas buy a
-fifth at most. The evaluation's first
-finding was about its own method: on macOS/arm64 a third of QEMU launches
-place TCG's code buffer 8 GiB from the helpers and run helper-heavy code
-35–45 % slower, pristine QEMU included; a load-time reservation (patch 63)
-makes every launch the near one.
+fifth at most. The evaluation's first finding was about its own method: on
+macOS/arm64 a third of QEMU launches place TCG's code buffer 8 GiB from
+the helpers and run helper-heavy code 35–45 % slower, pristine QEMU
+included; a load-time reservation (patch 63) makes every launch the near
+one.
 
 ## 1. Introduction
 
@@ -83,13 +83,13 @@ guest, measured on pristine QEMU, on our tree with every switch off, on
 our default, and with every single switch removed from the default; (b) a
 check that every configuration computes the same output; (c) the games
 the patches were written for, measured on one Windows 98 machine with the
-same A/B and each number checked against a screendump; and (d) what a
+same A/B and each number checked against a screendump; (d) what a
 SPEC-style integer suite makes of the tree, so a reader from the
-binary-translation literature (§7) can place the numbers; and (e) what
-the literature's remaining ideas are worth on this tree, each tried or
-priced (§8). It is written
-for developers: the mechanisms are explained at the level needed to reason
-about them, and every claim points at the patch or tool that carries it.
+binary-translation literature (§7) can place the numbers; and (e) what the
+literature's remaining ideas are worth on this tree, each tried or
+priced (§8). It is written for developers: the mechanisms are explained
+at the level needed to reason about them, and every claim points at the
+patch or tool that carries it.
 
 ## 2. Background: how TCG runs x86 on AArch64
 
@@ -156,13 +156,13 @@ properties (`-cpu pentium3,<name>=off`): `x87-fast`, `sse-fast`,
 accelerator properties (`-accel tcg,<name>=off`): `smc-same-value`,
 `soft-imm`, `inline-lookup`, `tb-invalidate-fast`, `tlb-floor`,
 `tls-hot-paths`, `jump-cache-keep`, `eob-chain`, `tlb-retire`, plus the
-opt-in `pinned-regs`. The launcher exposes all of them ("Emulation
-optimizations" in the machine form), and `scripts/test.sh`'s
-`optimizations` check proves the wiring from the checkbox to the QEMU
-command line. A switch is the oracle: a guest that misbehaves is
-diagnosed by turning switches off, not by bisecting patches. Each
-subsection names the profile fact that motivated its patches; the
-measurements are §5 and §6.
+opt-in `pinned-regs`. The launcher exposes all of them but `pinned-regs`
+("Emulation optimizations" in the machine form; the pinning was withdrawn
+from it on 2026-09-16, §3.6), and `scripts/test.sh`'s `optimizations`
+check proves the wiring from the checkbox to the QEMU command line. A
+switch is the oracle: a guest that misbehaves is diagnosed by turning
+switches off, not by bisecting patches. Each subsection names the profile
+fact that motivated its patches; the measurements are §5 and §6.
 
 ### 3.1 Floating point on the host FPU (`x87-fast`, `sse-fast`, `simd-fast`, `x87-pc64-as-53`)
 
@@ -307,9 +307,10 @@ grown to 13.6 KB with patch 06's slow-path blocks: 8.7 GB of memset in one
 x20–x28 for the life of a chain of TBs: loaded by the prologue, stored by
 the epilogue, stored before a helper that may read them and reloaded
 after one that may write them. It removes the loads and stores at block
-boundaries. It is off by default because of one unexplained boot crash
-with eight registers pinned (reproducible, §5.2) and a stall at the
-flags-helper call boundary; both are open.
+boundaries. It is off by default and not offered in the machine form
+(user decision, 2026-09-16: too unstable for too little gain): XP
+crashes with seven or more registers pinned (§5.2, §8.1), and there is a
+stall at the flags-helper call boundary; both are open.
 
 ## 4. Methodology
 
@@ -363,16 +364,18 @@ milliseconds.
 
 **Every emulator launch goes through `tools/specbench/noaslr.c`**, a
 20-line launcher that spawns the process with address-space layout
-randomisation off, because of the finding in §5.0: a third of launches of
-the same binary ran helper-heavy code 35–45 % slower, TCG's code buffer
-having landed 8 GiB from the helpers. With ASLR off the layout is the same
-every launch and, on this machine, the near one, so the tables compare
-like with like — for pristine QEMU too, which has no reservation of its
-own.
+randomisation off. Without it a third of launches run helper-heavy code
+35–45 % slower (§5.0); with it the layout is the same every launch and,
+on this machine, the near one, so the tables compare like with like —
+for pristine QEMU too, which has no reservation of its own.
 
 Super PI's digits are CRC-checked across configurations (its output is a
 computation); the other three print their own timings, so their CRCs are
-recorded but not compared.
+recorded but not compared. One repetition in the raw data differs:
+`stock-pic`'s second Super PI run has CRC `550dbed7` against
+`fdb79c48` everywhere else, which `report.py` flags. That is pristine
+code and was not investigated; the table's 393.0 s is that repetition
+(the matching one took 395.8 s).
 
 ### 4.4 Configurations
 
@@ -477,9 +480,10 @@ loss on a third of launches, not a speedup of the median launch.
 ### 5.1 The headline
 
 Best of two repetitions per boot (nbench once), every launch pinned to the
-near-buffer regime, Super PI's digits identical in every row. Ratios are
-against pristine QEMU 9.2.4; higher is better everywhere (the seconds and
-nanoseconds columns are inverted for the ratio).
+near-buffer regime, Super PI's digits identical in every row but for
+the `stock-pic` repetition of §4.3. Ratios are against pristine QEMU
+9.2.4; higher is better everywhere (the seconds and nanoseconds columns
+are inverted for the ratio).
 
 | configuration | Super PI 1M (s CPU) | 7-Zip (MIPS) | SSEBENCH (ns/SSE op) | nbench (geomean of 10 kernels) | geomean |
 |---|---|---|---|---|---|
@@ -625,11 +629,11 @@ Every game on one machine, `base98-us` (Windows 98 SE, our display driver,
 `-cpu pentium3`, an SB16), on the tree of §5 with patch 63 in, each run on
 a fresh raw copy of the image under a bare `qemu-system-i386`, one guest
 at a time, driven headless by a runner per game (`tools/w98-3dmark.sh`,
-`w98-3dmark2001.sh`, `w98-blood.sh`, `w98-moto.sh`, `w98-quake2.sh`; the
-CLAUDE.md table has each one's protocol). The A/B is the matrix's own:
-**every switch off** against **the default** — pristine QEMU cannot be
-the baseline here, since none of these runs without the paravirtual
-adapter. What each runner measures:
+`w98-3dmark2001.sh`, `w98-blood.sh`, `w98-moto.sh`, `w98-quake2.sh`;
+`docs/testing.md`, "Games and benchmarks", has each one's protocol). The
+A/B is the matrix's own: **every switch off** against **the default** —
+pristine QEMU cannot be the baseline here, since none of these runs
+without the paravirtual adapter. What each runner measures:
 
 - **3DMark 99 Max** (800×600×16, triple buffer, Pentium III
   optimizations): the Benchmark clicked, a screendump every 5 s, and the
@@ -696,22 +700,22 @@ at the cap with it off and on, as they should be.
 
 ### 6.3 What the two tiers say together
 
-Where the tiers agree is direction: the same tree gains on both, and
-Quake II — compiled code, no self-patching, the one game whose renderer
-is a program of the benchmarks' kind — gains the benchmarks' 1.4x. Where
-they disagree is scale, and the reason is structural. Three of the largest patches are invisible to any
-fixed-workload CPU benchmark by construction: self-modifying code (§3.3)
-never happens in a compiled benchmark; the CR3 storm and the ring-0
-round trips (§3.2, §3.4) are properties of Windows 98's VMM under a
-game's allocation pattern, not of user-mode code; and x87 at 24-bit
-precision (patch 45) is a Direct3D device's state. So `smc-same-value`,
-`soft-imm`, `tlb-floor`, `tlb-retire`, `jump-cache-keep` and
-`tls-hot-paths` show nothing in §5.2 and are the difference between
-4 fps and 128 in Blood, between 3 fps and 84 in Moto Racer. A benchmark
-number for this tree is therefore a lower bound on what a 2ksbox user
-sees — and the literature's SPEC numbers for hardware-MMU designs (§7)
-are, symmetrically, taken on workloads that never touch the paths those
-designs make slower (page-table churn).
+Where the tiers agree is direction: the same tree gains on both, and Quake
+II — compiled code, no self-patching, the one game whose renderer is a
+program of the benchmarks' kind — gains the benchmarks' 1.4x. Where they
+disagree is scale, and the reason is structural. Three of the largest
+patches are invisible to any fixed-workload CPU benchmark by construction:
+self-modifying code (§3.3) never happens in a compiled benchmark; the CR3
+storm and the ring-0 round trips (§3.2, §3.4) are properties of Windows
+98's VMM under a game's allocation pattern, not of user-mode code; and x87
+at 24-bit precision (patch 45) is a Direct3D device's state. So
+`smc-same-value`, `soft-imm`, `tlb-floor`, `tlb-retire`, `jump-cache-keep`
+and `tls-hot-paths` show nothing in §5.2 and are the difference between 4
+fps and 128 in Blood, between 3 fps and 84 in Moto Racer. A benchmark
+number for this tree is therefore a lower bound on what a 2ksbox user sees
+— and the literature's SPEC numbers for hardware-MMU designs (§7) are,
+symmetrically, taken on workloads that never touch the paths those designs
+make slower (page-table churn).
 
 ### 6.4 Threats to validity
 
@@ -977,7 +981,7 @@ git -C qemu worktree add --detach build/qemu-stock-src v9.2.4
 tools/specbench/build-guest.sh                     # the suite → build/specbench/sb.iso (SPEC=1 adds appendix A's)
 tools/specbench/run.sh ~/vms/winxp.qcow2 all       # ~2 h; build/specbench/runs/
 tools/specbench/report.py build/specbench/runs --md
-# the games (base98-us; each runner's env in the CLAUDE.md table): the default,
+# the games (base98-us; each runner's env in docs/testing.md): the default,
 # then the same with every switch off, then the inexact switch where it applies
 FRESH=1 TABLET=0 IMG=<base98-us disk> TDM_DIR='\PROGRA~1\3DMARK~1' DDFLAGS=32768 tools/w98-3dmark.sh 99-def-nv
 FRESH=1 tools/w98-3dmark2001.sh 2001-def; FRESH=1 CPU=pentium3,x87-pc64-as-53=on tools/w98-3dmark2001.sh 2001-pc64
@@ -1004,5 +1008,3 @@ it, every run's result lines, the rebooted `pinned-7` guest) and
 census, the probe's clean run). The profiler
 samples (one per configuration, inside Super PI) are not committed:
 `build/specbench/samples/` on the Air.
-
-

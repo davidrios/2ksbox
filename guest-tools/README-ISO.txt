@@ -74,8 +74,9 @@ OPENGL\   OPENGL32.DLL, the OpenGL pass-through wrapper: next to an
           WRAPGL32.EXT you have already changed.
 
 WINED3D\  Direct3D -> OpenGL in the guest (wine9x @WINE9X@): the fallback
-          for what the two stacks above do not cover, and the only
-          Direct3D a host without Vulkan 1.3 has (a Mac before macOS 26).
+          for what the two stacks above do not cover, and for a host
+          below Vulkan 1.3 that has no Wine installed (on Windows the
+          host's own Direct3D 9 covers that case, elsewhere Wine does).
           Per game, copy every file in ONE of these folders next to the
           game's EXE - from Explorer is fine, nothing needs renaming, and
           the same files work on Windows 98 and XP:

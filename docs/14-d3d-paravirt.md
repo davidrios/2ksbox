@@ -1,441 +1,403 @@
-# 14. Paravirtual Direct3D device for XP (ADR-006, 2026-09-03)
+# 14. Paravirtual Direct3D device (ADR-006)
 
-Direct3D 8/9 calls leave the guest as a command stream and are executed by
-native host code. Guest-side WineD3D (doc 04 fallback, guest-tools ISO)
-stays for DirectDraw / Direct3D ≤7 and as the comparison baseline.
+Direct3D 8/9 calls leave the guest as a command stream and run in native
+host code: one protocol, one decoder, one executor over four possible
+Direct3D 9 libraries. This doc covers the device, the protocol, the guest
+DLLs and the executor. The XP display driver's Direct3D DDI (doc 15) and
+the Win9x driver's HAL (doc 19) reuse the same protocol and executor
+through a command window in `d3dpt-vga`'s VRAM. Doc 04 has the 3D
+strategy as a whole; the M4 and M15 track docs have their test loops;
+`docs/testing.md` has the tools and `docs/development.md` the env knobs.
+
+WineD3D in the guest (the wine9x build on the guest-tools ISO) is the
+older fallback for hosts with no executor. ADR-018 retires it in M15's
+last step; until then it stays, and nothing of it is removed early.
 
 ## Why a device and not a better WineD3D
 
 Under TCG every guest instruction costs ~10–20 host instructions. WineD3D
 in the guest spends most of a frame translating D3D state into GL state
 (shader generation, state tables, resource tracking) *before* anything
-crosses to the host, and then crosses once per GL call. A serializer crosses
-once per D3D call with almost no guest-side work, and the translation runs
-natively. The same reasoning made qemu-3dfx pass GL and Glide through
-instead of emulating a GPU.
+crosses to the host, and then crosses once per GL call. A serializer
+crosses once per batch with almost no guest-side work, and the
+translation runs natively. The same reasoning made qemu-3dfx pass GL and
+Glide through instead of emulating a GPU.
 
 ## Shape
 
 ```
-guest (XP / Win98)                          host (QEMU process, embed lib)
- game.exe                                   d3dpt device (hw/d3dpt/)
-   └ d3d9.dll  (ours, C, LGPL parts)  ──FIFO──▶  decoder / resource mirror
-   └ d3d8.dll  (d3d8to9-style over d3d9)          └ executor: DXVK d3d9 (C++ behind a C shim)
- shared memory: cmd ring + data pages             └ Vulkan → KosmicKrisp (macOS, ADR-007) / native (Linux, Windows)
- d3dpt-vga / FXPTL.SYS maps the device            present → embed_fx_frame / zero-copy ring (doc 12)
+guest (XP / Win98)                      host (QEMU process)
+ game.exe                               d3dpt (SysBus) or d3dpt-vga's window
+   └ d3d9.dll (ours, C)  ──batch──▶       └ libd3dpt_exec (dlopened)
+   └ d3d8.dll (over d3d9)                     decoder + handle mirror
+ shared window: records, data, bulk           └ IDirect3D9: DXVK / system d3d9 /
+ FXPTL.SYS / FXMEMMAP.VXD map it                 Wine's d3d9 in a child process
+                                          present → embed presenter (doc 12)
 ```
 
-- **Transport:** the qemu-3dfx model — a PCI device with an MMIO doorbell
-  page and a guest-physical shared area (command ring, argument data, bulk
-  pages for Lock/Unlock uploads). The guest maps it through the `d3dpt-vga`
-  driver (or FXPTL.SYS `\\.\MAPMEM` ioctl for legacy setup); a proper
-  PnP INF driver is implemented for both Win98 (M10, doc 19) and XP (M7, doc 15).
-  Batched: the guest writes commands until a sync point (Present, Lock readback,
-  GetRenderTargetData, queries, device creation) and rings the doorbell once.
-- **Guest `d3d9.dll`:** COM objects for IDirect3D9 / Device / Swapchain /
-  the resource interfaces. Each method is either *forward* (append
-  opcode + args), *shadow* (state the app reads back — GetRenderState,
-  GetTransform, caps — answered from a guest-side copy so no round trip),
-  or *sync* (Present, Lock/Unlock, queries). Resource contents move through
-  the bulk pages: Lock returns a guest buffer, Unlock copies the dirty
-  box. Shader bytecode (SM1–3) passes through untouched; DXVK consumes it.
-  `CreateDevice` sets the x87 control word to PC=24 unless
-  `D3DCREATE_FPU_PRESERVE`, like native (that is what QEMU's inline x87
-  mode 2 is for, doc 13). Code and behaviour may come from current Wine
-  (LGPL; ADR-006).
-- **Guest `d3d8.dll`:** D3D8 over our d3d9, the d3d8to9 approach (BSD-2):
-  interface mapping, caps translation, SM1.1 passthrough.
-- **Host decoder:** lives in `libd3dpt_exec` (C++), which the C device
-  model dlopens, so the protocol evolves without a QEMU rebuild and QEMU
-  stays C. P1 runs it on the vCPU thread; one thread per device is the
-  planned shape. Owns a mirror of
-  handles → DXVK objects, validates arguments (a hostile guest must not
-  crash the host), executes through DXVK's `IDirect3D9` natively. DXVK's
-  d3d9 is a complete D3D9 implementation with a Windows-free build (the
-  former dxvk-native, upstream since 2.0) that needs a WSI shim; we give it
-  an off-screen swapchain whose backbuffer we read/blit into the existing
-  frame path (IOSurface ring on macOS, dma-buf on Linux). KosmicKrisp on macOS
-  provides the required Vulkan 1.3 environment (ADR-007).
-- **Which D3D9 library the executor calls** (2026-09-21, ADR-007's second
-  amendment): DXVK on every host, and on **Windows** the system's own
-  `d3d9.dll` when DXVK cannot run — no Vulkan 1.3, or only a software
-  Vulkan device, where a real card's D3D9 driver is the faster of the
-  two. One executor, one decoder, one protocol; only the `IDirect3D9`
-  behind it changes. `D3DPT_D3D9=auto|dxvk|system` picks it, the adapter
-  carries it as `d3d9=` and the machine form has the row; `auto` is
-  resolved by the launcher's Vulkan probe (`host_gpu.rs`), which is the
-  only part of the system that can tell a software Vulkan device from a
-  hardware one. What the system implementation refuses and DXVK takes is
-  all in `Exec::native`: a device with no window, a draw outside a scene
-  (the display driver's DP2 stream has none), the backbuffer read after a
-  DISCARD Present, a device that can be lost, and two retries — hardware
-  vertex processing, and a windowed backbuffer format that is not the
-  desktop's. It is a **second rasteriser**, so the goldens stay DXVK's
-  and `d3dpt-dp2-test` / `d3dpt-exec-test` are run on both backends
-  whenever either changes.
-- **Present:** the device presents explicitly at `Present`, once per frame,
-  into `embed_fx_frame` / the zero-copy ring — none of the front-buffer
-  flush heuristics the GL path needed. On the system-Direct3D-9 backend
-  the frame is read back *before* the flip: `D3DSWAPEFFECT_DISCARD`
-  leaves the backbuffer undefined afterwards on real hardware, while
-  DXVK keeps it (and keeps the order the goldens were taken in).
-- **Fallback:** the `-device d3dpt` off, the guest DLLs absent → the game
-  loads Microsoft's d3d9 (software/no HAL) or WineD3D from the game folder,
-  as today. Both stacks can coexist on one machine.
+- **Transport.** The qemu-3dfx model: a SysBus device (`d3dpt/hw/d3dpt_mm.c`,
+  patch 40) with a 4 KiB register page at `D3DPT_MM_BASE` (0xdfffe000)
+  and a 64 MiB RAM window at `D3DPT_SHM_BASE` (0xd8000000), fixed
+  guest-physical addresses the guest maps through `FXPTL.SYS`'s
+  `\\.\MAPMEM` on NT or `FXMEMMAP.VXD` on 9x. On `d3dpt-vga` the window is
+  the top `D3DPT_SHM_SIZE` of the VRAM BAR instead (doc 15). The guest
+  writes records until a sync point (Present, a Lock readback,
+  GetRenderTargetData, a query, device creation) and rings
+  `D3DPT_REG_DOORBELL` once. The batch executes synchronously on the vCPU
+  thread under the BQL; a decoder thread is deferred until a measurement
+  asks for it.
+- **Protocol.** `d3dpt/d3dpt_proto.h` is the one header for guest DLL,
+  QEMU device and executor (`D3DPT_PROTO_VERSION`, 13 today; bump it on
+  any wire change, and rebuild the executor and the ISO, which do not say
+  they are stale — the suite fails as `protocol mismatch` or a guest that
+  never attaches). The guest encoder is `d3dpt/d3dpt_enc.h`. The executor
+  validates every record (a hostile guest must not crash the host) and a
+  refused batch reports the failing record's index (`batch error N at
+  record R (op O)` in the QEMU log).
+- **Guest `d3d9.dll`** (`guest-tools/src/d3dpt/`): COM objects for
+  IDirect3D9, the device, swap chain and resources. Each method is
+  *forward* (append a record), *shadow* (state the app reads back —
+  GetRenderState, GetTransform, caps — answered from a guest copy), or
+  *sync*. Resource contents move through the window: Lock returns a guest
+  buffer and Unlock sends the dirty box. SM1–3 bytecode passes through
+  untouched. `CreateDevice` sets the x87 control word to PC=24 unless
+  `D3DCREATE_FPU_PRESERVE`, like native (doc 13's PC=24 path is for
+  exactly this). Code may come from current Wine (LGPL, ADR-006).
+- **Guest `d3d8.dll`:** D3D8 over our d3d9 in the d3d8to9 shape (BSD-2),
+  in C: `d3d8.c` includes `d3d9.c` and wraps its objects; vtables are
+  generated from mingw's `d3d8.h` by `gen_vtbl8.py`, since the two headers
+  cannot coexist, and D3D8-only structs keep the headers' `pack(4)`.
+- **Executor** (`d3dpt/exec/`, C++ behind the C API in `d3dpt_exec.h`):
+  a mirror of handles → D3D9 objects, executed through whichever
+  `IDirect3D9` was loaded (below). The QEMU device `dlopen`s it
+  (`d3dpt/hw/d3dpt_exec_load.c`), so the protocol evolves without a QEMU
+  rebuild and QEMU stays C.
+- **Present.** The device presents at `Present`, once per frame, into the
+  embed presenter (`embed/embedfx.c`) — none of the front-buffer flush
+  heuristics the GL path needs. Today the frame is read back through
+  GetRenderTargetData; zero-copy through DXVK's Vulkan interop is open
+  (M4 track).
+- **Fallback.** With no executor the device reports
+  `D3DPT_STATUS_NO_EXEC` and the guest carries on: without our DLLs a game
+  loads Microsoft's d3d9 or WineD3D from its folder. Both stacks can
+  coexist on one machine.
+
+## The guest DLLs
+
+On XP the display driver's DX8 DDI (doc 15) replaced per-game DLLs; the
+DLLs remain the Win98 per-game path and the executor's test harness
+(`D3DGAME9`, `D3DGAME8`, `D3DFEAT9`).
+
+- **Identity and lifetime (D3D8).** Real D3D8 keeps device- and
+  texture-owned objects (surfaces, levels) alive at refcount 0 and hands
+  out the *same* object each time. Each wrapper is created once per
+  underlying object (`w8_new`) and owned objects follow their owner
+  (`surf_Release` / `res_addref`); wrappers with no identity died with the
+  game's last Release and crashed Vice City behind its window.
+- **Forwarding.** When the DLL cannot open the device it loads the system
+  `d3d9.dll` / `d3d8.dll` from `GetSystemDirectory` and forwards, instead
+  of failing. Vice City's process loads both DLLs.
+- **Threads.** One encoder and one batch per process. From the first
+  `D3DCREATE_MULTITHREADED` device on, every method takes `D3DPT_LOCK` (a
+  recursive critical section, process-wide because the encoder is;
+  `gen_vtbl.py` / `gen_vtbl8.py` wrap every method), and the QEMU log says
+  `calls are serialised from now on`. Other devices pay one load and a
+  branch per call. The lock is dropped at `DLL_PROCESS_DETACH`, since a
+  thread killed at exit may hold it.
+- **Buffer locks nest**; the last Unlock sends the union of the ranges.
+  `Lock(offset, 0)` means "to the end" and returns `data + offset`.
+- **State blocks** are guest-side and never on the wire. While one
+  records, setters update only the shadow and the block's marks, and
+  EndStateBlock restores the shadow from a snapshot taken at
+  BeginStateBlock — native records without applying.
+- **DEFAULT-pool offscreen plain surfaces** keep a guest shadow so a 2D
+  game can Lock them; the locked rectangle goes to the host at UnlockRect,
+  ColorFill (32-bit formats) and UpdateSurface keep it current, and
+  nothing the host renders comes back into it.
+- **DrawIndexedPrimitiveUP** copies vertices from MinVertexIndex on and
+  the executor rebases the indices (DXVK reads MinVertexIndex +
+  NumVertices strides from the pointer, so a copy from 0 read past the
+  record). **Clear** goes as records of at most 64 rects.
+- **`CheckDeviceFormat` answers the usage.** R8G8B8 is not listed (DXVK
+  does not map it; 3DMark2001 SE asked for an R8G8B8 render-target
+  texture, was told yes and quit on the CreateTexture). A
+  `D3DUSAGE_RENDERTARGET` question gets yes only for A8R8G8B8, X8R8G8B8,
+  R5G6B5, X1R5G5B5 and A1R5G5B5 — what Vulkan makes every device render
+  to, since the guest cannot ask the host; a depth-stencil question and
+  `CheckDepthStencilMatch` only for depth formats.
+- **GetRenderTargetData** sizes rows from a format table the guest and
+  executor share (`fmt_block` / `rt_bytes_per_pixel`), and a format it
+  cannot size is refused.
+- **The `D3DPT\DDRAW.DLL` shim** answers Vice City's DirectDraw
+  video-memory check, implements `GetRasterStatus` and the gamma ramp,
+  and lists all the adapter's modes. Its QueryInterface counts a reference
+  on the real `IDirectDraw7` too, since Release drops both.
+- **Hand-assembled shaders.** SM1 opcode numbers are the `D3DSIO_*`
+  values (`m4x4` is 20; 24 is `m3x2`). A wrong opcode compiles fine in
+  DXVK and draws nothing; dump the SPIR-V with `DXVK_SHADER_DUMP_PATH`
+  to see what it became.
+- **Stubs log once** (`D3DPT_STUB`: `d3dpt: <name> not implemented`):
+  - palettized (P8) textures (`SetPaletteEntries` /
+    `SetCurrentTexturePalette`) — Vice City's menu background is grey
+    noise. DXVK has no P8; the plan is the DDI path's answer, expansion to
+    A8R8G8B8 on upload and a re-upload on a palette change;
+  - volume textures and swap-chain objects (`GetSwapChain` fails while
+    `GetNumberOfSwapChains` says 1);
+  - `GetFrontBuffer` (Max Payne calls it) and `ProcessVertices`;
+  - `LockRect` on render targets and depth surfaces (refused with
+    INVALIDCALL), and D3D8 `CopyRects` into system memory;
+  - the lost-device protocol (`TestCooperativeLevel` always succeeds).
+
+  D3D8's `GetVertexShader` / `GetPixelShader` return the handle last set,
+  not one an applied state block set.
+
+### A review of the guest DLLs
+
+A read of `d3d9.c`, `d3d9_res.h`, `d3d9_p3.h`, `d3d8.c` and the DDRAW shim
+against the executor and DXVK (2026-09-13) produced most of the behaviour
+above. Its regression cases live in `D3DFEAT9`: row E (one quad each for
+UpdateTexture into a DEFAULT texture, MinVertexIndex, `Lock(offset, 0)`
+and nested locks), an 80-rect Clear, a state block recorded and never
+applied, a lock of a DEFAULT offscreen surface and a readback from an
+A16B16G16R16F target, all compared with the native DXVK run. Its device is
+`D3DCREATE_MULTITHREADED`, and a loader thread creates, fills and releases
+a texture and a vertex buffer beside the frames, counting failed calls
+*and failed Presents* into a "getters 3" line (native: 0). The loader is
+paced to two rounds a frame: DXVK frees a released resource only after the
+frames that could use it, and unpaced it reached 17.8 GB on the M1 in five
+seconds. `DDVMTEST` uses an object after releasing a QueryInterface'd
+reference, and `d3dpt-exec-test` sends a DrawIndexedPrimitiveUP at
+MinVertexIndex 0xfff000 (the old executor dumps core there).
+
+The controls: the pre-review DLLs fail exactly `guest-F9` (CreateVertexBuffer
+returns E_FAIL after the first UpdateTexture; `batch error 3` in the log),
+and the DLLs with `D3DPT_LOCK` compiled out fail `guest-F9-log=native`
+with `3 presents failed` and refused batches. A race is chance, so that
+check fails when the race is hit, not whenever the lock is missing; the
+DDRAW case is a smoke, not a proof. The D3D8 constant fix (`D3DVSD_CONST`
+of a second block at its own register) has no case: D3DGAME8 has no
+shader. A control's DLLs must be built with the ISO's flags — the default
+UCRT imports `api-ms-win-crt-*.dll`, which XP lacks.
+
+## The executor and its Direct3D 9
+
+One decoder serves four D3D9 libraries; only the `IDirect3D9` behind it
+changes. Nothing backend-specific goes into the decoder.
+
+| Backend | Where | Picked by |
+|---|---|---|
+| DXVK (`libdxvk_d3d9`) | in process, Linux, macOS 26+, Windows | default everywhere; the goldens are DXVK's |
+| the system `d3d9.dll` | in process, Windows below the Vulkan 1.3 floor | `D3DPT_D3D9=system` (ADR-007's second amendment) |
+| Wine's d3d9 | a Wine process on a Linux or macOS host below the floor | `D3DPT_EXEC=wine` (ADR-018, M15) |
+| none | a host with neither | `D3DPT_EXEC=none` or no library: `D3DPT_STATUS_NO_EXEC` |
+
+`D3DPT_D3D9=auto|dxvk|system` reaches the adapter as `d3d9=` (the machine
+form's Direct3D row); `D3DPT_EXEC=auto|dxvk|wine|none` as `exec=`. `auto`
+for `d3d9=` is resolved by the launcher's Vulkan probe
+(`launcher-core/src/host_gpu.rs`), the only part of the system that can
+tell a software Vulkan device from a hardware one. `no-exec=on` refuses
+before any library is opened, so it is never a way to reach a backend.
+
+**DXVK.** DXVK's d3d9 is a complete D3D9 with a Windows-free build (the
+former dxvk-native). We give it a headless WSI (`patches/dxvk/04`, `08`
+for Windows; `DXVK_WSI_DRIVER=Headless`) and an off-screen swap chain.
+On macOS it runs on KosmicKrisp, which needs macOS 26 (ADR-007, spike C).
+DXVK with no Vulkan loader calls through a null pointer in
+`Direct3DCreate9`, and unloading a library after a failed probe crashed
+too: the executor looks for `libvulkan` before it tries DXVK, and never
+closes a probed library.
+
+**Depth formats.** `depth_norm()` maps what 2001 cards offered and DXVK
+refuses: D32 → D24X8, D15S1 and D24X4S4 → D24S8; the guest keeps
+reporting the format asked for. Without it Max Payne's D32 auto depth
+buffer failed and the game said, in 32-bit modes, that it "requires a
+DirectX 8 compatible display adapter". `d3dpt-exec-test` asks for D32.
+
+**The system Direct3D 9 (Windows).** On a Windows host that DXVK cannot
+serve (no Vulkan 1.3, or only a software device) a real card's own D3D9
+driver is the faster answer. Everything it refuses and DXVK accepts sits
+behind `Exec::native` (`d3dpt/exec/d3dpt_exec.cpp`):
+
+- a hidden 1×1 popup is the device window;
+- `Exec::scene_begin` opens a scene itself — on both backends, since the
+  DX7 DDI's DP2 stream has no BeginScene — and closes it before every
+  StretchRect, readback and Present;
+- the back buffer is read *before* Present: `D3DSWAPEFFECT_DISCARD`
+  leaves it undefined afterwards on real hardware (that is where the
+  black frames went), while DXVK keeps it;
+- `TestCooperativeLevel` once per batch, `Reset` on loss, and
+  `exec_ddi_device_reset` drops the DEFAULT-pool mirror so every surface
+  is read from guest VRAM again;
+- hardware vertex processing, and a windowed back-buffer format not the
+  desktop's, are retried rather than refused;
+- `D3DFMT_L6V5U5` is listed by NVIDIA's d3d9 and drawn with no
+  luminance, so this backend uploads it as X8L8V8U8
+  (`d3dpt/exec/d3dpt_exec_ddi.cpp`).
+
+It is a second rasteriser, so the goldens stay DXVK's and
+`d3dpt-dp2-test` / `d3dpt-exec-test` run on both backends whenever either
+changes; their frames were byte-identical on the user's PC. **The one
+measured difference:** the X byte of an X8R8G8B8 target reads back
+`0xff` from DXVK and `0x00` from NVIDIA's d3d9 (`px0 0xff203040` against
+`0x00203040`, RGB identical, D3D7TEST on Win98). The format leaves it
+undefined and nothing here reads it; a title that treats X as alpha would
+differ — start there if one does.
+
+### The executor on Wine, in another process
+
+A Linux or macOS host below DXVK's floor runs the same executor on Wine's
+own d3d9 (ADR-018; state and test loop in
+`docs/tracks/m15-wine-executor.md`). Wine's d3d9 exists only inside a Wine
+process, so the executor runs there: the Windows build of
+`d3dpt_exec.dll`, unchanged, loaded by `d3dpt-exec-host.exe`
+(`d3dpt/exec/d3dpt_exec_host.c`) under Wine. QEMU talks to it through
+`libd3dpt_exec_remote` (`d3dpt/exec/d3dpt_exec_remote.c`), which exports
+the entry points of `d3dpt_exec.h` again, so `d3dpt_exec_load.c` opens it
+as it opens the in-process library — after that one's `d3dpt_exec_probe`
+found no device, or when `exec=wine` asks.
+
+- **The wire** (`d3dpt/exec/d3dpt_remote.h`): 32-byte records over the
+  child's stdio, synchronous, one per call.
+- **The shared file.** Every region with a size — the command window,
+  VRAM, the frame the executor presents — is a region of one file the
+  library owns (`d3dpt_exec_shared_alloc`). QEMU maps it as guest RAM
+  with `memory_region_init_ram_from_fd` (the adapter's VRAM through patch
+  73), the child with `MapViewOfFile`, so a batch runs where the guest
+  wrote it and a readback lands in VRAM with no copy. A caller whose
+  window is not shared memory (the host tests) is served by copy, said
+  once in the log. `memory_region_init_ram_from_fd` is under
+  `CONFIG_POSIX`, so both call sites carry the guard; the Windows build
+  has no remote executor.
+- **The reply** carries the executor's `active` flag, the presented
+  frame's geometry (its pixels in the frame slot) and up to 64
+  `vram_dirty` ranges, folded into one past that.
+- **The child's Wine.** It sets `D3DPT_D3D9=system` for the executor
+  (under Wine, Wine's builtin `system32\d3d9.dll`) and writes
+  `HKCU\Software\Wine\Direct3D\renderer` = `gl` into its prefix
+  (`D3DPT_WINE_RENDERER` overrides; `vulkan` over MoltenVK is a data point
+  only). The library starts it with `WINEDEBUG=-all` and
+  `WINEDLLOVERRIDES=d3d9=b;mscoree,mshtml=` unless set — Wine's own d3d9,
+  never a DXVK dropped into a prefix, and no Mono/Gecko prompt in a new
+  prefix. The prefix is `<data dir>/2ksbox/wine` (first creation ~20 s).
+  On a Mac the Wine process is x86_64 under Rosetta: native arm64 Wine's
+  `winemac.drv` has no OpenGL, and a `MAP_SHARED` file is the same pages
+  under Rosetta.
+- **The device is made at probe time.** A wined3d device takes seconds
+  to create (3.5 s under Rosetta), and the first batch stalls while
+  wined3d compiles shaders. Made lazily at the first `create()` — inside
+  the guest's MMIO read of the status register — that stall reset a Win98
+  guest, so the child makes it at `d3dpt_exec_probe`, which the adapter's
+  realize runs before the guest boots.
+
+Measured: `d3dpt-dp2-test` and `d3dpt-exec-test` through the child draw
+frames **byte-identical** to in-process DXVK (the `exec-wine` check) —
+WineHQ 11.17 under Rosetta on the Air, and a real macOS 15.8 on the M1's
+own GL (328 fps). The exec test runs 553 fps through the pipe (copy mode)
+against 929 in process. In the XP guest, D3DGAME8's frame 300 is within
+the rig budget, 600 frames in 3.4 s against 2.1 s; the ten DX8 DDI probes
+give the in-process verdicts; FIFA 2000 plays a match at 22.6 frames/s
+against 19.0 in process on KosmicKrisp. Win98's DX7 HAL: D3D7TEST 300
+frames at 57 fps, byte-identical to `dp2-test.bmp`.
+
+## Shipping it
+
+QEMU finds the executor through no link: it `dlopen`s `libd3dpt_exec` by a
+search starting at `build/d3dpt`, and the executor `dlopen`s DXVK's `d3d9`
+the same way. A package with the player and not those two has guests that
+silently fall back to WineD3D, so every packager stages **both or
+neither** (`lib/2ksbox/libd3dpt_exec.so` + `libdxvk_d3d9.so.0`, the second
+under the soname the executor looks up); the remote library and the PE
+pair (`lib/2ksbox/wine/`) likewise go all or none. The Flatpak builds them
+in its sandbox against the runtime (hence `third_party/dxvk` in its source
+copy: the executor also needs its `include/native` headers). No Vulkan
+driver travels with the Linux packages; the macOS app carries the LunarG
+loader and KosmicKrisp. The packaged player names the files to QEMU
+through `player/src/companions.rs`, and `player --companions` prints what
+that rule resolved, which is what the packagers check. `D3DPT_EXEC_LIB` /
+`D3DPT_DXVK_LIB` point `tools/d3dpt-exec-test` at a staged pair — the
+cheap proof that the files themselves work.
 
 ## Milestones (P = paravirt)
 
-- **P0a — Reference workload, golden on the rig:** `D3DGAME9.EXE` and
+All done on 2026-09-03/04 (M4); what stayed open is in the stub list
+above and the M4 track doc.
+
+- **P0a — reference workload, golden on the rig.** `D3DGAME9.EXE` /
   `D3DGAME8.EXE` (`guest-tools/src/d3dgame9.c`, `d3dgame8.c`, shared
-  `d3dgame.h`; on the guest-tools ISO): a small deterministic game-like
-  scene that exercises what era titles do — textured lit indexed cubes,
-  a per-frame dynamic vertex buffer (software animation), additive alpha
-  particles from DrawPrimitiveUP, a render-to-texture "monitor", DXT1 /
-  565 / 8888 textures with mipmaps, fixed-function lights and materials,
-  an optional SM1.1/2.0 shader path when D3DX is present, windowed and
-  exclusive fullscreen with mode changes, vsync on/off, keyboard camera.
-  `-frames N` runs a fixed-step deterministic sequence; `-dump N file.bmp`
-  writes frame N as a BMP through GetRenderTargetData / CopyRects. It must
-  run perfectly on the reference rig (P4 + GeForce 6200, doc 09) and its
-  BMPs are the golden images every later layer is diffed against: WineD3D
-  in the guest today, the device tomorrow. No game, no crack, no disc.
-  **Done 2026-09-03:** both run flawlessly on the rig; the first golden set
-  (d3dgame9 frame 300 windowed, fixed function and vs_1_1) with logs is in
-  `reference/d3d/rig-2026-09-03/` (README there lists the caveats of that
-  build: HUD bars are wall time, mask them; ps_1_1 refused by d3dx9_36's
-  HLSL compiler so `-shader` is vs_1_1 + fixed pixel stage). Rendering is
-  frozen at that build until a new golden set exists. `tools/bmpdiff.py`
-  compares candidates against them.
-- **P0b — Spike (decides the executor):** DXVK d3d9 native on macOS over
-  MoltenVK and on Linux: clear + textured triangle + a SM2 shader, off-screen,
-  read back. Measure. If MoltenVK cannot run DXVK's d3d9 for D3D9-era
-  features (D3D9 needs Vulkan 1.1 + a few extensions DXVK lists), the
-  executor becomes host WineD3D-over-GL or a wgpu translator; the guest side
-  is unchanged either way. **Decided 2026-09-03 (ADR-007, spike C):**
-  MoltenVK cannot (five hard-required features missing, two of them
-  unimplementable on Metal); Mesa's KosmicKrisp on macOS 26 can, with a
-  one-line DXVK patch (geometry shaders optional). DXVK is the executor
-  everywhere; `third_party/dxvk` + `patches/dxvk/`. **ADR-013 (2026-09-06)**
-  keeps this escape hatch open and unbuilt, and settles what a host that
-  cannot reach DXVK's Vulkan 1.3 gets instead: the GL pass-through with
-  WineD3D in the guest, and `launcher --host-check` to say so.
-  **ADR-018 (2026-09-22) takes the hatch**: below the floor the same
-  executor runs on Wine's d3d9 *on the host*, out of process
-  (`docs/tracks/m15-wine-executor.md`), and WineD3D-in-guest is retired
-  once that has drawn this scene. The off-screen test
-  (`tools/dxvk-d3d9-test.cpp`) and the native build of the reference scene
-  (`tools/d3dgame9-native.cpp`, unmodified `d3dgame9.c` over a window-less
-  Win32 shim, `tools/d3dgame-native/win32_headless.h`) both run to DXVK's refusal on MoltenVK today and produce BMPs once
-  the Air is on macOS 26. **On Linux (RADV) both pass, 2026-09-03:** the
-  fixed-function frame 300 vs the rig golden differs in 0.35 % of pixels
-  beyond a channel tolerance of 8 (HUD masked), visually identical — DXVK
-  draws what the GeForce 6200 drew. The vs_1_1 golden has no native
-  counterpart (no d3dx9 compiler off Windows) and is not diffed. **On
-  macOS 26 over KosmicKrisp (Air, 2026-09-03) both pass too** after a second
-  one-line patch (`fillModeNonSolid` optional, wireframe → solid): 1095
-  pixels beyond tolerance 8 vs 1089 on RADV, 16 beyond 32 on both. The
-  executor draws the same frame on Metal and on AMD.
-- **P1 — Transport + device:** `hw/d3dpt` in the QEMU queue (patch 40),
-  guest `d3d9.dll` with `Direct3DCreate9`, adapter identifier/caps from the
-  host, `CreateDevice`, `Clear`, `Present` → the D3D9TEST triangle
-  (guest-tools) shows in the player. Per-call and per-frame cost measured
-  against WineD3D-in-guest on the same test. **Done 2026-09-03 (Linux):**
-  `d3dpt/d3dpt_proto.h` (protocol), `d3dpt/d3dpt_enc.h` (guest encoder),
-  `d3dpt/hw` (QEMU device, patch 40), `d3dpt/exec` (decoder + DXVK
-  executor as `libd3dpt_exec`, dlopened by the device), DXVK patch 04
-  (headless WSI), `guest-tools/src/d3dpt/d3d9.c` (the DLL, ISO `D3DPT\`).
-  XP D3D9TEST 640×480 windowed under TCG on the Linux host (RADV): 2840 fps on
-  the device, 1100 on WineD3D-in-guest, 4300 replaying the same batches
-  natively (`tools/d3dpt-exec-test.cpp`). One doorbell per frame; the
-  batch executes synchronously on the vCPU thread under the BQL (the
-  decoder thread of the shape above is deferred until a measurement asks
-  for it). Present reads the backbuffer back through GetRenderTargetData;
-  zero-copy through DXVK's Vulkan interop is P2/P3 work.
-- **P2 — Resources + fixed function:** vertex/index buffers, textures
-  (all D3D9-era formats incl. DXT and palettized via conversion), Lock/Unlock,
-  render/texture/sampler states, transforms, lights, DrawPrimitive*/UP
-  variants, render targets, depth/stencil, device reset and lost-device
-  protocol. **Done 2026-09-04** (`guest-tools/src/d3dpt/d3d9_res.h`):
-  D3DGAME9 on XP through the device is byte-identical to the native DXVK
-  build's frame (1089 pixels from the rig golden, HUD masked), windowed and
-  fullscreen, 8888 and 565. Palettized formats and the lost-device protocol
-  are still open; cube/volume textures, vertex declarations, queries and
-  state blocks are P3.
-- **P3 — Shaders + queries:** SM1–3 vertex/pixel shaders, constants,
-  occlusion/event queries, StretchRect, swap-chain variants, multi-head
-  ignored. Acceptance: Max Payne (D3D8 via P4 stub), GTA:VC (D3D9), the
-  doc 04 matrix. **Feature set done 2026-09-04** (protocol v3,
-  `guest-tools/src/d3dpt/d3d9_p3.h`): declarations, all constant types,
-  queries, state blocks (guest-side, never on the wire), cube textures,
-  DEFAULT offscreen surfaces, ColorFill/StretchRect/UpdateSurface/
-  UpdateTexture, clip planes. `D3DFEAT9` (hand-assembled SM1.1, no D3DX)
-  is byte-identical between the XP guest and the native DXVK build.
-  Acceptance titles still to run; swap-chain objects and volume textures
-  open.
-- **P4 — D3D8:** `d3d8.dll` over d3d9. **Done 2026-09-04:** `d3d8.c`
-  includes `d3d9.c` and wraps its objects (the d3d8to9 shape in C; vtables
-  generated from mingw's d3d8.h by `gen_vtbl8.py` since the two headers
-  cannot coexist; its D3D8-only structs carry the headers' `pack(4)`). D3DGAME8 from XP is byte-identical to D3DGAME9. Volume
-  textures, swap chains, GetFrontBuffer and ProcessVertices are stubs.
-- **P5 — later:** DirectDraw/D3D7 layer over the device (or keep WineD3D
-  for DX7 titles), Win98 guest (the same DLLs are 9x-compatible if built
-  msvcrt / no-CRT like wine9x). The "proper driver" is now **ADR-008 / M7**:
-  a real display driver (framebuffer → DirectDraw DDI → Direct3D DDI) on
-  the same transport and executor; this DLL stays the 9x path.
+  `d3dgame.h`, on the ISO): a deterministic game-like scene — textured
+  lit indexed cubes, a per-frame dynamic vertex buffer, additive
+  particles from DrawPrimitiveUP, render-to-texture, DXT1/565/8888
+  mipmapped textures, fixed-function lights, an optional SM1.1/2.0 path
+  with D3DX, windowed and fullscreen. `-frames N` runs a fixed-step
+  sequence; `-dump N file.bmp` writes frame N. The rig (doc 09) runs both
+  flawlessly; the golden set is `reference/d3d/rig-2026-09-03/` (its README
+  lists the caveats: mask the HUD bars, which are wall time; `-shader` is
+  vs_1_1 with a fixed pixel stage because d3dx9_36 refused ps_1_1).
+  Rendering is frozen at that build until a new golden set exists;
+  `tools/bmpdiff.py` compares.
+- **P0b — the executor spike.** Could DXVK's d3d9 run natively on macOS?
+  Not on MoltenVK (five required features missing, two unimplementable on
+  Metal); yes on KosmicKrisp with `geometryShader` and `fillModeNonSolid`
+  made optional (`patches/dxvk/02`, `05`). ADR-007: DXVK everywhere.
+  `tools/dxvk-d3d9-test.cpp` and `tools/d3dgame9-native.cpp` (the
+  unmodified scene over the window-less `tools/d3dgame-native/win32_headless.h`)
+  match the rig golden to 0.35 % of pixels beyond a channel tolerance of 8
+  on RADV (1089 pixels) and KosmicKrisp (1095), HUD masked. ADR-013 kept
+  "an executor on something else" as an unbuilt escape hatch; ADR-018
+  takes it with Wine on the host.
+- **P1 — transport + device.** Patch 40, the encoder, the executor as
+  `libd3dpt_exec`, DXVK's headless WSI, the guest `d3d9.dll`. D3D9TEST
+  640×480 windowed on XP under TCG (Linux, RADV): 2840 fps on the device,
+  1100 on WineD3D-in-guest, 4300 replaying the same batches natively. One
+  doorbell per frame.
+- **P2 — resources + fixed function** (`d3d9_res.h`): buffers, textures,
+  Lock/Unlock, states, transforms, lights, every Draw variant, render
+  targets, depth/stencil. D3DGAME9 through the device is byte-identical
+  to the native DXVK frame, windowed and fullscreen, 8888 and 565.
+- **P3 — shaders + queries** (protocol v3, `d3d9_p3.h`): declarations,
+  constants, queries, state blocks, cube textures, DEFAULT offscreen
+  surfaces, ColorFill/StretchRect/UpdateSurface/UpdateTexture, clip
+  planes. `D3DFEAT9` (hand-assembled SM1.1, no D3DX) is byte-identical
+  between guest and native.
+- **P4 — D3D8** (`d3d8.c`). D3DGAME8 is byte-identical to D3DGAME9.
+- **P5 — later.** The "proper driver" became ADR-008 / M7: a real XP
+  display driver on the same transport and executor (doc 15), and the
+  Win98 driver (doc 19). The DLLs stay the 9x per-game path.
 
-## Reference workloads and conformance (what we test the device with)
+The first commercial titles on the DLL path were Max Payne (to its
+tutorial level) and GTA Vice City (to its menu), both headless. **Vice
+City is Direct3D 8** — every RenderWare GTA through Vice City is; San
+Andreas is the D3D9 one. A user who deleted `D3D8.DLL` "because VC is
+D3D9" ran the game on XP's stock d3d8 over the Cirrus, where it cannot
+start. A game that seems frozen on the device has so far always been a
+message box behind its full-screen window (`tools/xp-game-test.sh`, M4
+track).
 
-- **Ours:** `D3DGAME9` / `D3DGAME8` (P0a) — small, deterministic,
-  instrumented as we like, golden BMPs from the rig.
-- **Wine's d3d8/d3d9 test suites** (`dlls/d3d9/tests/*.c`, LGPL): thousands
-  of API and pixel-readback tests written to *pass on real Windows*; they
-  build with mingw and run on XP. Run them on the rig for the pass list,
-  then against the device: the conformance suite we don't have to write.
-- **Irrlicht** (zlib) ships Direct3D 8 and 9 renderers with sample apps and
-  real content (meshes, lightmaps, particles, shaders); builds with mingw,
-  runs on XP. Good for "engine-shaped" traffic and easy to instrument.
-- **Commercial titles** (doc 04 matrix: Max Payne, GTA:VC) stay the
-  acceptance bar, last. The Quake/Duke ports are OpenGL and already
-  covered by the qemu-3dfx pass-through; useful for the GL side only.
+## Reference workloads and conformance
 
-## Shipping it (2026-09-07)
-
-The executor is two files and QEMU finds neither through a link: it
-`dlopen`s `libd3dpt_exec` by a search that starts at `build/d3dpt`, and
-the executor then `dlopen`s DXVK's `d3d9` the same way. A package that
-carries the player and not those two has XP guests that fall back to
-WineD3D with nothing said anywhere, so every packager stages **both or
-neither** — the macOS app since 2026-09-06, the Linux tarball and the
-Flatpak since 2026-09-07 (`lib/2ksbox/libd3dpt_exec.so` +
-`libdxvk_d3d9.so.0`, the second installed under the soname the executor
-looks up, since nothing links it). The Flatpak builds them in its own
-sandbox against the runtime's libraries; `third_party/dxvk` is in the
-copied source tree for that reason and because the executor needs its
-`include/native` headers to compile. No Vulkan driver travels with the
-Linux packages: the host's is the right one there, and a host below
-Vulkan 1.3 keeps GL + WineD3D (ADR-013). The packaged player names both
-files to QEMU through `player/src/companions.rs`, and `player
---companions` prints what that rule resolved — which is what the
-packagers check, rather than restating the layout in a script. Pointing
-`tools/d3dpt-exec-test` at a staged pair (`D3DPT_EXEC_LIB` /
-`D3DPT_DXVK_LIB`) is the cheap proof that the files themselves work: real
-batches, real frames, the hostile batch still refused.
-
-## A review of the guest DLLs (2026-09-13)
-
-A read of `d3d9.c`, `d3d9_res.h`, `d3d9_p3.h`, `d3d8.c` and the
-`ddraw.dll` shim, each record checked against what the executor does with
-it and, where the executor hands a call on, against DXVK. What was wrong:
-
-- **UpdateTexture into a DEFAULT texture refused the batch.** For a level
-  with no guest shadow (the usual SYSTEMMEM → DEFAULT case) it appended a
-  `SURFACE_UPDATE` naming handle 0 ahead of the real `TEXTURE_UPDATE`. The
-  host refuses a batch from an unknown handle on, so every draw queued
-  behind it was dropped and the next sync call failed. It was a leftover
-  of an earlier shape of the function; only the real record goes now.
-- **DrawIndexedPrimitiveUP with MinVertexIndex above 0** copied the
-  array's first NumVertices vertices instead of those from MinVertexIndex
-  on, and the executor handed DXVK the copy as vertex 0. DXVK reads
-  (MinVertexIndex + NumVertices) × stride bytes from that pointer, so the
-  result was wrong vertices plus a read past the record (a hostile record:
-  gigabytes past the window). The guest now copies vertices
-  MinVertexIndex.. and the executor rebases the indices onto them;
-  `d3dpt_proto.h` says so. The bytes of every draw that worked
-  (MinVertexIndex 0) are unchanged, hence no protocol bump.
-- **Buffer locks.** `Lock(offset, 0)` returned the buffer's start, not
-  `offset` (0 is "to the end"; DXVK returns `data + offset`). A second
-  Lock while one was held replaced the first one's range, which then never
-  reached the host. Locks nest now; the last Unlock sends the union.
-- **Recording a state block applied it.** Every setter between
-  BeginStateBlock and EndStateBlock went to the host and stayed in force;
-  native records the call and leaves the device alone. A game that records
-  its blocks at load time kept the last recorded values until something
-  set them again. While a block records, setters now only update the
-  shadow and the block's marks, and EndStateBlock puts the shadow back from
-  a snapshot taken at BeginStateBlock (object references held).
-- **The `ddraw.dll` shim's QueryInterface** counted a reference on the
-  wrapper and not on the real `IDirectDraw7`, while Release drops both: a
-  QI'd reference released again freed the real object under the
-  application.
-- **GetRenderTargetData** sized the executor's rows at 4 bytes a pixel for
-  every format but the three 16-bit ones, so A4R4G4B4 and the 64/128-bit
-  float targets came back refused or at the wrong stride. The executor has
-  a table now (the guest's agrees) and refuses a format it cannot size.
-- **A DEFAULT-pool offscreen plain surface could not be locked**
-  (INVALIDCALL): the surface a 2D game fills and StretchRects to the back
-  buffer. It keeps a guest shadow now; the locked rectangle goes to the
-  host at UnlockRect, and ColorFill (32-bit formats) and UpdateSurface keep
-  the shadow current. Nothing the host renders comes back into it.
-- **Clear with more than 64 rects** was refused whole; it goes as several
-  records of at most 64 now.
-- **D3D8 declaration constants** (`D3DVSD_CONST`) of a second block landed
-  right after the first block's instead of at their own register.
-- Both log helpers wrote a newline past their buffer when a line overran
-  (a C99 `vsnprintf` returns the untruncated length).
-- **No thread safety.** One encoder and one batch per process, and no
-  lock: a `D3DCREATE_MULTITHREADED` game creating resources on a loader
-  thread while drawing on another interleaved the two threads' records.
-  Native D3D9 serialises every call of such a device (and of no other).
-  Ours does the same from the moment one exists, process-wide because
-  the encoder is: `gen_vtbl.py` / `gen_vtbl8.py` now make a wrapper for
-  every method, not only the traced ones, and each takes `D3DPT_LOCK` (a
-  recursive critical section, so the implementation calling back through
-  a vtable is fine); the log's host copy takes it too. A device without
-  the flag pays one load and a branch per call. At `DLL_PROCESS_DETACH` the
-  lock is dropped, since a thread killed at process exit may hold it.
-
-The regression cases: `D3DFEAT9` has a row E (one quad each for
-UpdateTexture, MinVertexIndex, Lock(offset, 0) and nested Locks), an
-80-rect Clear, a state block recorded and never applied, a lock of its
-DEFAULT offscreen surface and a GetRenderTargetData from an
-A16B16G16R16F target — frame and "getters" lines against the native DXVK
-run, as before. Its device is `D3DCREATE_MULTITHREADED` now, and a loader
-thread creates, fills and releases a texture and a vertex buffer in a loop
-for as long as the frames run, counting its failed calls into a "getters
-3" line; nothing it makes is drawn, so the frame stays the oracle's. The
-loop is **paced to two rounds a frame** (2026-09-13): DXVK frees a released
-resource only once the frames that could have used it are done, and an
-unpaced loader outran the frees whenever the main thread stopped
-presenting — the occlusion-query wait at the dump frame is up to half a
-second of that. Natively on the M1 the run reached a 17.8 GB footprint in
-five seconds (1.4 GB of it resident, the rest GPU memory) and swapped the
-machine to a standstill in `scripts/test.sh host`; the round counts below
-are from before the pacing. `tools/d3dgame-native/
-win32_headless.h` gained `CreateThread` / `WaitForSingleObject` over
-pthreads for it. `DDVMTEST` releases a QueryInterface'd reference and uses
-the object after it, and `tools/d3dpt-exec-test` sends a
-DrawIndexedPrimitiveUP at MinVertexIndex 0xfff000 with a 1 KiB stride.
-
-**Measured** (2026-09-13, `scripts/test.sh all`, 45 passed): the XP
-guest's `D3DFEAT9` frame is byte-identical to native DXVK's with row E in
-it, and all three "getters" lines equal — after a recording fill mode 3
-(`D3DFILL_SOLID`) and stage 2 empty, the offscreen lock reading back its
-fill (`204080`), the A16B16G16R16F readback's bytes, and the loader thread
-at 0 failed calls and 0 failed Presents after 24 906 rounds beside the 600
-frames (the QEMU log says `calls are serialised from now on`, and has no
-`batch error` in it). `D3DGAME9`, `D3DGAME8` and
-`DDVMTEST` pass as before. `tools/d3dpt-exec-test` passes on the new
-executor and **dumps core on the old one**, at the far-MinVertexIndex draw.
-
-**The control**: the same guest stage on an ISO whose `D3D9.DLL` /
-`D3D8.DLL` are the pre-review ones (everything else, the test programs
-included, as shipped) fails exactly one check, `guest-F9`: `D3DFEAT9`
-stops at the first sync call after its UpdateTexture — CreateVertexBuffer
-returns E_FAIL — and draws no frame, and the QEMU log has the refused
-batch (`batch error 3`, a bad handle, in a batch of three records).
-`DDVMTEST`, `D3DGAME9` and `D3DGAME8` pass on those DLLs. (The DLLs of a
-control must be built with the ISO's own flags: built with this toolchain's
-default UCRT they import `api-ms-win-crt-*.dll`, which XP does not have, and
-no D3D program starts at all.) That log line named the record *after* the
-one that failed — the executor counted a record before checking whether it
-had failed, and the guest's `ret_index` came out one too high the same way;
-both name the failing record now (`tools/d3dpt-exec-test`'s hostile
-DrawPrimitiveUP, alone in its batch, logged `at record 1 (op 0)` and logs
-`at record 0 (op 50)`). The `DDVMTEST` case has not been run
-against the pre-fix shim: a use-after-free need not crash, so it is a
-smoke, not a proof.
-
-**The lock's control** (the shipped DLLs with `D3DPT_LOCK` compiled to
-nothing) first **passed** every check: the loader thread's 36 396 rounds
-beside the 600 frames all succeeded and frame 300 was right. The race
-happened all the same — the QEMU log had two batches refused (`batch
-error 3`, a RELEASE naming a handle the host did not have, in batches of
-1 409 and 625 records) and the guest's `Present: batch error` twice, two
-frames' draws thrown away — but the loader counted only its own calls and
-the main thread ignored what Present returned. `D3DFEAT9` counts failed
-Presents into "getters 3" now (native: 0), and on the same lock-less DLLs
-that fails exactly one check, `guest-F9-log=native`: `3 presents failed`
-after 36 384 loader rounds, with three refused batches in the QEMU log
-(`batch error 3 at record 0 (op 71)`, a TEXTURE_UPDATE of the loader's
-landing in the main thread's batch). With the lock: 0 failed Presents and
-no `batch error` (above). A race is a matter of chance, so this is a check
-that fails when the race is hit — twice in two lock-less runs so far — not a
-proof that it is absent.
-
-Found and not changed: `GetSwapChain` a stub while
-`GetNumberOfSwapChains` says 1, and D3D8's `GetVertexShader` /
-`GetPixelShader` returning the handle last set rather than one an applied
-state block set. The D3D8 constant fix has no case: the D3D8 path's only
-oracle is D3DGAME8 against the D3D9 frame, and D3DGAME8 has no shader.
-
-**`CheckDeviceFormat` answers the usage now (2026-09-14).** It said yes to
-every format in its list whatever the usage and resource type, R8G8B8
-included — which DXVK's d3d9 does not map at all ("Unsupported" in
-`d3d9_format.cpp`). 3DMark2001 SE on Win98 asked for an R8G8B8
-render-target texture, was told yes, got `D3DERR_INVALIDCALL` from the
-`CreateTexture` behind it and quit (`P_D3D::allocateMap - CreateTexture
-( for a rendertarget) failed` in its `error.log`). R8G8B8 is out of the
-list; a `D3DUSAGE_RENDERTARGET` question gets yes only for A8R8G8B8,
-X8R8G8B8, R5G6B5, X1R5G5B5 and A1R5G5B5 — the ones Vulkan makes every
-device render to, since the guest cannot ask the host; a
-`D3DUSAGE_DEPTHSTENCIL` question, and `CheckDepthStencilMatch`, only for a
-depth format. Measured on a raw copy of `base98-us` with the rebuilt
-`D3D8.DLL` next to the EXE (`tools/win98-game-test.sh`, `STAGE=`): the
-demo plays through the guest DLLs — past 8 000 presents, all `hr 0`, five
-vs 1.x shaders created, no `error.log` written — and the executor's frames
-show Dragothic, the Earth and Nature as they should be.
-
-## The executor on Wine, in another process (M15, 2026-09-22)
-
-A Linux or macOS host below DXVK's Vulkan 1.3 floor runs the same
-executor on Wine's own d3d9 (ADR-018; the design and its state in
-`docs/tracks/m15-wine-executor.md`). Wine's d3d9 exists only inside a
-Wine process, so the executor runs there — the Windows build of
-`d3dpt_exec.dll`, unchanged, loaded by `d3dpt-exec-host.exe`
-(`d3dpt/exec/d3dpt_exec_host.c`) under Wine with `D3DPT_D3D9=system`,
-which under Wine is Wine's builtin — and QEMU talks to it through
-`libd3dpt_exec_remote` (`d3dpt/exec/d3dpt_exec_remote.c`): the six
-entry points of `d3dpt_exec.h` again, so `d3dpt_exec_load.c` opens it
-as it opens the in-process library, after that one's `d3dpt_exec_probe`
-found no device (`D3DPT_EXEC=auto|dxvk|wine|none`, the adapter's
-`exec=` property). The wire (`d3dpt/exec/d3dpt_remote.h`) is 32-byte
-records over the child's stdio, synchronous, one per call; every
-region with a size — the command window, VRAM, the frame the executor
-presents — is a region of one shared file the library owns
-(`d3dpt_exec_shared_alloc`), which the devices map as guest RAM with
-`memory_region_init_ram_from_fd` (the adapter's VRAM through QEMU patch
-73, the VGA core accepting a region its owner backed) and the child maps
-with `MapViewOfFile`, so a batch runs where the guest wrote it and a
-readback lands in VRAM with no copy. The reply carries the executor's
-`active` flag, the presented frame's geometry (its pixels in the frame
-slot) and up to 64 `vram_dirty` ranges, folded into one past that. A
-caller whose window is not shared memory — the host tests — is served by
-copy, said once in the log.
-
-Measured on the Air (this host has Vulkan, so `D3DPT_EXEC_LIB` points
-the tests at the remote library): `d3dpt-dp2-test` and `d3dpt-exec-test`
-through the child, on WineHQ 11.17 under Rosetta with wined3d's GL
-renderer, draw frames **byte-identical** to the in-process DXVK frames
-(the `exec-wine` check in `scripts/test.sh`); the exec test's 120 frames
-run at 553 fps through the pipe in copy mode against 929 in process. In
-the XP guest (`EXEC=wine tools/xp-driver-test.sh … d3dgame8`), with VRAM
-a region of the shared file, D3DGAME8's frame 300 is within the rig
-budget of the native frame, 600 frames in 3.4 s against 2.1 s in
-process.
+- **Ours:** `D3DGAME9` / `D3DGAME8` (P0a) and `D3DFEAT9`, golden or
+  native-DXVK frames.
+- **Wine's d3d8/d3d9 test suites** (`dlls/d3d9/tests/*.c`, LGPL):
+  thousands of API and pixel tests written to pass on real Windows; they
+  build with mingw and run on XP — the rig gives the pass list, then the
+  device runs them. Not yet wired in.
+- **Irrlicht** (zlib): D3D8 and D3D9 renderers with engine-shaped sample
+  apps; builds with mingw.
+- **Commercial titles** (doc 04's matrix) are the acceptance bar.
 
 ## Risks
 
-- **Host Vulkan capabilities:** MoltenVK lacked required Vulkan features and
-  was superseded by Mesa's KosmicKrisp on macOS (ADR-007). Hosts lacking
-  Vulkan 1.3 fall back to GL pass-through + WineD3D (ADR-013).
-- **FIFO cost under TCG:** each MMIO doorbell is a TCG exit; batching per
-  frame keeps it to a few per frame. qemu-3dfx's numbers (500+ fps wglgears
-  on the Air) bound the transport.
-- **Lock-heavy games** (per-frame dynamic vertex buffers): bulk pages plus
-  DXVK's own upload path; measure in P2 with FIFA-style software-skinned
-  titles.
-- **Scope creep from DX7:** kept out; WineD3D covers it.
-- **C++ in the QEMU tree** (DXVK): built as a separate static library with a
-  C shim, linked into the embed library only.
-
-## Where the FIFA 2000 investigation stopped (2026-09-03)
-
-Parked, for the record (doc 00 has the timeline): with the wine9x
-WineD3D + our two fixes the game runs a match through DirectDraw/D3D6 and
-the GL pass-through; the pitch texture renders as noise bands (dynamic
-surfaces mapped every frame through the PBO path, or a 16-bit/palettized
-upload with the wrong stride — not resolved), the screen flickers (the
-front-buffer present fires on every glFlush, not once per frame), and
-DirectInput stops after the match's mode switch (foreground window). The
-nine "program error: out of range indirect offset (+65)" lines on the host
-are wined3d's own ARB offset-limit probe and are harmless.
+- **Host Vulkan.** MoltenVK lacks DXVK's required features; KosmicKrisp
+  needs macOS 26. Below the Vulkan 1.3 floor the executor runs on the
+  system d3d9 (Windows) or Wine (Linux, macOS), and with neither the
+  guest keeps WineD3D over the GL pass-through until M15's last step.
+- **Doorbell cost under TCG:** each doorbell is a TCG exit; batching per
+  frame keeps it to a few. qemu-3dfx's 500+ fps wglgears on the Air bounds
+  the transport.
+- **Lock-heavy games** (per-frame dynamic buffers): the window plus DXVK's
+  upload path; the DDI path keeps vertex buffers in VRAM (doc 15, v9).
+- **The WineD3D-in-guest fallback's own defects** are parked by the wine9x
+  rule: FIFA 2000 on it draws the pitch as noise bands and flickers
+  (the front-buffer present fires on every `glFlush`). Its nine host lines
+  `program error: out of range indirect offset (+65)` are wined3d's own
+  ARB offset-limit probe and harmless.

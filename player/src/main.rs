@@ -968,7 +968,7 @@ fn read_bmp(path: &std::path::Path) -> Result<(u32, u32, Vec<u32>), String> {
 /// in the table, needs 2400 lines for its 1200 scanlines to be countable.
 const SWEEP_SURFACE: (u32, u32) = (3200, 2400);
 
-/// The mode sweep (doc 03's "mode-sweep test", M2): step through every mode
+/// The mode sweep (doc 03's "The mode sweep", M2): step through every mode
 /// the table knows, upload a geometry pattern at that size and run the real
 /// display path — mode analysis, the geometry stage, the loaded preset —
 /// then check what each did with it. No guest and no QEMU: the boundary

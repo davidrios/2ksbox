@@ -176,8 +176,9 @@ own open items live in its track doc; fixed things leave this list.
 - **The NT side of the 3DMark2001 fixes is not re-run** (doc 19 §38):
   Q8W8V8U8 as FOURCC 63 changed both families, but `xp-driver-test.sh
   install` installed no driver at all on a `winxp-m7` overlay (HEAD's
-  driver and the one before alike), so the harness or the image is at
-  fault and BUMPTEST on XP is unmeasured.
+  driver and the one before alike), so BUMPTEST on XP is unmeasured.
+  That failure matches the DRVINST Logo-dialog watcher fixed since (it
+  now lives as long as the install call): re-run with a current DRVINST.
 
 - **A fault inside a DDI callback leaks the command-window lock** and
   freezes the session until the process dies (doc 19 §36). Accepted for

@@ -80,7 +80,8 @@ Two traps, both in CLAUDE.md's gotchas:
     re-upload when the palette changes.
   - Volume textures and swap-chain objects.
   - `GetFrontBuffer` (Max Payne calls it) and `ProcessVertices`.
-  - `LockRect` on DEFAULT-pool surfaces.
+  - `LockRect` on render targets and depth surfaces (refused; doc 14
+    has the full stub list).
   - The lost-device protocol.
 
   These matter for Win98 titles; XP titles go through the display

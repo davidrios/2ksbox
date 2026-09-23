@@ -1,165 +1,166 @@
-# 17. CD-ROM backend: implementation spec (M5, doc 05)
+# 17. CD-ROM backend: implementation (M5, doc 05)
 
-Doc 05 says *what* the drive emulation must do and why. This document says
-*how*, precisely enough that a session can implement it step by step
-without re-deriving decisions. The ordered plan, with acceptance criteria
-per step, is the track doc `docs/tracks/m5-cdrom-backend.md`. Read both
-before writing code. Everything here was checked against the pinned QEMU
-tree (v9.2.4) on 2026-09-04; line numbers are approximate, function names
-are exact.
+How the drive emulation of doc 05 is built: the `libdisc` disc model,
+the image formats, error correction and subchannel, the C API, the MMC
+reply layouts, the QEMU block driver and ATAPI patches, CD-DA, the
+tests, what the protections we own actually read, and a host folder
+served as a disc (§8). Doc 05 has the problem and the acceptance table;
+`docs/tracks/m5-cdrom-backend.md` and `m5-dirdisc.md` are the track
+records; the disc shelf is doc 07 and patch 52. The QEMU side was
+written against the pinned tree (v9.2.4); function names are exact.
 
 ## 1. Shape
 
 ```
 image on disk            libdisc (Rust crate, staticlib, C API in libdisc/libdisc.h)
  .cue+.bin / .ccd+.img+.sub    disc model: sessions, tracks, indices, per-sector kind,
- / .iso / (.mds+.mdf, .chd)    raw ⇄ cooked synthesis, EDC/ECC, subchannel Q, MMC responders
+ / .iso / .mds+.mdf            raw ⇄ cooked synthesis, EDC/ECC, subchannel Q, MMC responders
+ / isodir:<folder>
         │                                  │
         ▼                                  ▼
- qemu/block/cdimage.c  ── a QEMU *format* block driver (C, ~300 lines):
+ qemu/block/cdimage.c  ── a QEMU *format* block driver (+ the isodir protocol driver):
    cooked 2048-byte view through bdrv_co_preadv (qemu-img, SeaBIOS El Torito,
-   blockdev-change-medium, eject, snapshots all keep working), plus
+   blockdev-change-medium, eject all keep working), plus
    cdimage_disc(bs) → the libdisc handle for whoever wants the raw model
         │
         ▼
  qemu/hw/ide/atapi.c ── patch 51: every command asks `cdimage_disc(blk_bs(s->blk))`;
-   NULL → today's code path, byte for byte (plain ISO on the `raw` driver);
+   NULL → stock QEMU, byte for byte (plain ISO on the `raw` driver);
    non-NULL → sector reads, TOC, subchannel, capabilities, CD-DA from the model
         │
         ▼
- guest: an ordinary IDE/ATAPI CD-ROM (inbox drivers, protection drivers unmodified)
+ guest: an ordinary IDE/ATAPI CD-ROM (in-box drivers, protection drivers unmodified)
 ```
 
-Decisions this fixes (all consistent with doc 05 / ADR-004; do not reopen):
+Decisions (consistent with doc 05 and ADR-004; do not reopen):
 
-1. **Integration is a block driver, not a device property.** `-cdrom game.cue`
-   probes to `cdimage`; `-drive file=game.cue,format=cdimage,media=cdrom`
-   is the explicit form. The drive stays QEMU's `ide-cd`. Medium swap is QMP
-   `blockdev-change-medium` as today (`device: ide1-cd0`).
-2. **The MMC response bytes are computed in Rust**, not in C. atapi.c copies
-   buffers and drives the IDE state machine; libdisc builds TOCs, subchannel
-   replies and READ CD sector layouts. This is what makes the host-side
-   exerciser meaningful: it tests the exact bytes the guest will see.
-3. **Reads are synchronous** (`pread` on immutable files inside libdisc).
-   Disc images are ≤ 900 MB and the guest reads at most 128 KiB per command;
-   no AIO in M5. If profiling ever shows stalls, mmap the payload files
-   inside libdisc — the C API does not change.
-4. **Copy-protection fidelity comes from modelling the drive, not from
-   lists of bad sectors.** A raw dump of a SafeDisc disc contains sectors
-   whose EDC/ECC are wrong on purpose. We verify L-EC on every cooked read of
-   a Mode 1 / Mode 2 form 1 sector, correct what the P/Q parity can locate
-   the way the drive's own decoder does, and fail on the rest exactly like a
-   drive would (MEDIUM ERROR, L-EC uncorrectable) — a protection band is
-   damaged far past what two parity symbols per codeword can place, so it
-   still fails, while an imperfect dump of an ordinary disc still reads
-   (§2.5). No annotation file, nothing patched, nothing bypassed.
-5. **Plain `.iso` stays on QEMU's `raw` driver by default** (probe score 0 for
-   ISO), so the existing behaviour is bit-identical and stays the regression
-   baseline. `format=cdimage` on an `.iso` is allowed and the exerciser
-   compares the two paths.
-6. **Subchannel is deinterleaved (P..W, 12 bytes each) inside libdisc**, the
-   CloneCD `.sub` layout; the MMC "raw" (interleaved) form is produced only
-   inside the READ CD responder.
+1. **Integration is a block driver, not a device property.** `-cdrom
+   game.cue` probes to `cdimage`; `-drive
+   file=game.cue,format=cdimage,media=cdrom` is the explicit form. The
+   drive stays QEMU's `ide-cd`; a medium swap is QMP
+   `blockdev-change-medium`.
+2. **The MMC reply bytes are computed in Rust.** `atapi.c` copies
+   buffers and drives the IDE state machine; libdisc builds TOCs,
+   subchannel replies and READ CD layouts, so the host-side exerciser
+   tests the exact bytes a guest sees.
+3. **Reads are synchronous** (`pread` inside libdisc). A guest reads at
+   most 128 KiB per command; no AIO. If stalls ever show, mmap inside
+   libdisc; the C API does not change.
+4. **Copy-protection fidelity comes from modelling the drive**, not from
+   lists of bad sectors: every data sector's EDC/ECC is checked, what
+   the parity can locate is corrected as a drive's decoder does, and the
+   rest fails as on a drive (§2.5, §2.6c). No annotation file, nothing
+   patched or bypassed.
+5. **A plain `.iso` stays on QEMU's `raw` driver** (probe score 0), so
+   the stock path stays bit-identical and remains the regression
+   baseline. `format=cdimage` on an `.iso` is allowed, and the tests
+   compare the two paths.
+6. **Subchannel is stored deinterleaved** (P..W, 12 bytes each, the
+   CloneCD `.sub` layout); the MMC interleaved form is produced only in
+   the READ CD responder.
 
 ## 2. The libdisc crate
 
-`libdisc/` is a workspace member already (`crate-type = ["rlib",
-"staticlib"]`, no dependencies — keep it that way, no crates.io deps; the
-staticlib is linked into QEMU). Layout after M5a:
+`libdisc/` is a workspace member (`crate-type = ["rlib", "staticlib"]`)
+with **no dependencies** — keep it that way; the staticlib is linked
+into QEMU.
 
 | File | Contents |
 |---|---|
-| `src/lib.rs` | the model types below, `open(path) -> Result<Disc>` dispatching on extension + content |
-| `src/msf.rs` | exists: `Msf` ⇄ LBA (LBA 0 = MSF 00:02:00) |
-| `src/cue.rs` | cue sheet parser → model (§2.3) |
-| `src/ccd.rs` | CloneCD `.ccd` parser → model incl. raw TOC entries (§2.4) |
-| `src/iso.rs` | single Mode 1 track over a cooked image |
-| `src/sector.rs` | raw ⇄ cooked: sync, header, subheader, EDC placement, `SectorKind` detection from a raw sector |
-| `src/ecc.rs` | EDC (CRC-32) and RSPC P/Q parity, `verify_mode1`, `verify_mode2f1` (§2.5) |
-| `src/subq.rs` | Q-channel synthesis + CRC-16 (§2.6), P-channel |
-| `src/mmc.rs` | responders: READ TOC formats 0/1/2, READ SUB-CHANNEL, READ CD sector layout, READ DISC INFORMATION (§4) |
-| `src/capi.rs` | `#[no_mangle] extern "C"` functions matching `libdisc/libdisc.h` exactly (§3) |
-| `src/bin/discx.rs` | the exerciser (§6.1): synthetic images, self-test through the C API, `dump`, `convert`, `export`, `mktree` |
-| `qemu/cdimage.c`, `qemu/cdimage.h` | the QEMU block driver, overlaid into the tree by `prepare-qemu.sh` (§5) |
-| `libdisc.h` | the one C header (§3), overlaid next to it |
+| `src/lib.rs` | the model (§2.1), `Disc::open` dispatching on extension, content, or a directory |
+| `src/msf.rs` | `Msf` ⇄ LBA (LBA 0 = MSF 00:02:00) |
+| `src/cue.rs`, `ccd.rs`, `mds.rs`, `iso.rs` | the image formats (§2.3–2.4b) |
+| `src/isodir.rs` | a host folder as an ISO 9660 + Joliet volume (§8) |
+| `src/sector.rs` | raw ⇄ cooked: sync, header, subheader, EDC placement, sector-kind detection |
+| `src/ecc.rs` | EDC and RSPC P/Q parity, verification and correction (§2.5) |
+| `src/subq.rs` | Q-channel synthesis and CRC-16, P channel (§2.6) |
+| `src/mmc.rs` | READ TOC 0/1/2, READ SUB-CHANNEL, READ CD, READ DISC INFORMATION (§4) |
+| `src/capi.rs` | the `extern "C"` functions of `libdisc/libdisc.h` (§3) |
+| `src/bin/discx.rs` | the exerciser and diagnosis tool (§6.1) |
+| `qemu/cdimage.c`, `cdimage.h` | the block drivers, overlaid into QEMU by `prepare-qemu.sh` (§5) |
+| `libdisc.h` | the one C header, overlaid next to them |
 
 ### 2.1 Model
 
-Replace the M0 placeholder types in `lib.rs` (nothing uses them yet):
-
 ```rust
 pub struct Disc {
-    pub sessions: Vec<Session>,        // 1-based session numbers, ascending
-    pub mcn: Option<[u8; 13]>,         // CATALOG
-    pub raw_toc: Option<Vec<TocEntry>>, // CCD [Entry] records verbatim; None = synthesize
-    files: Vec<Payload>,               // opened files (bin/img/sub/wav), pread-able
+    pub sessions: Vec<Session>,          // 1-based, ascending
+    pub mcn: Option<[u8; 13]>,           // CATALOG
+    pub raw_toc: Option<Vec<TocEntry>>,  // CCD/MDS entries verbatim; None = synthesize
+    files: Vec<Payload>,                 // path, length, mtime; opened on demand
+    blobs: Vec<Vec<u8>>,                 // generated sectors (isodir metadata)
+    fds: Mutex<Vec<(usize, Arc<File>)>>, // 8-entry MRU handle cache
 }
 pub struct Session { pub number: u8, pub tracks: Vec<Track>, pub leadout_lba: i32 }
 pub struct Track {
-    pub number: u8,                    // 1..=99
-    pub mode: TrackMode,               // Audio, Mode1, Mode2 (form per sector), Mode2Form1, Mode2Form2
-    pub control: u8,                   // Q control nibble: audio 0x0 (|1 pre-emphasis, |2 DCP), data 0x4
+    pub number: u8,                      // 1..=99, unique across sessions
+    pub mode: TrackMode,                 // Audio, Mode1, Mode2 (form per sector), Mode2Form1/2, Mode2Formless
+    pub control: u8,                     // audio 0x0 (|1 pre-emphasis, |2 DCP, |8 4ch), data 0x4
     pub isrc: Option<[u8; 12]>,
-    pub indices: Vec<(u8, i32)>,       // (index number, absolute LBA of its first sector), index 1 always present
-    pub start_lba: i32,                // == indices[index 1]
-    pub end_lba: i32,                  // exclusive: next track's index 0/1 start, or the session lead-out
-    pub extents: Vec<Extent>,          // contiguous coverage of [first index .. end_lba)
+    pub indices: Vec<(u8, i32)>,         // (index, absolute LBA), index 1 always present
+    pub start_lba: i32,                  // index 1
+    pub end_lba: i32,                    // exclusive
+    pub extents: Vec<Extent>,            // contiguous coverage of [first index .. end_lba)
 }
-pub struct Extent {
-    pub lba: i32, pub count: u32,
-    pub source: Source,                // File{file, offset, stride, layout} | Silence | ZeroData
-    pub sub: Option<SubSource>,        // File{file, offset} (96 B/sector, deinterleaved) or None = synthesize
+pub struct Extent { pub lba: i32, pub count: u32, pub source: Source, pub sub: Option<SubSource> }
+pub enum Source {
+    File { file: usize, offset: u64, layout: Layout, swap: bool, eof_pad: bool },
+    Mem { blob: usize, offset: u64 },    // isodir's descriptors, path tables, directories
+    Silence,                             // audio pre/postgap
+    ZeroData,                            // data pre/postgap, valid EDC/ECC
 }
-pub enum Layout { Cooked2048, Mode2_2336, Raw2352, Raw2352Sub96 /* .bin with interleaved sub appended */ }
-pub enum SectorKind { Audio, Mode1, Mode2Form1, Mode2Form2, Mode2Formless, Gap }
-pub struct SectorInfo { pub kind: SectorKind, pub track: u8, pub index: u8, pub lec_ok: Option<bool> /* data sectors only */ }
+pub enum Layout { Cooked2048, Mode2_2336, Raw2352, Raw2352Sub96 }
+pub enum SubSource { File { file: usize, offset: u64 } } // 96 B/sector, deinterleaved
 ```
 
 Rules:
+
 - LBAs are `i32`; the program area starts at LBA 0 (MSF 00:02:00). The
-  disc's readable range is `[0, last session lead-out)`. Anything else is
-  `Err(Range)`; libdisc never invents lead-in data.
-- `start_lba` of track 1 is 0 for every format we read (the mandatory
-  150-sector pregap of track 1 is *not* in the file and is never addressed).
-- The lead-out LBA of the last session is what `sector_count()` returns
-  and what READ CAPACITY / TOC point A2 use.
+  readable range is `[0, last session lead-out)`; anything else is
+  `Err(Range)`. libdisc never invents lead-in data, and track 1's
+  mandatory 150-sector pregap is never in a file and never addressed.
+- The last session's lead-out is `sector_count()`, READ CAPACITY and
+  TOC point A2.
 - **A *CD* ends at `msf::MAX_LBA`** (449,849 — MSF 99:59:74, ~878 MiB):
-  three BCD bytes have no address past it, so the TOC's lead-out, the
-  subchannel and every sector header could not name what is beyond. A
-  *disc* does not: past an 80-minute CD (`CD_MAX_SECTORS`, 360,000 of
-  our sectors) the drive reports a **DVD-ROM** profile (patch 53) and
-  nothing asks for an MSF, so the model goes on to a dual-layer DVD-9,
-  4,173,824 sectors, which is where `isodir` stops (there is no larger
-  medium to claim to be). `Msf::from_lba` saturates rather than failing
-  — this code runs inside QEMU, where `capi.rs` turns a panic into an
-  `EIO` on whatever command happened to convert an address — so **the
-  opener is where a disc past any real medium has to be refused**, and
-  `isodir` does it by measuring the tree before it lays anything out.
-- Sector reads go through one function: `Disc::read_raw(lba) -> [u8; 2352]`
-  (stored raw, or synthesized from cooked per §2.5) and
-  `Disc::read_sub(lba) -> [u8; 96]` (stored, or synthesized per §2.6).
-  `read_cooked(lba)` = raw → kind detection → L-EC verify → user data, or
-  `Err(Medium)` / `Err(Mode)` (audio / gap).
+  three BCD bytes cannot address past it. A *disc* does not: past an
+  80-minute CD (`CD_MAX_SECTORS` in `atapi.c`, 360,000 sectors) the
+  drive reports a DVD-ROM profile (patch 53) and nothing asks for an
+  MSF, so the model goes on to a dual-layer DVD-9, 4,173,824 sectors.
+  `Msf::from_lba` saturates rather than asserting — libdisc runs in
+  QEMU, where `capi.rs` turns a panic into `LIBDISC_EIO` on whatever
+  command converted the address — so **the opener is where a disc past
+  any real medium is refused** (§8).
+- Payload files are held as path, length and mtime and opened on demand
+  into the MRU cache; every open re-`stat`s, and a changed file is
+  `Error::Medium`, a read error as from a damaged disc, never a torn
+  read. `eof_pad` lets an extent's last sector run past its file's end;
+  only `isodir` sets it, so a short image file stays an error. A host
+  read failure is logged on stderr (`libdisc: …`, the first 32), since
+  a guest sees only a sense code.
+- `extent_at` is a binary search.
+- Sector reads go through `read_raw(lba) -> [u8; 2352]` (stored, or
+  synthesized from cooked per §2.5) and `read_sub(lba) -> [u8; 96]`
+  (stored, or synthesized per §2.6). `read_cooked(lba)` is raw → kind
+  detection → L-EC → user data, or `Err(Medium)` / `Err(Mode)` (audio,
+  gap).
 
-### 2.2 Byte conventions (get these right once)
+### 2.2 Byte conventions
 
-- **Header MSF and Q-channel times are BCD** (`0x21` = 21). MMC TOC /
-  subchannel *replies* carry binary MSF or 32-bit big-endian LBA.
-- Absolute MSF in a sector header = MSF of `lba + 150`.
-- CD-DA samples: 16-bit little-endian, left then right, 588 stereo frames
-  per sector (2352 bytes). `FILE … MOTOROLA` in a cue is big-endian: swap.
-  `FILE … WAVE`: parse the RIFF chunks, use the `data` chunk offset (not a
-  fixed 44), require 44100 Hz / 16-bit / stereo, else refuse the image.
-- Raw sectors in dumps are **descrambled** already (drives descramble); we
-  never scramble or descramble.
-- Sync pattern: `00 FF FF FF FF FF FF FF FF FF FF 00`. Header: `MIN SEC
-  FRAME MODE` (BCD, BCD, BCD, 1 or 2). Mode 2 subheader: 8 bytes at 16..24
-  (form 2 = bit 5 of byte 18 (`submode`) set).
+- **Header MSF and Q-channel times are BCD** (`0x21` = 21). MMC TOC and
+  subchannel *replies* carry binary MSF or a 32-bit big-endian LBA.
+- A sector header's absolute MSF is the MSF of `lba + 150`.
+- CD-DA: 16-bit little-endian, left then right, 588 stereo frames per
+  sector. `FILE … MOTOROLA` is big-endian (swap). `FILE … WAVE`: parse
+  the RIFF chunks and use the `data` chunk's offset (not a fixed 44);
+  anything but 44100 Hz / 16-bit / stereo is refused.
+- Raw sectors in dumps are **descrambled** already; we never scramble.
+- Sync: `00 FF×10 00`. Header: `MIN SEC FRAME MODE` (BCD ×3, then 1 or
+  2). Mode 2 subheader: bytes 16..24; form 2 = bit 5 of byte 18.
 
-### 2.3 Cue sheet parsing (`cue.rs`)
+### 2.3 Cue sheets (`cue.rs`)
 
-Grammar to accept (case-insensitive keywords, quoted or bare filenames,
-`REM` lines ignored, CRLF or LF):
+Accepted (case-insensitive keywords, quoted or bare names, `REM`
+ignored, CRLF or LF):
 
 ```
 CATALOG 1234567890123
@@ -168,42 +169,32 @@ FILE "name" BINARY|MOTOROLA|WAVE
     FLAGS [DCP] [4CH] [PRE] [SCMS]
     ISRC XXXXXXXXXXXX
     PREGAP mm:ss:ff
-    INDEX 00 mm:ss:ff
-    INDEX 01 mm:ss:ff
     INDEX nn mm:ss:ff
     POSTGAP mm:ss:ff
 ```
 
-Semantics (these are where cue parsers go wrong):
-- `INDEX` times are **relative to the start of the current FILE**, in
-  MSF without the 150 offset (`00:00:00` = the file's first sector).
-  Absolute LBA = (running LBA at file start) + index frames.
-- A track's sectors in the file run from its lowest index (00 if present,
-  else 01) to the next track's lowest index in the same file, or to the end
-  of the file. The file's sector count = file size ÷ stride (2048 / 2336 /
-  2352; a size not divisible by the stride is an error naming the file).
-- `PREGAP` = that many sectors **not in the file**, synthesized before index
-  01 (audio: digital silence; data: zero-filled sectors of the track's
-  mode with valid EDC/ECC). They belong to the track as index 00. `POSTGAP`
-  = synthesized after the last sector. Absolute LBAs advance across them.
-- Multiple `FILE` lines: files are concatenated in order; the running LBA
-  carries over.
-- Track 1 must start at absolute LBA 0 after the above (a cue whose track 1
-  has `INDEX 00 00:00:00` and `INDEX 01 00:02:00` is the common
-  "pregap in file" case: index 00 covers LBA 0..149, index 01 starts at 150;
-  accept it as is).
-- Control nibble: AUDIO → 0x0, plus 0x1 if `PRE`, 0x2 if `DCP`; data → 0x4.
-  `4CH` → 0x8 (never seen in practice; carry it anyway).
-- Payload file resolution: relative to the cue's directory; if not found,
-  try case-insensitively (dumps made on Windows), then error naming the
-  path tried.
-- The session lead-out LBA = end of the last track. Cue sheets are
-  single-session (`REM SESSION` extensions: ignore in M5a, note in the
-  error message if a second session is declared).
+Where cue parsers go wrong:
 
-### 2.4 CloneCD parsing (`ccd.rs`)
+- `INDEX` times are **relative to the start of the current FILE**,
+  without the 150 offset. Absolute LBA = the running LBA at the file's
+  start + the index frames.
+- A track's sectors run from its lowest index to the next track's lowest
+  index in the same file, or the file's end. File sectors = size ÷
+  stride (2048 / 2336 / 2352; a remainder is an error naming the file).
+- `PREGAP` sectors are **not in the file**: synthesized before index 01
+  as index 00 (silence, or zero data with valid EDC/ECC). `POSTGAP`
+  likewise after the last sector. Absolute LBAs advance across both.
+- Several `FILE`s concatenate; the running LBA carries over.
+- Track 1 starts at LBA 0; `INDEX 00 00:00:00` + `INDEX 01 00:02:00`
+  (pregap in the file) is accepted as is.
+- Control: AUDIO 0x0, +0x1 `PRE`, +0x2 `DCP`, +0x8 `4CH`; data 0x4.
+- Payloads resolve relative to the cue, then case-insensitively (dumps
+  made on Windows), then fail naming the path tried.
+- Single session; a declared second session is named in the error.
 
-`.ccd` is an INI file. Sections and keys to read (others ignored):
+### 2.4 CloneCD (`ccd.rs`)
+
+`.ccd` is an INI file:
 
 ```
 [CloneCD]  Version=3
@@ -213,1062 +204,838 @@ Semantics (these are where cue parsers go wrong):
 [TRACK n]  MODE=0|1|2  INDEX 0=lba  INDEX 1=lba  ISRC=…
 ```
 
-- `.img` next to it: 2352 bytes per sector from LBA 0, all tracks; `.sub`
-  next to it (optional): 96 bytes per sector, **deinterleaved** P..W.
-  `DataTracksScrambled=1` images exist (rare): refuse with a clear error.
-- Tracks come from `[Entry]` records with `Point` 1..99 (`PLBA` = index 1
-  start, `Control` = the nibble), `[TRACK n]` gives `INDEX 0` where present
-  and the mode. Session lead-outs from `Point=0xA2` (`PLBA`). Multisession
-  works out of the box: one `Session` per distinct `Session=` value.
-- **Keep every `[Entry]` verbatim in `Disc::raw_toc`** (session, point,
-  adr, control, min/sec/frame, pmin/psec/pframe). READ TOC format 2 replays
-  them (§4.1); that is the fidelity SecuROM-era checks want.
+- `.img`: 2352 bytes per sector from LBA 0; `.sub` (optional): 96 bytes
+  per sector, deinterleaved. `DataTracksScrambled=1` is refused.
+- Tracks come from `[Entry]` records with `Point` 1..99 (`PLBA` = index
+  1, `Control`), `[TRACK n]` adds `INDEX 0` and the mode; session
+  lead-outs from `Point=0xA2`. One `Session` per distinct `Session=`.
+- **Every `[Entry]` is kept verbatim** in `raw_toc` and replayed by READ
+  TOC format 2 (§4.1): the fidelity SecuROM-era checks want.
 
-### 2.4b MDS/MDF (`mds.rs`, brought forward from M5e on 2026-09-04)
+### 2.4b MDS/MDF (`mds.rs`)
 
-Alcohol 120% / Daemon Tools: `.mds` header (`MEDIA DESCRIPTOR`, version
-1.x), session blocks at the offset in header byte 0x50 (24 bytes each:
-start, end, number, block counts, first/last track, tracks offset), track
-blocks of 80 bytes (mode `0xA9` audio / `0xAA` Mode 1 / `0xAB` Mode 2 /
-`0xAC`/`0xAD` form 1/2, subchannel flag `0x08` = 96 bytes interleaved
-appended, ADR/control, point, MSF, PMSF, extra-block offset, sector size
-2048/2352/2448, start sector, 64-bit start offset, footer offset with the
-`.mdf` name), extra blocks (pregap, length). Every block with a point is
-kept as a raw TOC entry. **Layout rule, checked against a RAW+SUB dump's
-own Q frames:** the `.mdf` holds each track from `start_sector` (index 1)
-for `length` sectors at `start_offset`; the `pregap` sectors are *not* in
-the file and are synthesized (silence / zero data) as the track's index 0;
-track 1's pregap of 150 is the lead-in pause and is never addressed. DPM
-blocks (header byte 0x54) are ignored until a title needs timing.
+Alcohol 120% / Daemon Tools: a `MEDIA DESCRIPTOR` header (version 1.x),
+24-byte session blocks at the offset in header byte 0x50, 80-byte track
+blocks (mode, subchannel flag `0x08` = 96 bytes interleaved appended,
+ADR/control, point, MSF, PMSF, extra-block offset, sector size
+2048/2352/2448, start sector, 64-bit start offset, footer with the
+`.mdf` name) and extra blocks (pregap, length). Every block with a point
+becomes a raw TOC entry. Modes: `0xA9` audio, `0xAA` Mode 1, `0xAB` Mode
+2, `0xAC`/`0xAD` form 1/2, and **`0xEC`, Alcohol's mixed Mode 2 (XA)**,
+form per sector — read as Mode 2, not audio (NFS Porsche Unleashed's
+MDS once came out as one unmountable 281,279-sector CD-DA track). An MDS
+whose mode byte contradicts its TOC control bits is refused rather than
+misread.
+
+**Layout rule, checked against a RAW+SUB dump's own Q frames:** the
+`.mdf` holds each track from `start_sector` (index 1) for `length`
+sectors at `start_offset`; the `pregap` sectors are *not* in the file
+and are synthesized as index 0; track 1's pregap of 150 is never
+addressed. DPM blocks (header byte 0x54) are ignored until a title
+needs timing.
 
 ### 2.5 Raw ⇄ cooked and L-EC (`sector.rs`, `ecc.rs`)
 
-Raw Mode 1 sector (2352 bytes): `sync[12] header[4] data[2048] edc[4]
-zero[8] p_parity[172] q_parity[104]`. Mode 2 form 1: `sync header
-subheader[8] data[2048] edc[4] p[172] q[104]`. Mode 2 form 2: `sync header
-subheader data[2324] edc[4]` (EDC optional, may be zero).
+Raw layouts (2352 bytes): Mode 1 `sync[12] header[4] data[2048] edc[4]
+zero[8] p[172] q[104]`; Mode 2 form 1 `sync header subheader[8]
+data[2048] edc[4] p[172] q[104]`; form 2 `sync header subheader
+data[2324] edc[4]` (EDC optional, may be zero).
 
-**EDC**: CRC-32 with polynomial x^32+x^31+x^16+x^15+x^2+x+1, LSB-first
-(table built from reflected `0xD8018001`), initial value 0, no final XOR,
-stored little-endian. Coverage: Mode 1 bytes 0..2064 (sync+header+data);
-form 1 bytes 16..2072 (subheader+data); form 2 bytes 16..2348.
+**EDC**: CRC-32, polynomial x^32+x^31+x^16+x^15+x^2+x+1, LSB-first
+(table from reflected `0xD8018001`), init 0, no final XOR, stored
+little-endian. Coverage: Mode 1 bytes 0..2064; form 1 16..2072; form 2
+16..2348.
 
-**ECC (RSPC)**: over GF(2^8) with the primitive polynomial `0x11D`. Operate
-on the 2064-byte area `header+data+edc+zero` (bytes 12..2076 of the sector;
-for Mode 2 the header is treated as four zero bytes — compute with the
-header temporarily zeroed, then restore). Use the standard two-pass loop
-(the form Neill Corlett's ECM tool uses, public domain; libmirage does the
-same): each pass produces parity for one "major" of size `major_count`
-over `minor_count` bytes, written as two bytes at `dst[major]` and
-`dst[major + major_count]`:
+**ECC (RSPC)** over GF(2^8), primitive polynomial `0x11D`, on the
+2064-byte area bytes 12..2076 (for Mode 2 the header is taken as four
+zero bytes). The standard two-pass loop (Neill Corlett's ECM; libmirage
+does the same); each pass writes two parity bytes per major, at
+`dst[major]` and `dst[major + major_count]`:
 
 | Pass | major_count | minor_count | major_mult | minor_inc | writes to |
 |---|---|---|---|---|---|
 | P | 86 | 24 | 2 | 86 | sector[2076..2248] |
 | Q | 52 | 43 | 86 | 88 | sector[2248..2352] |
 
-Inner loop for one major `m`: `index = (m >> 1) * major_mult + (m & 1)`,
-`ecc_a = ecc_b = 0`; repeat `minor_count` times: `t = src[index]`;
-`index += minor_inc; if index >= size (2064 + 172 for Q) index -= size`;
-`ecc_a ^= t; ecc_b ^= t; ecc_a = gf_mul2(ecc_a)` (multiply by α with the
-0x11D reduction); after the loop `ecc_a = gf_div(ecc_a ^ ecc_b) ` using
-the standard `ecc_b_lut` (inverse of α³ ⊕ 1 table); store
-`dst[m] = ecc_a`, `dst[m + major_count] = ecc_a ^ ecc_b`. Build the two
-256-entry tables once (`ecc_f_lut[i] = 2·i in GF`, `ecc_b_lut[i]` such that
-`ecc_b_lut[ecc_f_lut[i] ^ i] = i`). The Q pass reads the P parity too
-(source size 2064 + 172).
+For major `m`: `index = (m >> 1) * major_mult + (m & 1)`, `a = b = 0`;
+`minor_count` times: `t = src[index]`, `index += minor_inc` (wrapping at
+2064, or 2064 + 172 for Q, which reads the P parity too), `a ^= t; b ^=
+t; a = gf_mul2(a)`; then `a = ecc_b_lut[a ^ b]`, `dst[m] = a`, `dst[m +
+major_count] = a ^ b`. The tables: `ecc_f_lut[i] = 2·i` in GF,
+`ecc_b_lut[ecc_f_lut[i] ^ i] = i`.
 
-`verify_mode1(raw)`: recompute EDC and both parities into scratch and
-compare with the stored bytes. Result `Ok`, `EdcMismatch`, `EccMismatch`
-or `NoSync` (no sync pattern / wrong mode byte in a data track: an
-audio-format tail, or the zero filler a dump tool writes for an
-unreadable sector — an all-zero sector's EDC and parity are zero and would
-verify otherwise; C2 reports every byte bad).
+`verify_mode1` / `verify_mode2f1` recompute and compare: `Ok`,
+`EdcMismatch`, `EccMismatch`, or `NoSync` (no sync or a wrong mode byte
+in a data track — an audio-format tail, or the zero filler a dumper
+writes for an unreadable sector, whose all-zero EDC and parity would
+otherwise verify).
 
-**A cooked read is decided by the EDC, and repaired by the parity only when
-the EDC fails** (2026-09-08). Two steps, in this order.
+**A cooked read is decided by the EDC and repaired by the parity only
+when the EDC fails.**
 
-**1. The EDC alone says whether the delivered bytes are intact**
-(`ecc::edc_ok`). It is a CRC-32 over exactly what a cooked read hands over —
-sync, header and the 2048 user bytes for Mode 1, subheader and data for form
-1 — so when it comes out, those bytes are good to 2^-32 and any disagreement
-is in *parity fields the guest never sees*. The sector is delivered as it
-stands and the parity is not even computed (which makes every good sector's
-read cheaper too). The sync pattern is still checked first, because an
-all-zero sector's EDC is zero and would otherwise verify. A real dump is
-what settled this: a Warcraft 3 disc with **92 L-EC failures, every one of
-them EDC-clean** — the parity fields are wrong, the data is not — whose
-in-game video stopped in the middle because we were refusing sectors whose
-contents were provably right.
+1. **The EDC says whether the delivered bytes are intact**
+   (`ecc::edc_ok`). It is a CRC-32 over exactly what a cooked read hands
+   over, so when it holds, any disagreement is in parity fields the guest
+   never sees: the sector is delivered and the parity not even computed.
+   The sync is checked first. A real dump settled this: a Warcraft 3
+   disc with 92 L-EC failures, every one EDC-clean, whose in-game video
+   stopped midway while we refused sectors that were provably right.
+2. **A wrong EDC gives the decoder work** (`ecc::correct`). Each P and Q
+   codeword's two parity symbols locate one wrong symbol (a single error
+   of magnitude `s0` at position `i` gives `s1/s0 = alpha^(m+1-i)`).
+   Correct one per codeword, alternate the passes, up to four rounds;
+   **the EDC is the verdict here too**: a sector is accepted, and written
+   back, only when its CRC-32 then holds, so a mis-correction cannot
+   pass. On the selftest disc a burst of up to 96 bytes is recovered
+   (the interleave spreads it over codewords); 128 bytes, a filled body
+   or a zeroed sector are not.
 
-**2. A wrong EDC is what gives the decoder work** (`ecc::correct`). Each P
-and Q codeword carries two parity symbols, which locate one wrong symbol in
-it: the XOR of a codeword's symbols is zero and so is
-the XOR weighted by `alpha^(m+1-i)`, so a single error of magnitude `s0` at
-position `i` shows up as `s1/s0 = alpha^(m+1-i)`. Correct one per codeword,
-alternate the passes (each can reach a codeword the other cannot, and Q's
-data includes P), up to four rounds — and **the EDC is the verdict here
-too**: a sector is only accepted, and only written back, when its own
-CRC-32 comes out afterwards, so a mis-correction cannot pass. Measured on the selftest
-disc: a burst up to **96 bytes** is recovered exactly (consecutive sector
-bytes fall in different codewords, which is what the interleave is for),
-128 bytes is not, and neither is a body of filler or a zeroed sector.
-
-Only what the decoder cannot fix is `Err(Medium)` on a cooked read. **Raw
-reads still return the stored bytes, uncorrected** — dumping a disc and
-reading a protection band both depend on that — and `sector_info`'s `lec`
+Only what the decoder cannot fix is `Err(Medium)`. `sector_info`'s `lec`
 still reports whether the sector verifies *as stored*, which is what
-`discx scan` counts when a dump is being diagnosed. `scan` splits those
-failures the way a guest meets them — read anyway because the EDC is intact,
-read after the decoder repairs them, or unreadable — and lists the LBAs of
-the last kind. `LIBDISC_NO_CORRECT=1` turns both steps off for the A/B
-(every L-EC failure a medium error, the behaviour before 2026-09-08).
+`discx scan` counts. `LIBDISC_NO_CORRECT=1` turns both steps off (every
+L-EC failure a medium error) for an A/B.
 
-Why this is the drive's behaviour and not a bypass: a real drive's L-EC
-hardware corrects before it hands user data over — that is what the parity
-is *for* — and a protection band survives it untouched, because those
-sectors are corrupted far past one symbol per codeword (DiscImageCreator
-writes the whole body as `0x55`, "replaced at 0x55 except header"). Without
-this, an ordinary dump with a handful of imperfect sectors gives a guest
-hard read errors where the original disc gives it data. And a protection
-band fails **both** steps, not just the second: its sectors' user data is
-replaced, so their EDC is wrong — which is what `scan`'s "with the EDC wrong
-too" column counts, and what the Warcraft 3 dump had none of.
-C2 pointers (READ CD with C2 requested): set the bit for every byte whose
-recomputed parity disagrees — approximate, good enough for checks that
-only count errors; refine when a dump with recorded C2 data exists.
+This is the drive's behaviour, not a bypass: a real drive's L-EC
+hardware corrects before it hands data over, and a protection band
+survives it because its sectors are damaged far past one symbol per
+codeword (DiscImageCreator writes the body as `0x55`) and their EDC is
+wrong. Without correction an ordinary dump with a few imperfect sectors
+gives a guest hard errors where the disc gives data. What a *raw* read
+delivers is §4.3.
 
-Synthesis (cooked image → raw request): sync + BCD header (mode 1 or 2)
-+ data + EDC + zero + P + Q, computed once per sector on demand (a
-2 KiB-per-sector cache is unnecessary; the ECC costs ~10 µs).
+C2 pointers: a bit for every byte whose recomputed parity disagrees —
+approximate, enough for checks that count errors.
+
+Synthesis (cooked image → raw request): sync + BCD header + data + EDC
++ zero + P + Q per sector on demand (~10 µs; no cache).
 
 ### 2.6 Subchannel synthesis (`subq.rs`)
 
-When no `.sub` data exists, `read_sub(lba)` returns 96 bytes: P (12
-bytes) all `0xFF` inside index 00 of any track and for the last 150
-sectors before a track's index 01 (that is the pause flag as real discs
-carry it), else `0x00`; Q (12 bytes) as below; R..W zero.
+With no `.sub`, `read_sub(lba)` returns: P all `0xFF` inside index 00
+and for the 150 sectors before a track's index 01 (the pause flag), else
+`0x00`; Q as below; R..W zero. A `.sub` wins for every sector it covers;
+sectors past a truncated one are synthesized.
 
-**Synthesis of an undeclared pregap is a guess, and it must stay one**
-(measured 2026-09-05 with `discx subscan` against four real dumps). Where a
-descriptor gives a track no index 00, the disc underneath may be any of three
-things, and nothing in the descriptor tells them apart — the MDS `pregap`
-field is 0 for every such track on both Alcohol dumps we have:
+Q, ADR 1 (position):
+
+```
+byte 0     control<<4 | adr(1)
+byte 1     TNO   BCD track number
+byte 2     INDEX BCD (00 in pregap)
+byte 3-5   MIN SEC FRAME  BCD, track-relative; in index 00 it counts DOWN
+           (to 00:00:01 at the last pregap sector on both real discs measured)
+byte 6     ZERO
+byte 7-9   AMIN ASEC AFRAME  BCD absolute (lba + 150)
+byte 10-11 CRC-16 big-endian: CCITT 0x1021, init 0, over bytes 0..10, inverted
+```
+
+With an MCN or ISRC, ADR 2 goes at `lba % 100 == 98` and ADR 3 at `==
+99` (MCN: 13 BCD digits high nibble first in bytes 1..7, byte 8 zero,
+AFRAME in byte 9; ISRC: 12 characters 6-bit packed per Red Book in bytes
+1..8, AFRAME in byte 9).
+
+**Synthesizing an undeclared pregap is a guess, and it stays one.**
+Where a descriptor gives a track no index 00, the disc may be any of
+three things and nothing in the descriptor tells them apart (the MDS
+`pregap` field is 0 for every such track on both Alcohol dumps we have;
+measured with `discx subscan`):
 
 | Disc | P before the next track | Q there |
 |---|---|---|
-| AoE Gold | `0xFF` (pause) | previous track, **index 01**, counting up |
-| Moto Racer | `0xFF` (pause) | next track, **index 00**, counting down to 0 over 149 sectors |
-| Settlers 3 | `0x00` (no pause) | previous track, index 01, counting up |
+| AoE Gold | `0xFF` (pause) | previous track, index 01, counting up |
+| Moto Racer | `0xFF` (pause) | next track, index 00, counting down over 149 sectors |
+| Settlers 3 | `0x00` | previous track, index 01, counting up |
 
-The same caveat covers **MCN frame placement**: we interleave ADR 2 at
-`lba % 100 == 98` when the disc has a catalog number, and Rayman 2 — the one
-disc here that carries MCN frames at all, 3,307 of them — puts them
-elsewhere, which is 99.0 % agreement rather than 100 %. Where a disc chooses
-to put its ADR 2 and 3 frames is a mastering decision no descriptor records.
+We synthesize the first: it reproduces AoE's subchannel exactly (277,626
+of 277,626 ADR 1 frames) and costs ~0.7 % of frames on a
+Moto-Racer-shaped disc; the second convention traded 1,633 wrong frames
+on one disc for 1,866 and 1,650 on two others. MCN placement is the same
+kind of guess: Rayman 2, the one disc here with MCN frames (3,307),
+places them elsewhere (99.0 % agreement). The residual reaches no game —
+AoE Gold and Moto Racer both play their soundtracks in-game — and
+nothing met so far reads Q (§2.6b). Anything that fingerprints
+subchannel wants a dump that carries it (CCD `.sub`, MDS 2448), which is
+replayed verbatim.
 
-We synthesize the first of those: P pauses for the 150 sectors before a
-track's index 01, Q keeps counting up in the previous track at index 01.
-That reproduces AoE's own subchannel **exactly** — 277,626 of 277,626 ADR 1
-frames — and costs ~0.7 % of frames on a Moto-Racer-shaped disc. Changing it
-to the second convention was tried and reverted: it trades 1,633 wrong frames
-on one disc for 1,866 and 1,650 on two others.
+### 2.6b The negative control, and what the protections read
 
-**The residual does not reach a game.** AoE Gold and Moto Racer are the two
-discs the conventions differ on, and both play their CD soundtracks in-game in
-XP, in the player, from their `.mds` (user, 2026-09-05) — so the ~0.7 % of Q
-frames we synthesize wrongly on a Moto-Racer-shaped disc is below what a
-title's own audio code looks at. That is what makes the guess safe to keep,
-not merely cheapest to keep.
+A check that ran and was satisfied looks exactly like one that never
+ran. `discx repair` builds the disc that tells them apart: a copy in
+which every L-EC-failing sector verifies, the user data exactly as
+dumped, the difference confined to bytes 2064–2351 of those sectors
+(§6.1). The control copies live under `oldstuff/clean/` (FIFA 2002: 584
+sectors repaired; Settlers 3 CD01: 547, leaving the 150 sync-less
+run-out sectors a drive fails too).
 
-**What a protection actually reads: measured, not assumed** (2026-09-05).
-Settlers 3 CD01 is dumped as both a `.ccd` (with `.sub`) and a `.cue`
-(without), and its ProtectCD band is corrupt in the data *and* in the Q
-relative timing. The game plays from **both**, on both discs (user). The two
-images deliver an identical data anomaly — `discx scan` gives the same 697
-failing LBAs for each — and differ only in subchannel: the `.ccd` replays the
-disc's own Q, the `.cue` synthesizes regular, CRC-correct Q that has no
-anomaly in it at all.
+**Both titles run from their repaired copies** (user, 2026-09-05), so
+SafeDisc 2.x and ProtectCD are inconclusive in doc 05, not passing. Both
+binaries are genuinely wrapped (`7z` reads the qcow2 directly):
+`fifa2002.exe` has SafeDisc 2's `stxt371` / `stxt774` sections and
+`BoG_` marker, `S3.EXE` ProtectCD's `.ficken` section. FIFA 2002 does
+ask for the CD with an empty drive, but a presence check would do that
+too.
 
-**The conclusion drawn from that pair — "the check reads the data anomaly,
-not Q" — is void.** It assumed the check reads *something*, and the negative
-control below shows it does not read the band at all. What the cue/ccd pair
-actually established is narrower and still useful: subchannel replay versus
-synthesis makes no difference to this title. The remaining honest statement
-about Q is the one from the pregap result — nothing we have met so far is
-known to read it.
+**The ATAPI traces** (`-trace ide_atapi_cmd_packet -trace
+ide_atapi_cmd_error`, which also works through the player's QEMU
+arguments), FIFA 2002 from its `.mds` on one image:
 
-### 2.6b The negative control, and what it took away (2026-09-05)
-
-Three schemes appeared to pass and not one had been seen to *fail*, so every
-conclusion rested on inference from a game that started. `discx repair` builds
-the disc that separates the two readings: a copy in which every L-EC-failing
-sector verifies, the user data left exactly as dumped, the difference confined
-to offsets 2064–2351 of exactly those sectors (EDC, reserved gap, ECC) — one
-variable, verified by a byte-for-byte diff against the original.
-
-`clean/fifa2002/FIFA2002.mds` (584 sectors repaired, 0 failures on a rescan)
-and `clean/settlers3/CD01.cue` (547 repaired, only the 150 sync-less run-out
-sectors left, which a real drive fails too).
-
-**Both titles run from their clean copies** (user, 2026-09-05). FIFA 2002
-launches and reaches its menus; Settlers 3 plays. The protections did not
-refuse a disc they should have refused.
-
-So the SafeDisc 2.x and ProtectCD acceptance rows are **inconclusive**, not
-passing, and doc 05 says so. Nothing measured so far shows that our error
-delivery is what satisfied either check — a check that ran and was satisfied
-and a check that never ran look identical from outside, and the control was
-the only thing that could tell them apart. Two readings remain, and one
-common cause is likelier than two coincidences:
-
-1. **Neither check runs in these installs.** The wrapped EXE never
-   authenticates (a full install path that skips it, or a binary that is not
-   actually SafeDisc-wrapped).
-2. **Both checks bail out permissively before reaching the disc.** Protections
-   of the era skip authentication rather than risk a false positive when they
-   cannot get the low-level access they want — no SPTI/ASPI, a drive that does
-   not identify as they expect, `secdrv.sys` not loaded. Our drive would then
-   never be asked, and every disc would "pass".
-
-**Empty drive, run 2026-09-05: FIFA 2002 asks for the CD.** So reading 1 is
-out for that title — *a* disc check runs, and it is not satisfied by an empty
-drive. Be careful how much that buys: "asks for the CD" is exactly what a
-volume-label or data-file presence check does, and the repaired disc satisfies
-it, so all it establishes is that something looks for a disc with the right
-files on it. It does **not** establish that SafeDisc's authentication runs. The
-three observations together — original disc runs, repaired disc runs, no disc
-refuses — are equally consistent with a presence check that always ran and an
-authentication that never did.
-
-**Both binaries are genuinely wrapped** (offline, `7z` reads the qcow2
-directly — no conversion needed): `fifa2002.exe` has the `stxt371` and
-`stxt774` sections and the `BoG_` marker of SafeDisc 2, `S3.EXE` has
-ProtectCD's `.ficken` section. A cracked or unwrapped binary is not the
-explanation.
-
-**The ATAPI trace, 2026-09-05.** `tools/xp-game-test.sh` with
-`QEMU_EXTRA="-trace ide_atapi_cmd_packet -trace ide_atapi_cmd_error -D log"`
-over a FIFA 2002 launch from the original `.mds` (KVM, `-cpu pentium3`):
-
-- SafeDisc's probe is unmistakable and is **not** an error-pattern check. It
-  reads **LBA 800, then one pseudo-random single sector, and repeats** — 22
-  such pairs in one launch, the probes scattered over ~1300–9900, every one a
-  single-sector `READ(10)`.
-- **Not one of the 584 corrupt sectors is ever read.** 0 of 506 reads in the
-  whole session touch a band LBA. The check is measuring something about
-  *reading* — timing is the obvious candidate for an anchor-then-seek pattern
-  — and not the L-EC failures we spent the design on.
-
-That is why a repaired disc passes: the repaired sectors are never looked at.
-
-**And the check does fail — we have finally seen it.** In this configuration
-FIFA 2002 refuses: *"Por favor insira o CD FIFA 2002"*, reproducibly, with and
-without QEMU's default empty CD-ROM drive (which the first run showed
-answering 263 `NOT READY / MEDIUM NOT PRESENT`; removing it with `-nodefaults`
-changed nothing). So the authentication is live and environment-sensitive —
-the negative control we could not get from the disc contents arrived from the
-harness instead. The player passes with the same disc, so the difference is
-the player's path versus bare QEMU, not the bytes on the medium.
-
-**The passing launch, traced in the player** (`-trace ide_atapi_cmd_packet`
-works through the player's QEMU args; FIFA 2002 reached its intro, `d3dpt-vga`
-logging page flips, screendump confirms). Four runs on one image and one disc:
-
-| Run | CD on | Display | Outcome | Reads | Multi-sector | Max LBA | Band sectors read |
+| Run | CD on | Display | Outcome | Reads | Multi-sector | Max LBA | Band reads |
 |---|---|---|---|---|---|---|---|
-| bare QEMU | ide0 slave | cirrus | *"insira o CD"* | 488 | 1 | 13272 | **0** |
-| bare QEMU `-nodefaults` | ide0 slave | cirrus | *"insira o CD"* | 506 | 1 | 13272 | **0** |
-| bare QEMU | **ide.1** | cirrus | no dialog, then crash | 505 | — | — | **0** |
-| **player** | **ide.1** | d3dpt-vga | **runs** | 781 | **281** | **250230** | **0** |
+| bare QEMU | ide0 slave | cirrus | *"insira o CD"* | 488 | 1 | 13272 | 0 |
+| bare QEMU `-nodefaults` | ide0 slave | cirrus | *"insira o CD"* | 506 | 1 | 13272 | 0 |
+| bare QEMU | ide.1 | cirrus | no dialog, then a crash | 505 | — | — | 0 |
+| player | ide.1 | d3dpt-vga | **runs** | 781 | 281 | 250230 | **0** |
 
-The passing run is unmistakable in the trace: 281 multi-sector reads out to LBA
-250230, 9069 sectors in all — the game loading its content after the check let
-it through, where every failing run stops at 13272 with essentially only
-single-sector reads. It does 13 anchor-and-probe pairs on the way.
+- SafeDisc 2's probe is an anchor `READ(10)` at LBA 800 and one
+  pseudo-random single sector (~1300–9900), repeated (13 pairs in the
+  passing launch): a timing-shaped pattern, not an error-pattern check.
+  **It never reads a band sector**, which is why the repaired disc
+  passes.
+- Settlers 3 CD01 (`.ccd`, in the player) reaches its menu in 1196
+  reads: none above LBA 191776, below the band at 195539, and one READ
+  SUB-CHANNEL. Neither its data anomaly nor its Q anomaly is read, and
+  the `.cue` (synthesized, clean Q) and `.ccd` (the disc's own Q) behave
+  the same.
+- **The check refuses when the CD shares the boot disk's IDE channel**
+  (`-drive media=cdrom` lands at ide0 slave) and passes on `ide.1`,
+  where the player and the launcher put it. A timing check perturbed by
+  the shared channel fits, but is a hypothesis; the correlation is
+  measured. Run protected titles with the CD on its own channel.
+- **Attribute every sense reply to its drive before calling it a bug.**
+  The `GET CONFIGURATION` errors in the first trace came from QEMU's
+  *empty* default CD drive, which has no model and answers from stock
+  code (feature 0 only). Ours answers an unsupported starting feature
+  with the header alone, as MMC wants. The one error our drive returns,
+  MODE SENSE page 0x1b, is the correct reply to a page we do not
+  implement.
 
-**And it still never reads a corrupt sector: 0 of 781.** So the conclusion
-holds from the inside, not merely by inference from a repaired disc passing.
-FIFA 2002's SafeDisc 2 authentication completes without once looking at the
-584-sector band. The band is not what this title's check reads, and the
-`repair` control was reporting the truth.
+So for SafeDisc 2 and ProtectCD the L-EC band is not what the check
+reads. §2.5 is still the right drive behaviour, and `atapi-guest`
+proves the errors are delivered; the scheme that depends on them is
+§2.6c.
 
-**Settlers 3, traced the same way — and it is the cleaner result of the two.**
-`CD01.ccd` in the player: the game launches, plays its intro and reaches its
-main menu, so ProtectCD's check is satisfied. In 1196 reads (1181 of them
-multi-sector, 8964 sectors) it **never goes near the band**: 0 reads in the
-547-sector region, 0 reads anywhere above LBA 195000, and exactly one READ
-SUB-CHANNEL in the whole session, so the Q anomaly is not read either. The
-game's content reads stop at **LBA 191776**, below the band's 195539 — the
-protection region sits past everything the game uses, so nothing but a check
-would ever read it, and nothing did.
+### 2.6c The protection that does read the band
 
-Where FIFA at least probed single sectors *inside* the band's LBA span (just
-never a corrupt one), Settlers does not touch the region at all. **So for both
-schemes we have tested, the L-EC band is not what the check reads**, and doc
-05's ProtectCD row premise — "a dump carrying both the data and the Q anomaly"
-— is wrong twice over: neither anomaly is read.
+**Crimson Skies**, SafeDisc 1.50.020 (the original loader,
+`CRIMSON2.EXE` in the user's `claude98` install: `BoG_ *90.0&!!` at
+0x29250 with version dwords `(1, 50, 20)`, the Secdrv strings,
+`CRIMSON.ICD` beside it). Its dump `C_SKIES.cue` (Aaru 5.4.1) carries
+**579 sectors from LBA 807 to 10018**, all with no sync pattern at all
+(not `0x55` fill, and not merely scrambled). So a SafeDisc 1.x disc can
+carry a band; which ones do is for `discx scan` to say (§6.x).
 
-This does not make §2.5 wrong; verifying L-EC and reporting what cannot be
-corrected is still the right drive behaviour, and `atapi-guest-test.py`
-proves we deliver the errors. It means no protection we have yet met depends
-on it. The scheme that does is still to be found. (It also means the decoder
-added on 2026-09-08 cannot have weakened either check: neither reads a
-sector in the band at all, and the band's sectors are uncorrectable anyway —
-`discx scan` prints how many of a disc's L-EC failures the decoder repairs,
-and on both of these dumps that number must be 0.)
+The loader does three rounds of an anchor `READ(10)` at LBA 800 and one
+pseudo-random sector in ~1400..10000 read **raw** (`READ CD`, byte 9 =
+`0xF8`). With the stored bytes delivered, every round stopped on the
+first probe that hit a band sector, and the loader refused with
+*"Cannot locate the CD-ROM"*. With a raw read of an unreadable sector
+answered `03/11/05` — one variable — the loader does REQUEST SENSE,
+carries on probing, decrypts `CRIMSON.ICD` and reaches the game's
+"Select Video Device" dialog. It is the one check seen to fail and then
+pass on the drive model alone. NFS Porsche Unleashed (SafeDisc 1.x, 0
+L-EC failures over 281,279 sectors) works: the band is the difference.
 
-**A harness finding worth its own line:** the check *rejects* when the CD
-shares the boot disk's IDE channel (`-drive media=cdrom` lands at index 1 =
-ide0 slave) and passes when the CD is on `ide.1`, which is where the player
-puts it. One variable between runs 2 and 3, same display, same disc. An
-anchor-then-probe pattern is consistent with a timing measurement, and sharing
-a channel with the boot disk is exactly what would perturb one — but that is a
-hypothesis, not a measurement. What is established is the correlation, and
-that `tools/xp-game-test.sh`'s default CD placement makes a protected title
-fail for reasons that have nothing to do with the disc image.
+The user's own install runs a no-CD `CRIMSON.EXE` that never reads the
+disc; its rendering problems are the display driver's (doc 19), not
+this.
 
-**A defect reported here on 2026-09-05 and withdrawn the same day.** The
-first trace showed `GET CONFIGURATION` RT=10b answered `ILLEGAL REQUEST /
-INVALID FIELD IN CDB` for features including 0x1e (CD Read), and that was read
-as a bug in our model. It is not ours. Attributing every sense reply to its
-IDEState across all five traces shows **every one of those came from the
-*empty* default CD-ROM drive**, which has no disc model, so `atapi_disc(s)` is
-NULL and the command falls through to QEMU's stock `cmd_get_configuration` —
-which supports feature 0 only. Our path returned **0** GET CONFIGURATION
-errors in all five runs; `atapi_disc_get_configuration` already answers an
-unsupported starting feature with the header alone, which is what MMC wants.
+**The raw rule** (`mmc::read_cd_sector`), which replaced "a raw request
+delivers the bytes as dumped":
 
-The one sense reply our drive does return in every run is on `0x5a`, MODE
-SENSE(10) page 0x1b, which we do not implement — and `ILLEGAL REQUEST /
-INVALID FIELD IN CDB` is the *correct* SPC reply to an unsupported mode page,
-not a defect either.
+- user data selected, EDC/ECC not → a cooked read: verify, correct,
+  `Err(Medium)` for the rest;
+- user data and EDC/ECC, **no C2 field** → the stored bytes, but only
+  if the sector is readable at all (the same `verify_or_correct` as the
+  cooked path); an unreadable one is `Err(Medium)`, as a drive answers;
+- **C2 error flags asked for** (byte 9 bits 1–2) → the stored bytes
+  regardless, with C2 marking the untrusted ones: how a dumping tool gets
+  an unreadable sector out of a real drive.
 
-The stock path is also what a plain `.iso` uses (it probes to `raw`, doc 17
-§5.2), so an ISO-backed disc answers per-feature probes the same way. Leave it:
-patch 51's stated invariant is that a NULL model behaves like today's QEMU byte
-for byte, which is what keeps every number recorded on the ISO path valid, and
-XP has never minded.
-
-Until the passing trace exists, the drive model's error delivery is proven
-only host-side and by `atapi-guest-test.py` — real evidence, just not evidence
-about protections.
-
-The lesson meanwhile is that anything
-which actually reads subchannel wants a dump that *carries* it (CCD `.sub`,
-MDS 2448), where `read_sub` replays the bytes verbatim and none of this
-applies.
-
-Q, ADR 1 (position), the layout every sector has:
-
-```
-byte 0  control<<4 | adr(1)
-byte 1  TNO   BCD track number (0xAA in lead-out; not addressable here)
-byte 2  INDEX BCD (00 in pregap)
-byte 3-5  MIN SEC FRAME  BCD, track-relative; in index 00 it counts DOWN (to 00:00:01 at the last pregap sector on both real discs measured, not to zero)
-byte 6  ZERO (0x00)
-byte 7-9  AMIN ASEC AFRAME  BCD absolute (lba + 150)
-byte 10-11 CRC-16 big-endian: CCITT polynomial 0x1021, init 0x0000, over bytes 0..10, result inverted (~crc)
-```
-
-Real discs interleave ADR 2 (MCN) and ADR 3 (ISRC) frames roughly once
-per 100 sectors. When the model has an MCN / ISRC, emit ADR 2 at `lba % 100
-== 98` and ADR 3 at `lba % 100 == 99` (MCN: 13 BCD digits packed high
-nibble first in bytes 1..7, byte 8 zero, AFRAME in byte 9; ISRC: 12
-characters 6-bit packed per Red Book in bytes 1..8, AFRAME in byte 9).
-Protection code that fingerprints subchannel does so from a `.sub` dump,
-which is replayed verbatim; synthesis only has to be *plausible*.
-
-When a `.sub` file exists, it wins for every sector it covers; sectors
-past its end (a truncated `.sub`) are synthesized.
-
-### 2.6c The protection that does read the band (2026-09-09)
-
-§2.6b closed with "for both schemes we have tested, the L-EC band is not what
-the check reads", and an open question: find one that depends on it. **Crimson
-Skies is it**, and it changed the model.
-
-The title is the user's own install (`claude98`, Windows 98), where the
-installed `CRIMSON.EXE` had been replaced with a no-CD patch and the original
-loader renamed to `CRIMSON2.EXE`. That original is a genuine **SafeDisc
-1.50.020** wrapper — `BoG_ *90.0&!!` at 0x29250 with version dwords
-`(1, 50, 20)`, the `SafeDisc` / `Secdrv` / `SAFEDISC_ERROR_%08lx` strings, the
-C-Dilla data-preparation splash paths, and `CRIMSON.ICD` beside it as the
-encrypted original. So a cracked binary is not the explanation here either.
-
-**Two things it disproves at once.**
-
-- **A SafeDisc 1.x disc can carry an L-EC band.** §6.x's rule — "the SafeDisc
-  *version* decides whether an L-EC band exists: 2.x writes one, 1.x (The Sims,
-  Rayman 2) writes none" — is wrong as stated. `C_SKIES.cue` (an Aaru 5.4.1
-  dump) carries **579 sectors from LBA 807 to 10018**, every one of them
-  *without a sync pattern at all* — not DiscImageCreator's "replaced at 0x55
-  except header", but whatever the drive handed back, and not merely scrambled
-  either (descrambling them produces no sync and no header). The rule that
-  survives is narrower: the dumps we have of 1.x titles differ, and the only
-  way to know is `discx scan`.
-- **The check reads the band, and it is the *error* it is looking for.** The
-  probe is three rounds of an anchor `READ(10)` at LBA 800 followed by a single
-  pseudo-random sector in ~1400..10000 read **raw** — `READ CD`, byte 9 =
-  `0xF8`, all five main fields — and in the baseline every one of the three
-  rounds terminated on the first probe that landed on a band sector (5438,
-  4154, 8953). At a 6.3 % band density that is not chance: the loader
-  recognises a weak sector from the garbage that comes back. Then it read LBA
-  10267 and a handful of filesystem sectors and put up *"Cannot locate the
-  CD-ROM — Please insert the correct CD-ROM, select OK and restart
-  application"*.
-
-**The A/B.** Same image, same disc, same machine, one variable: make a raw
-READ CD of a sector whose L-EC does not hold return `03/11/05` the way a drive
-does. Baseline — 4 band sectors read, all answered with data, refused. With
-the error delivered — the failing read is answered `sense 03 asc 11`, the
-loader does REQUEST SENSE and *carries on probing* (so the round-termination
-above was content recognition, not the verdict), and the game **launches**:
-`CRIMSON.ICD` decrypted, its "Select Video Device" dialog up on our own
-adapter. That is the first protection check this project has watched fail and
-then pass on a change to the drive model alone — the negative control M5 step 8
-has been missing since 2026-09-05.
-
-**What this does *not* fix, and the reason to say so.** The two binaries in
-that folder are not the same program, and the user runs the other one:
-`CRIMSON.EXE` is dated **2025-11-02** and is byte-for-byte the size of the
-no-CD patch beside the dump (`oldstuff/C_SKIES_FIX/crimson.exe`, 2560000
-bytes). It never touches the disc, so it was never affected by any of this,
-and the symptom the user actually reported — Crimson Skies *renders* badly —
-is a rendering bug on the patched EXE, still open and nothing to do with the
-CD (their own `GAMEZ.ERR` has it enumerating `[d3dpt9hl.dll]` and taking
-`Direct3D HAL +++++OK`, and `GAMEZ.OUT` has every subsystem PASSED through
-`dshell(void): STARTING`: it reaches the DX7 DDI and draws the wrong thing —
-doc 19's territory, not this one). What §2.6c establishes is about the
-*unpatched* `CRIMSON2.EXE`, which is a fixture we happen to have rather than
-a game anyone here plays. The finding is worth having on its own terms; it is
-not the answer to that bug report.
-
-**The cleanest corroboration is a second SafeDisc title on the same drive.**
-NFS Porsche Unleashed (`nfs_porsche/*.mds`, `clcd16.dll` / `clokspl.exe` /
-`PORSCHE.ICD` all present) works for the user, and `discx scan` finds **0 L-EC
-failures over all 281279 sectors**: no band, nothing for the check to trip on.
-One SafeDisc title with a band failed, one without a band passes, and the band
-is the difference.
-
-**What changed in the model** (`mmc::read_cd_sector`). The raw path used to
-deliver the stored bytes whatever their parity said, on the reasoning that
-"dumping a disc and reading a protection band both depend on the stored bytes
-coming back as stored". The first half is right and the second was exactly
-backwards. The rule now is:
-
-- user data selected, EDC/ECC **not** selected → a cooked read, as before:
-  verify, correct what the P/Q decoder can, `Err(Medium)` for the rest;
-- user data **and** EDC/ECC selected, **no C2 field asked for** → the stored
-  bytes, but only if the sector is readable at all; a sector `discx scan`
-  calls *unreadable* is `Err(Medium)`, because that is what a drive answers;
-- **C2 error flags asked for** (byte 9 bits 1-2) → the stored bytes regardless,
-  with the C2 field saying which of them the drive could not trust. This is
-  precisely how a real dumping tool gets an unreadable sector out of a real
-  drive, so the dumping case of §2.5 keeps working.
-
-The readability test is the same `verify_or_correct` the cooked path uses, so
-the two paths agree about which sectors exist and a correctable single-byte
-error still round-trips through a raw read with its damage intact. `discx
-selftest`'s `lec` case carries both halves (`read_cd raw of a filled body`,
-`read_cd raw+C2 of a filled body`).
+`discx selftest`'s `lec` case carries both halves.
 
 ## 3. The C API (`libdisc/libdisc.h`)
 
-One header for the crate, the block driver and atapi.c, like
-`d3dpt/d3dpt_proto.h`. Hand-written (no cbindgen dependency). Bump
-`LIBDISC_API_VERSION` on any change; `cdimage_open` refuses a mismatch.
-Every function is thread-safe on the same handle (immutable files; no
-per-handle mutable state — the audio position lives in atapi.c, not here).
+One hand-written header for the crate, the block driver and `atapi.c`,
+like `d3dpt/d3dpt_proto.h`. Bump `LIBDISC_API_VERSION` (1) on any
+change; `cdimage_open` refuses a mismatch. Every function is
+thread-safe on one handle: the layout is immutable and the payload
+handle cache is behind a lock. `libdisc_open` also takes a directory
+(§8).
 
-```c
-#ifndef LIBDISC_H
-#define LIBDISC_H
-#include <stddef.h>
-#include <stdint.h>
-#define LIBDISC_API_VERSION 1
+| Call | Does |
+|---|---|
+| `libdisc_api_version`, `libdisc_probe(head, len, filename)` | 0..100 confidence: `.cue` that parses, `.ccd` with `[CloneCD]`, `.mds` → 100; `.iso` → 0 (stays on `raw`) |
+| `libdisc_open(path, err, errlen)` / `libdisc_close` | NULL and a message on failure |
+| `libdisc_sector_count`, `_session_count`, `_track_count`, `_track_info`, `_sector_info` | the layout; `LibdiscTrackInfo` has number, session, control, mode, `start_lba` (index 1), `pregap_lba`, `end_lba`; `LibdiscSectorInfo` kind, track, index, `lec` as stored |
+| `libdisc_read_cooked` / `_read_raw` / `_read_sub` | 2048 L-EC-checked bytes / 2352 / 96 deinterleaved |
+| `libdisc_mmc_read_toc`, `_read_subchannel`, `_read_disc_information` | a reply into `out`, its length or an error; the caller truncates to the allocation length |
+| `libdisc_mmc_read_cd_length` / `_read_cd_sector` | bytes per sector for a READ CD CDB (or `EINVAL`), then one call per sector |
 
-typedef struct libdisc libdisc;                /* opaque */
+| Code | Meaning | Sense |
+|---|---|---|
+| `LIBDISC_ERANGE` −1 | LBA outside `[0, lead-out)` | 05/21/00 |
+| `LIBDISC_EMEDIUM` −2 | unreadable sector (§2.5, §4.3), or a changed payload | 03/11/05 |
+| `LIBDISC_EMODE` −3 | wrong sector kind for the request | 05/64/00 |
+| `LIBDISC_EINVAL` −4 | bad parameter or CDB field | 05/24/00 |
+| `LIBDISC_EIO` −5 | host file read failed, or a caught panic | 04/xx |
 
-enum {
-    LIBDISC_OK      =  0,
-    LIBDISC_ERANGE  = -1,   /* LBA outside [0, lead-out)               → sense 05/21/00 */
-    LIBDISC_EMEDIUM = -2,   /* L-EC failed on a cooked read            → sense 03/11/05 */
-    LIBDISC_EMODE   = -3,   /* wrong sector kind for the request       → sense 05/64/00 */
-    LIBDISC_EINVAL  = -4,   /* bad parameter / CDB field               → sense 05/24/00 */
-    LIBDISC_EIO     = -5,   /* host file read failed                   → sense 04/xx: report and fail */
-};
+`capi.rs` holds a `Box<Disc>` behind the opaque pointer, fills `err` as
+NUL-terminated ASCII, and wraps every body in `catch_unwind`: a panic
+never crosses the boundary.
 
-/* sector kinds, as LibdiscSectorInfo.kind */
-enum { LIBDISC_KIND_AUDIO = 0, LIBDISC_KIND_MODE1 = 1, LIBDISC_KIND_MODE2F1 = 2,
-       LIBDISC_KIND_MODE2F2 = 3, LIBDISC_KIND_MODE2 = 4, LIBDISC_KIND_GAP = 5 };
+## 4. MMC reply layouts (`mmc.rs`)
 
-typedef struct LibdiscSectorInfo {
-    uint8_t kind;        /* LIBDISC_KIND_* */
-    uint8_t track;       /* 1..99 */
-    uint8_t index;       /* 0..99 */
-    uint8_t lec;         /* data kinds: 1 ok, 0 fails; audio/gap: 1 */
-} LibdiscSectorInfo;
-
-typedef struct LibdiscTrackInfo {
-    uint8_t number, session, control, mode;   /* mode = LIBDISC_KIND_* of the track */
-    int32_t start_lba;   /* index 1 */
-    int32_t pregap_lba;  /* index 0 start, == start_lba when there is none */
-    int32_t end_lba;     /* exclusive */
-} LibdiscTrackInfo;
-
-uint32_t libdisc_api_version(void);
-/* 0..100: how sure libdisc is that `filename` (first `len` bytes in `head`) is an image it reads.
-   .cue → 100 when the text parses as a cue sheet; .ccd → 100 on "[CloneCD]"; .iso → 0 (stays on raw) */
-int      libdisc_probe(const uint8_t *head, size_t len, const char *filename);
-/* opens the image and every payload file; on failure returns NULL and writes a message into err */
-libdisc *libdisc_open(const char *path, char *err, size_t errlen);
-void     libdisc_close(libdisc *d);
-
-uint32_t libdisc_sector_count(const libdisc *d);          /* lead-out LBA of the last session */
-uint8_t  libdisc_session_count(const libdisc *d);
-uint8_t  libdisc_track_count(const libdisc *d);           /* across sessions */
-int      libdisc_track_info(const libdisc *d, uint8_t track, LibdiscTrackInfo *out); /* ERANGE if no such track */
-int      libdisc_sector_info(const libdisc *d, uint32_t lba, LibdiscSectorInfo *out);
-
-int      libdisc_read_cooked(const libdisc *d, uint32_t lba, uint8_t out[2048]);  /* L-EC verified user data */
-int      libdisc_read_raw(const libdisc *d, uint32_t lba, uint8_t out[2352]);
-int      libdisc_read_sub(const libdisc *d, uint32_t lba, uint8_t out[96]);      /* deinterleaved P..W */
-
-/* MMC responders: write the reply into out (capacity cap), return its length or a LIBDISC_E* code.
-   The caller truncates to the CDB's allocation length. */
-int libdisc_mmc_read_toc(const libdisc *d, uint8_t format, int msf, uint8_t start, uint8_t *out, size_t cap);
-int libdisc_mmc_read_subchannel(const libdisc *d, uint32_t pos_lba, int msf, int subq, uint8_t format,
-                                uint8_t track, uint8_t audio_status, uint8_t *out, size_t cap);
-int libdisc_mmc_read_disc_information(const libdisc *d, uint8_t *out, size_t cap);
-/* READ CD (BE) / READ CD MSF (B9): bytes per sector for this CDB, or LIBDISC_EINVAL for an illegal
-   combination; then one call per sector fills exactly that many bytes */
-int libdisc_mmc_read_cd_length(uint8_t expected_type, uint8_t byte9, uint8_t byte10);
-int libdisc_mmc_read_cd_sector(const libdisc *d, uint32_t lba, uint8_t expected_type, uint8_t byte9,
-                               uint8_t byte10, uint8_t *out, size_t cap);
-#endif
-```
-
-(The two structs were first named `libdisc_sector_info` / `libdisc_track_info`,
-which C refuses because the functions of the same name exist; renamed
-2026-09-04.)
-
-Rust side: `capi.rs` holds `#[no_mangle] pub extern "C" fn libdisc_open(…)`
-etc.; `libdisc` is `Box<Disc>` cast to a pointer; `err` is filled with a
-NUL-terminated ASCII message. Never panic across the boundary: wrap bodies
-in `std::panic::catch_unwind` and return `LIBDISC_EIO`.
-
-## 4. MMC responder byte layouts (`mmc.rs`)
-
-Reference: MMC-3 (T10 1363-D), which is what Win9x/XP's `cdrom.sys` and
-period protection drivers assume. All multi-byte fields big-endian unless
-stated. Times: `msf=1` → `0, M, S, F` binary; `msf=0` → 32-bit LBA.
+MMC-3 (T10 1363-D), which Win9x/XP's `cdrom.sys` and period protection
+drivers assume. Multi-byte fields big-endian; `msf=1` → `0, M, S, F`
+binary, `msf=0` → 32-bit LBA.
 
 ### 4.1 READ TOC/PMA/ATIP (0x43)
 
-Header: `data length (2 bytes, excludes itself)`, then per format:
+A 2-byte data length (excluding itself), then:
 
-- **Format 0** (TOC): `first track, last track`, then one 8-byte descriptor
-  per track from `start` (0 or 1 = all; 0xAA = lead-out only; a start above
-  the last track → EINVAL): `reserved, ADR<<4|control (0x14 data / 0x10
-  audio), track number, reserved, time (4 bytes)`; last descriptor: track
-  0xAA with control 0x14 if the last track is data else 0x10, time = the
-  last session's lead-out. Multisession discs list every track of every
-  session.
-- **Format 1** (multisession): `first session, last session`, one
-  descriptor for the first track of the last session (same 8-byte shape).
-- **Format 2** (raw TOC): `first session, last session`, then 11-byte
-  descriptors: `session, ADR<<4|control, TNO (0), POINT, MIN, SEC, FRAME
-  (running time, 0 for A0..A2), ZERO, PMIN, PSEC, PFRAME`. Per session, in
-  this order: `A0` (PMIN = first track, PSEC = disc type: 0x00 CD-DA/CD-ROM,
-  0x10 CD-I, 0x20 CD-ROM XA — use 0x20 when the first track of the session
-  is Mode 2, else 0x00), `A1` (PMIN = last track), `A2` (lead-out MSF),
-  then each track (POINT = track, P-time = index 1 start, MSF absolute).
-  Multisession adds a `B0` descriptor after the last session's `A2` with
-  ADR 5 (next writable start / max lead-out; use the last lead-out + 150
-  and 0x4C:0x2C:0x00 as real drives do for closed discs). **Fields are MSF
-  regardless of the `msf` bit** (real drives). When `Disc::raw_toc` is
-  present (CCD), emit its entries verbatim instead.
-- Formats 3 (ATIP), 4 (CD-TEXT), 5 → EINVAL.
-- `cdrom_read_toc` / `cdrom_read_toc_raw` in `hw/block/cdrom.c` stay for
-  the no-disc path; format 0 on a single-track ISO through libdisc
-  produces the same layout (exerciser check) with one deliberate
-  difference: QEMU's lead-out descriptor says control `0x16`, ours `0x14`
-  (what a real drive reports for a data disc; decided 2026-09-04).
+- **Format 0** (TOC): first and last track, then an 8-byte descriptor
+  per track from `start` (0 or 1 = all, 0xAA = lead-out only, past the
+  last track → EINVAL): `reserved, ADR<<4|control, track, reserved,
+  time`; then track 0xAA, control 0x14 if the last track is data else
+  0x10, at the last lead-out. Multisession lists every session's
+  tracks. Against QEMU's own `cdrom_read_toc` (kept for the no-disc
+  path) the one deliberate difference is the lead-out's control: ours
+  `0x14`, as a real drive reports for a data disc, QEMU's `0x16`.
+- **Format 1** (multisession): first and last session, one descriptor
+  for the first track of the last session.
+- **Format 2** (raw TOC): first and last session, then 11-byte
+  descriptors `session, ADR<<4|control, TNO 0, POINT, MIN, SEC, FRAME,
+  ZERO, PMIN, PSEC, PFRAME`; per session `A0` (PMIN first track, PSEC
+  disc type: 0x20 CD-ROM XA when the session's first track is Mode 2,
+  else 0x00), `A1` (last track), `A2` (lead-out), then each track at its
+  index 1. Multisession adds `B0` (ADR 5) after the last `A2`: the last
+  lead-out + 150 and 0x4C:0x2C:0x00, as drives report for closed discs.
+  **Always MSF**, whatever the `msf` bit. With `raw_toc` present its
+  entries are emitted verbatim.
+- Formats 3–5 → EINVAL.
 
 ### 4.2 READ SUB-CHANNEL (0x42)
 
-`out[0] = 0, out[1] = audio_status` (0x00 not supported, 0x11 playing,
-0x12 paused, 0x13 completed, 0x14 error, 0x15 no status), `out[2..4] =
-data length`. `subq=0` → 4-byte header only. Formats:
+`out[0] = 0`, `out[1]` = audio status (0x11 playing, 0x12 paused, 0x13
+completed, 0x14 error, 0x15 none), `out[2..4]` = data length; `subq=0`
+→ the header only.
 
-- **1 (current position)**: `format 1, ADR<<4|control, track, index,
-  absolute time (4), relative time (4)` from the Q of `pos_lba` (relative
-  time counts down inside index 0).
-- **2 (MCN)**: `format 2, 0,0,0, MCVal<<7, MCN 13 ASCII digits + NUL`
-  (all zero if none).
-- **3 (ISRC)**: `format 3, ADR<<4|control, track, 0, TCVal<<7, ISRC 12
-  ASCII + NUL + 0` for `track`.
+- **Format 1** (position): `1, ADR<<4|control, track, index, absolute
+  time, relative time` from the Q of the position (§5.4); relative time
+  counts down in index 0.
+- **Format 2** (MCN): `2, 0, 0, 0, MCVal<<7`, 13 ASCII digits + NUL.
+- **Format 3** (ISRC): `3, ADR<<4|control, track, 0, TCVal<<7`, 12
+  ASCII + NUL + 0.
 
 ### 4.3 READ CD (0xBE) and READ CD MSF (0xB9)
 
-CDB fields: expected sector type = `(byte1 >> 2) & 7` (0 any, 1 CD-DA, 2
-Mode 1, 3 Mode 2 formless, 4 Mode 2 form 1, 5 Mode 2 form 2); byte 9:
-`sync 0x80, header 0x60 (01 header, 10 subheader, 11 both), user data
-0x10, EDC/ECC 0x08, C2 0x06 (01 = 294 bytes C2 bits, 10 = 296 bytes C2 +
-block error byte + pad)`; byte 10 & 7: subchannel `0 none, 1 raw 96
-(interleaved), 2 Q 16 bytes (formatted), 4 R-W 96`.
+Expected sector type `(byte1 >> 2) & 7`: 0 any, 1 CD-DA, 2 Mode 1, 3
+Mode 2 formless, 4 form 1, 5 form 2. Byte 9: sync 0x80, header 0x60
+(01 header, 10 subheader, 11 both), user data 0x10, EDC/ECC 0x08, C2
+0x06 (01 = 294 bytes, 10 = 296 with the block error byte). Byte 10 & 7:
+subchannel 0 none, 1 raw 96 (interleaved), 2 Q 16 bytes, 4 R–W 96.
 
-`libdisc_mmc_read_cd_length` returns the sum of the selected fields for
-the expected type (the MMC-3 table 358..362; e.g. Mode 1 with `0xF8` = 2352,
-`0x10` = 2048, `0x78` = 2352; CD-DA any combination = 2352; Mode 1 with
-`0x30` = 2048 + 4 header + 8 subheader positions per table); C2 adds 294
-or 296; subchannel adds 96 or 16. Illegal: header/EDC bits without user
-data on audio... follow the table; EINVAL for combinations it marks
-illegal, and EMODE when the sector at `lba` is not of the expected type
-(type 0 accepts anything). The per-sector fill copies the selected pieces
-in order: sync, header, subheader, user data, EDC/ECC, C2, subchannel
-(interleave P..W into the 96-byte MMC form for `1`, Q formatted as the
-16-byte "subchannel Q" form for `2`).
+`read_cd_length` sums the selected fields for the type per MMC-3's
+table (Mode 1 `0xF8` = 2352, `0x10` = 2048; CD-DA any combination =
+2352); C2 adds 294 or 296, subchannel 96 or 16; illegal combinations
+are EINVAL, a sector of the wrong type EMODE (type 0 takes anything).
+The fill copies sync, header, subheader, data, EDC/ECC, C2, subchannel,
+in that order. MSF form: start inclusive, end exclusive.
 
-MSF form: start MSF inclusive, end MSF exclusive, both → LBA via
-`Msf::to_lba`.
-
-**L-EC applies to a raw read too.** A request selecting user data without
-EDC/ECC is a cooked read (verify, correct, `Err(Medium)` for the rest). One
-selecting both is raw, and it delivers the stored bytes only when the sector
-is readable at all — an unreadable one is `Err(Medium)`, as a drive answers —
-**unless C2 error flags were asked for**, which is how a dumping tool gets an
-unreadable sector's bytes out of a real drive and is therefore the one shape
-that hands them over regardless. §2.6c: a protection band read raw is read to
-watch the read *fail*, and the older rule ("a raw request delivers the bytes
-as dumped") is what kept Crimson Skies' SafeDisc 1.x from starting.
+**L-EC applies to a raw read too**, by the raw rule in §2.6c: only a
+request that asks for C2 flags gets an unreadable sector's bytes.
 
 ### 4.4 READ DISC INFORMATION (0x51)
 
-Standard 34-byte reply: `length 32, disc status 0x0E (complete, non-erasable,
-last session complete = 0x02 | 0x0C)`, first track 1, number of sessions
-(LSB byte 4, MSB byte 9 = 0), first/last track in the last session, lead-in
-and lead-out start times `0xFFFFFFFF` (not available), disc type from the
-A0 rule above. The existing `cmd_read_disc_information` stays for the
-no-disc path.
+34 bytes: length 32, status 0x0E (complete, last session complete),
+first track 1, sessions, first and last track of the last session,
+lead-in and lead-out `0xFFFFFFFF`, disc type by the A0 rule. The stock
+`cmd_read_disc_information` stays for the no-disc path.
 
 ## 5. The QEMU side
 
 ### 5.1 `block/cdimage.c` (in the repo: `libdisc/qemu/cdimage.c`)
 
-It is also where the `isodir` protocol driver lives — a host *directory*
-served as a disc (M5g, landed 2026-09-06, `docs/tracks/m5-dirdisc.md`):
-the same state and the same read path, no `file` child, and
-`isodir:/path` instead of a probe, because a directory cannot be probed.
-It needed no QEMU patch: this file is ours.
+A read-only format driver on `block/bochs.c`'s model:
 
-One consequence worth knowing before debugging anything here: the block
-layer probes for a **format** on top of a protocol driver it resolved
-from a filename prefix, so an `isodir` node is normally opened under a
-`raw` one (vvfat has the same shape). `cdimage_disc()` walks down through
-format nodes for that reason. When it fails to, nothing breaks visibly —
-the guest still reads files through the block layer, and only the
-commands answered from the model go missing. `CDIMAGE_TRACE=1` prints a
-line per packet **only** when the model was found, which is what the
-suite's `dirdisc` check uses (SeaBIOS probing the drive, against a plain
-`.iso` on the raw driver as the control).
+- **probe** is `libdisc_probe`; **open** takes the `file` child as bochs
+  does (the `.cue` itself becomes `bs->file`), refuses read-write
+  (`bdrv_apply_auto_read_only`) and an API-version mismatch, and calls
+  `libdisc_open` on the child's filename;
+- **getlength** is `sector_count × 2048`, `request_alignment` 2048;
+- **co_preadv** reads per sector through `libdisc_read_cooked`; any
+  libdisc error is `-EIO`;
+- **`cdimage_disc(bs)`**, exported through `include/block/cdimage.h`,
+  returns the handle for `atapi.c`.
 
-Model it on `block/bochs.c` (format driver, read-only). Members:
+**The `isodir` protocol driver lives in the same file** (§8): the same
+state and read path, no `file` child, and `isodir:/path` instead of a
+probe, because a directory can be neither probed nor a `file` child
+(QEMU's own precedent is vvfat's `fat:`). `bdrv_parse_filename` strips
+the prefix. It needs no QEMU patch.
 
-```c
-typedef struct BDRVCdimageState { libdisc *disc; uint32_t sectors; } BDRVCdimageState;
-static int cdimage_probe(const uint8_t *buf, int buf_size, const char *filename)
-    { return libdisc_probe(buf, buf_size, filename); }
-static int cdimage_open(BlockDriverState *bs, QDict *options, int flags, Error **errp)
-    /* bdrv_open_file_child(NULL, options, "file", bs, errp) as bochs does (the .cue itself becomes
-       bs->file: tiny, read-only, harmless), then bdrv_apply_auto_read_only (refuse RDWR),
-       libdisc_api_version() == LIBDISC_API_VERSION or error, path = bs->file->bs->exact_filename
-       (fall back to bs->exact_filename), libdisc_open, sectors = libdisc_sector_count */
-static int64_t coroutine_fn cdimage_co_getlength(BlockDriverState *bs) { return (int64_t)sectors * 2048; }
-static void cdimage_refresh_limits(...) { bs->bl.request_alignment = 2048; }
-static int coroutine_fn cdimage_co_preadv(bs, offset, bytes, qiov, flags)
-    /* offset/bytes are 2048-aligned (alignment above); per sector libdisc_read_cooked into a
-       2048-byte stack buffer, qemu_iovec_from_buf; EMEDIUM/EMODE/ERANGE → -EIO */
-static void cdimage_close(bs) { libdisc_close(disc); }
-libdisc *cdimage_disc(BlockDriverState *bs)   /* exported, declared in include/block/cdimage.h */
-    { bs = bdrv_skip_filters(bs); return bs && bs->drv == &bdrv_cdimage ? ((BDRVCdimageState*)bs->opaque)->disc : NULL; }
-static BlockDriver bdrv_cdimage = { .format_name = "cdimage", .instance_size = …, .bdrv_probe, .bdrv_open,
-    .bdrv_child_perm = bdrv_default_perms, .bdrv_refresh_limits, .bdrv_co_preadv, .bdrv_co_getlength,
-    .bdrv_close, .is_format = true, .supports_backing = false };
-block_init(bdrv_cdimage_init);
-```
+**The block layer puts a `raw` format node above a protocol driver it
+resolved from a prefix**, so `cdimage_disc()` walks down through format
+nodes (after `bdrv_skip_filters`). When it fails to, nothing breaks
+visibly: the guest still reads files, and only the model's answers go
+missing (the TOC, READ CD, a bad sector's sense). `CDIMAGE_TRACE=1`
+prints every packet, reply and sense **only** when the model was found,
+which the `dirdisc` check uses as its proof.
 
-`cdimage_disc` is called by atapi.c under the BQL from the vCPU thread;
-`bs->drv` and `opaque` are stable while the medium is inserted, and a
-medium change replaces `blk_bs(s->blk)`, so re-fetch the handle on every
-command and never cache it in IDEState.
+`atapi.c` calls `cdimage_disc` under the BQL on every command; a medium
+change replaces `blk_bs(s->blk)`, so the handle is never cached in
+IDEState.
 
 ### 5.2 Build: patch `50-cdimage-block-driver`
 
-- `meson_options.txt`: `option('libdisc_dir', type: 'string', value: '',
-  description: 'directory holding liblibdisc.a (the CD image block driver)')`.
-- `meson.build` (next to the other optional libs): `libdisc = not_found;
-  if get_option('libdisc_dir') != '' ; libdisc = cc.find_library('libdisc',
-  dirs: [get_option('libdisc_dir')], required: true, has_headers: [])`
-  … then `libdisc = declare_dependency(dependencies: [libdisc, threads]
-  + (host_os == 'linux' ? [cc.find_library('dl'), cc.find_library('m')] :
-  []))`; `config_host_data.set('CONFIG_CDIMAGE', libdisc.found())`;
-  summary line.
-- `block/meson.build`: `block_ss.add(when: libdisc, if_true: files('cdimage.c'))`.
-- `include/block/cdimage.h` (overlaid) declares `cdimage_disc` and is the
-  only thing atapi.c includes besides `libdisc.h`; both guarded by
-  `CONFIG_CDIMAGE` in atapi.c (`#ifdef` around the disc paths so the tree
-  still builds without the library).
-- `scripts/configure-qemu.sh`: run `cargo build --release -p libdisc`
-  first (the crate has no QEMU dependency, so no cycle with the player)
-  and pass `-Dlibdisc_dir="$ROOT/target/release"`. QEMU's `configure`
-  forwards unknown `-D` options to meson. `prepare-qemu.sh`: overlay
-  `libdisc/qemu/cdimage.c → qemu/block/`, `libdisc/qemu/cdimage.h →
-  qemu/include/block/`, `libdisc/libdisc.h → qemu/include/block/` (rsync
-  -c, same as the d3dpt overlay lines), *before* the patch loop.
-- The staticlib gets linked into `qemu-system-i386` and into
-  `libqemu-embed-i386.{so,dylib}` (both link `block_ss`). The player is
-  Rust too, so two copies of `std` exist in one process. On macOS the
-  export list (`embed/libqemu_embed.symbols`) hides libdisc's symbols
-  already. On Linux check `nm -D build/qemu/libqemu-embed-i386.so | grep
-  -c ' T _ZN3std'`; if non-zero add `-Wl,--exclude-libs,liblibdisc.a` to
-  the shared library's `link_args` in patch 10 (the copies would merely
-  interpose identical code, but keep it clean).
-- Rust ≥ 1.63 is what QEMU's own meson checks want if `rust` is ever
-  enabled; we do not enable QEMU's Rust support — cargo builds the crate
-  outside meson.
+- A meson option `libdisc_dir` (the directory holding `liblibdisc.a`),
+  the `libdisc` dependency with the staticlib's native libraries per
+  platform, `CONFIG_CDIMAGE`, and `cdimage.c` in `block_ss`.
+  `atapi.c`'s disc paths are under `#ifdef CONFIG_CDIMAGE`.
+- `scripts/configure-qemu.sh` runs `cargo build --release -p libdisc`
+  first (no cycle: the crate has no QEMU dependency) and passes
+  `-Dlibdisc_dir=target/release`. `prepare-qemu.sh` overlays
+  `cdimage.c` into `qemu/block/`, and `cdimage.h` and `libdisc.h` into
+  `qemu/include/block/`, before the patch loop.
+- **meson does not track the staticlib**: `cc.find_library` makes it
+  no target's input, so after a change under `libdisc/` a plain `ninja`
+  keeps the old code in `qemu-system-i386`, `qemu-img` and the embed
+  library (seen as `qemu-img` calling an MDS "not a disc image libdisc
+  reads"). `scripts/build-libdisc.sh` runs cargo and deletes those
+  targets so ninja relinks them; `scripts/build.sh` builds libdisc
+  before QEMU links it.
+- The staticlib is linked into `qemu-system-i386` and
+  `libqemu-embed-i386`. The player is Rust too, so two copies of `std`
+  share the process; on macOS the export list hides libdisc's symbols,
+  and on Linux the copies merely interpose identical code. QEMU's own
+  Rust support is not enabled; cargo builds the crate outside meson.
 
 ### 5.3 ATAPI: patch `51-atapi-disc-model`
 
-Files: `hw/ide/atapi.c`, `hw/ide/ide-internal.h` (new ASC values: 0x11
-UNRECOVERED READ ERROR, 0x64 ILLEGAL MODE FOR THIS TRACK, 0x00/0x11
-`ASCQ` support = extend `ide_atapi_cmd_error` with an ascq parameter
-defaulting to 0 through a new `ide_atapi_cmd_error_ascq`), `include/hw/ide/
-ide-dev.h` (new IDEState fields, **not** added to `vmstate_ide_drive`:
-migration with a disc attached is unsupported, say so in the README row),
-`hw/ide/ide-dev.c` (an `audiodev` property on `ide-cd`, §5.4).
-
-New IDEState fields:
+Files: `hw/ide/atapi.c`; `hw/ide/ide-internal.h` (ASC 0x11 unrecovered
+read error, 0x64 illegal mode for this track, and
+`ide_atapi_cmd_error_ascq`); `include/hw/ide/ide-dev.h` (new IDEState
+fields, **not** in `vmstate_ide_drive`: migration and snapshots with a
+disc attached are unsupported); `hw/ide/ide-dev.c` (`audiodev` on
+`ide-cd`, §5.4).
 
 ```c
-/* disc-model reads (patch 51) */
-bool     atapi_disc_read;      /* the current transfer is served by libdisc, not blk */
-uint8_t  atapi_rc_type, atapi_rc_b9, atapi_rc_b10;  /* READ CD parameters, cooked read = type 0, b9 0x10, b10 0 */
-uint32_t atapi_last_lba;       /* for READ SUB-CHANNEL when not playing */
-/* CD-DA (patch 51, §5.4) */
-uint8_t  atapi_audio_status;   /* 0x11 playing, 0x12 paused, 0x13 completed, 0x14 error, 0x15 none */
+bool     atapi_disc_read;          /* this transfer is served by libdisc, not blk */
+uint8_t  atapi_rc_type, atapi_rc_b9, atapi_rc_b10;  /* READ CD parameters; READ(10) = 0, 0x10, 0 */
+uint32_t atapi_last_lba;           /* the head, for READ SUB-CHANNEL when not playing */
+uint8_t  atapi_audio_status;       /* 0x11 playing … 0x15 none */
 uint32_t atapi_play_lba, atapi_play_end;
-uint8_t  atapi_audio_port[4];  /* mode page 0x0E: channel selection per port */
-uint8_t  atapi_audio_vol[4];
+uint8_t  atapi_audio_port[4], atapi_audio_vol[4];   /* mode page 0x0E */
 QEMUSoundCard *atapi_card; SWVoiceOut *atapi_voice; QEMUTimer *atapi_play_timer;
 ```
 
-Command dispatch: at the top of `ide_atapi_cmd` fetch `libdisc *disc =
-atapi_disc(s)` once per command (`s->blk ? cdimage_disc(blk_bs(s->blk)) :
-NULL`) and pass it to handlers via a static `s->atapi_disc_cur` field
-valid for that call only — or simpler, each handler calls `atapi_disc(s)`
-itself. Add table entries: `0x42 READ SUB-CHANNEL (CHECK_READY)`, `0x45
-PLAY AUDIO(10)`, `0x47 PLAY AUDIO MSF`, `0x48 PLAY AUDIO TRACK/INDEX`,
-`0x4B PAUSE/RESUME`, `0x4E STOP PLAY/SCAN` (and `0x1B START STOP UNIT`,
-already in the table, stops the audio too), `0x55 MODE SELECT(10)`, `0xA5
-PLAY AUDIO(12)`, `0xB9 READ CD MSF`, all `CHECK_READY` (audio ones
-`NONDATA` too). With no disc attached, the new audio commands succeed as
-no-ops that leave `audio_status = 0x15` (period Linux/Windows behaviour on
-a data-only drive is close enough), READ SUB-CHANNEL reports 0x15 with a
-zero position, READ CD MSF behaves like READ CD.
+Every handler asks `atapi_disc(s)` itself. New table entries, all
+`CHECK_READY` (the audio ones `NONDATA` too): READ SUB-CHANNEL 0x42,
+PLAY AUDIO 0x45 / 0x47 / 0x48 / 0xA5, PAUSE/RESUME 0x4B, STOP PLAY/SCAN
+0x4E, MODE SELECT(10) 0x55, READ CD MSF 0xB9; START STOP UNIT 0x1B stops
+audio too. With no disc the audio commands are no-ops leaving status
+0x15, READ SUB-CHANNEL reports 0x15 at position 0, READ CD MSF behaves
+like READ CD.
 
-**The transfer path.** Today `ide_atapi_cmd_read_pio` / `_dma` assume
-`cd_sector_size` ∈ {2048, 2352} and fetch through `blk`. The disc path
-generalises `cd_sector_size` to any value `libdisc_mmc_read_cd_length`
-returns (≤ 2352 + 296 + 96 = 2744; `io_buffer_total_len` is 131076 bytes,
-so at least 47 sectors fit per DMA chunk):
+**The transfer path.** The disc path generalises `cd_sector_size` to
+whatever `read_cd_length` returns (≤ 2744 bytes; at least 47 sectors fit
+the 131,076-byte `io_buffer`).
 
-- `ide_atapi_cmd_read(s, lba, n, size)`: unchanged signature; the callers
-  set `s->atapi_disc_read = (disc != NULL)` and the three READ CD
-  parameter fields first (a cooked READ(10)/(12) sets type 0, b9 `0x10`,
-  b10 0 — so through libdisc it is `read_cooked`, L-EC verified).
-- PIO: in `ide_atapi_cmd_reply_end`, the "see if a new sector must be
-  read" block calls `cd_read_sector(s)`. Make `cd_read_sector` return **1**
-  when it filled the sector synchronously (disc path: one
-  `libdisc_mmc_read_cd_sector` into `s->io_buffer`, then `s->lba++`,
-  `s->io_buffer_index = 0`) and 0 when it started an async block read (the
-  existing path). The loop then reads: `ret < 0 → ide_atapi_io_error;
-  return`, `ret == 0 → return` (callback resumes), `ret == 1 → continue the
-  loop`. Never call `ide_atapi_cmd_reply_end` recursively from the disc
-  path (a 128 KiB transfer would recurse 64 deep). `cd_read_sector_sync`
-  gets the same disc branch.
-- DMA: write `ide_atapi_disc_read_dma_cb(void *opaque, int ret)` mirroring
-  `ide_atapi_cmd_read_dma_cb`: if `io_buffer_size > 0` push the chunk with
-  `s->bus->dma->ops->rw_buf(s->bus->dma, 1)` and advance
-  `packet_transfer_size`; when nothing is left set `READY_STAT | SEEK_STAT`,
-  the IO|CD interrupt reason, raise the IRQ, `ide_set_inactive`; otherwise
-  fill the next chunk (`n = min(remaining sectors, io_buffer_total_len /
-  cd_sector_size)`) synchronously via libdisc and re-enter through
-  `replay_bh_schedule_oneshot_event(qemu_get_aio_context(),
-  ide_atapi_disc_read_dma_cb, s)` (a bottom half keeps the stack flat and
-  the completion asynchronous, which every era driver copes with).
-  `s->bus->dma->aiocb` stays NULL on this path (nothing to cancel;
-  `ide_dma_restart` must not be reached with a disc transfer pending —
-  guard `ide_atapi_dma_restart`).
-- Errors from libdisc mid-transfer: `ide_atapi_cmd_error` with the sense
-  from the table in §3 (`EMEDIUM` → `MEDIUM_ERROR 0x03`, ASC 0x11, ASCQ
-  0x05), the transfer ends, no partial data delivered beyond the sectors
-  already transferred (matches drives: the failing sector aborts the
-  command). `ide_atapi_io_error` (block errno path) is unchanged.
-- `cmd_read` (READ 10/12): before the transfer, `libdisc_sector_info`
-  over `[lba, lba+n)`; any audio/gap sector → sense 05/64/00.
-- `cmd_read_cd`: replace the two-case switch with the length function;
-  keep `validate_bcl`; the range check against `s->nb_sectors >> 2` stays
-  (the block driver's length is the lead-out, so it is right).
-- `cmd_read_toc_pma_atip`, new `cmd_read_subchannel`,
-  `cmd_read_disc_information`: disc → libdisc responder into `buf`, then
-  `ide_atapi_cmd_reply(s, len, max_len)`; negative → the sense table.
-- `cmd_get_configuration` with a disc: current profile `MMC_PROFILE_CD_ROM`
-  and only that profile listed (a CD-ROM drive, not a DVD-ROM), plus
-  features 0x001E (CD read: C2 + CD-Text bits) and 0x0103 (CD external
-  audio play). Without a disc: unchanged.
-- `cmd_mode_sense` page 0x2A with a disc: byte 10 `0x03` (reads CD-R/RW,
-  no DVD), byte 12 `0x71` (unchanged: audio play, mode 2 form 1/2,
-  multisession), byte 13 `0x7F` (CD-DA commands, stream accurate, R-W
-  supported, R-W deinterleaved, C2 pointers, ISRC, UPC), byte 14 as today,
-  byte 15 `0x03` (separate volume and mute), max/current speed 8467 (48×),
-  256 volume levels, 128 KiB buffer. Page 0x0E reports
-  `atapi_audio_port/vol`. `cmd_mode_select` (0x55) parses page 0x0E only
-  (mode parameter header 8 bytes then the page), updates those fields,
-  ignores other pages, errors on malformed lengths (05/26/00).
-- INQUIRY: product string from `s->drive_model_str` (16 chars) so that
-  `-device ide-cd,model=…` names a period drive; default unchanged
-  (`QEMU DVD-ROM`). Check the `model` property exists on `ide-cd`
-  (`hw/ide/ide-dev.c` `ide_dev_properties` vs `ide_cd_properties`); if it
-  is hard-disk-only, add it to the CD list.
-- `ide_cd_change_cb` (core.c): also stop audio and reset
-  `atapi_audio_status` to 0x15, `atapi_last_lba` to 0.
+- **PIO**: `cd_read_sector` returns 1 when it filled the sector
+  synchronously (the disc path) and 0 when it started an async block
+  read; `ide_atapi_cmd_reply_end` loops on 1 instead of recursing (a
+  128 KiB transfer would recurse 64 deep). `cd_read_sector_sync` has the
+  same branch.
+- **DMA**: `ide_atapi_disc_read_dma_cb` mirrors the stock callback,
+  fills each chunk synchronously and re-enters through a bottom half
+  (`replay_bh_schedule_oneshot_event`), keeping the stack flat and
+  completion asynchronous. `aiocb` stays NULL; `ide_atapi_dma_restart`
+  is guarded.
+- **Errors mid-transfer** end the command with the §3 sense after the
+  sectors already sent, as a drive aborts on the failing sector.
+- `cmd_read` (READ 10/12) checks `sector_info` over the range first: an
+  audio or gap sector is 05/64/00.
+- TOC, sub-channel and disc information come from the responders.
+- `GET CONFIGURATION` with a disc: the CD-ROM profile with features
+  0x001E (CD read, C2) and 0x0103 (CD audio); past 80 minutes the
+  DVD-ROM profile current with CD-ROM listed and DVD Read 0x001F (patch
+  53). Mode page 0x2A: a 48× CD-DA drive (speed 8467, C2, ISRC, UPC,
+  R–W, separate volume and mute, 256 levels, 128 KiB buffer; the DVD
+  read bit past 80 minutes); page 0x0E the audio ports. MODE SELECT
+  parses page 0x0E only and errors on malformed lengths (05/26/00).
+- INQUIRY's product string follows `-device ide-cd,model=…`.
+- `ide_cd_change_cb` stops audio and resets the status and the head.
+
+Implementation rules:
+
+- **A new PIO end-transfer function must be listed** in `hw/ide/core.c`'s
+  `ide_is_pio_out` and `transfer_end_table`, or QEMU aborts on the first
+  data word. A static one in `atapi.c` cannot be, hence the exported
+  `ide_atapi_data_out_done` (MODE SELECT's data-out).
+- **No speed model.** Page 0x2A claims 48× with a disc (the stock no-disc
+  path says 4×), `SET CD SPEED` is a no-op, and data arrives as fast as
+  the host reads it (~580 MB/s over a whole disc under TCG). QEMU's
+  block throttle (`throttling.bps-read=`) reaches only the `raw` driver:
+  `atapi_disc_read_sector` reads from libdisc, not a BlockBackend, so an
+  `.iso` throttled to 600 KB/s measures 666 KB/s in the guest and the
+  same data as a `.cue` 10,705 KB/s (`THROTTLE=` in
+  `tools/cd-rate-guest-test.py`). What the guest reads does not depend on
+  the rate: 34 ways of reading one range (PIO and DMA, request sizes,
+  byte-count limits, 2048 and 2352, paced 1×/4×/16×) agree with each
+  other and with the host's checksum on both drivers. A `speed=`
+  property both drivers honour waits for a title that paces itself on
+  CD reads.
 
 ### 5.4 CD-DA
 
-Properties: `DEFINE_AUDIO_PROPERTIES(IDEDrive, card)` on `ide-cd` (as
-`hw/audio/sb16.c` does; the card struct lives in `IDEDrive`, a pointer is
-handed to the IDEState). If `audiodev` is unset, no voice is opened and
-playback is timer-driven only (position advances at 75 sectors per second
-so polling games complete; nothing is heard). With it set:
-`AUD_register_card("ide-cd", card, errp)` at realize, `AUD_open_out(card,
-NULL, "cd-audio", s, cd_audio_callback, &as)` with `as = {44100, 2,
-AUDIO_FORMAT_S16, endianness 0}`; `AUD_set_active_out(voice, 1)` on play,
-0 on pause/stop/complete.
+`DEFINE_AUDIO_PROPERTIES` on `ide-cd` (the card lives in `IDEDrive`).
+Without an `audiodev` no voice is opened and a `QEMUTimer` advances the
+play position at 75 sectors per second, so polling games still see
+tracks complete. With one: `AUD_open_out` at 44100 Hz stereo S16, active
+while playing.
 
-`cd_audio_callback(opaque, avail)`: while `avail >= 2352` and
-`play_lba < play_end`: `libdisc_read_raw(play_lba)` (an audio sector; a
-data sector inside a play range ends playback with status 0x14), apply
-page 0x0E routing (port 0 = left output: take channel per
-`atapi_audio_port[0]` bit mask (1 = L, 2 = R, 3 = both/mix) scaled by
-`vol[0]/255`; port 1 = right likewise), `AUD_write`, `play_lba++`;
-when `play_lba == play_end`: status 0x13, deactivate. Without a voice, a
-`QEMUTimer` at 1000/75 ms per sector advances `play_lba`.
+`cd_audio_callback` reads audio sectors with `libdisc_read_raw`, routes
+them through page 0x0E (port 0 = left: channel mask 1 L, 2 R, 3 mix,
+scaled by `vol/255`; port 1 = right), `AUD_write`s them and advances;
+at the end the status is 0x13. A data sector inside a play range ends it
+with 0x14. **A host read error plays as silence** (patch 55): a
+transient failure off a network share used to stop a game's music for
+good, where a real drive plays through a bad audio sector as a dropout.
 
-Commands: PLAY AUDIO(10) `start LBA (4), length (2)`; PLAY AUDIO(12)
-`start (4), length (4)`; PLAY AUDIO MSF `start MSF bytes 3..5, end MSF
-6..8` (end exclusive; `FF:FF:FF` = to the end of the disc); PLAY AUDIO
-TRACK/INDEX `start track/index bytes 4,5, end 7,8` (map through
-`libdisc_track_info`); PAUSE/RESUME byte 8 bit 0 (0 pause → 0x12, 1
-resume → 0x11); STOP PLAY/SCAN → 0x15. A play range starting on a data
-sector → 05/64/00. `start == end` → status 0x13 immediately.
+Commands: PLAY AUDIO(10) start LBA + 2-byte length; (12) 4-byte length;
+MSF start bytes 3..5, end 6..8, exclusive, `FF:FF:FF` = the disc's end;
+TRACK/INDEX through `libdisc_track_info`; PAUSE/RESUME byte 8 bit 0;
+STOP → 0x15. A play starting on a data sector is 05/64/00; `start ==
+end` completes at once.
 
-**Three commands stop a play, and each family only sends one of them.**
-Measured on both, 2026-09-07, with `tools/cdaudio-guest-test.sh` (which
-runs `CDTEST.EXE` under `CDIMAGE_TRACE=1` and prints what the guest sent):
+**Three commands stop a play, and each family sends only one of them**
+(`tools/cdaudio-guest-test.sh`, which runs `CDTEST.EXE` under
+`CDIMAGE_TRACE=1`):
 
 - **XP** brackets every play with `PAUSE, SEEK, PAUSE, PLAY` and stops
-  with **START STOP UNIT** `1b 00 00 00 00` — never 0x4e. With 0x4e alone
-  the Stop button left the track playing to its end.
-- **Win98** sends **one PLAY AUDIO MSF and two SEEKs for the whole
-  session** — no 0x4e, no 0x1b, no 0x4b at all. On 9x **a seek is the
-  stop**: `mcicda` seeks to where playback should end and then reports
-  "stopped" on its own authority, so a drive that treats a seek as
-  advisory plays the rest of the disc out behind a stopped MCI. That was
-  the user's "the stop doesn't work on Win98": 11 MB of audio in the
-  audiodev's wav for a four-second play. A SEEK therefore ends playback
-  (patch 54) and leaves the head where it was sent.
-- A **data read** does not, although real drives abandon playback for
-  one: Win98's CDFS re-reads the volume descriptors several times a
-  second for the whole play (532 READ(10)s in one session), so a drive
-  that stopped audio on a read would never play a note under it.
+  with **START STOP UNIT** `1b 00 00 00 00`, never 0x4E.
+- **Win98's `mcicda`** sends one PLAY AUDIO MSF and two SEEKs for a whole
+  play / pause / stop session — no 0x4E, 0x1B or 0x4B. **On 9x a seek is
+  the stop**: MCI seeks to where playback should end and reports
+  "stopped" on its own authority, so a drive that treats the seek as
+  advisory plays the disc out behind a stopped MCI (11 MB of wav for a
+  4-second play). A SEEK therefore ends playback and moves the head
+  (patch 54).
+- A **data read** does not stop audio, although real drives abandon
+  playback for one: Win98's CDFS re-reads the volume descriptors several
+  times a second during a play (532 READ(10)s in one session).
 
-READ SUB-CHANNEL position: `play_lba` while 0x11/0x12/0x13, else
-`atapi_last_lba` — **the head**, which is where a play ended, where a
-seek was sent, or the last sector read, in that order of recency. Getting
-that last part wrong is visible: while it was only ever the last *read*,
-XP answered "track 01, 00:00:17" — its own volume descriptor — when asked
-where the drive was after a stop.
+READ SUB-CHANNEL's position is `play_lba` while playing, paused or
+completed, else the head (`atapi_last_lba`): where a play ended, a seek
+was sent, or the last sector read, whichever was latest. With only the
+last *read*, XP answered "track 01, 00:00:17" — its own volume
+descriptor — after a stop.
 
-The player passes an audiodev already (`embed0`, see the cheat sheet in
-doc 00); once the property exists the cheat-sheet lines change from
-`-cdrom x` to `-drive if=none,id=cd0,media=cdrom,format=cdimage,file=x
--device ide-cd,bus=ide.1,drive=cd0,audiodev=embed0` (QMP device name for
-swaps becomes `cd0`'s device: use `-device ide-cd,id=ide1-cd0,…` to keep
-the name the docs use).
+The launcher and player attach the drive explicitly, on its own channel
+and with the embed audiodev:
 
-## 6. Tests (policy: integration / e2e only, `scripts/test.sh`)
+```
+-drive if=none,id=cd0,media=cdrom[,file=<medium>]
+-device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,audiodev=embed0[,shelf=<file>]
+```
 
-### 6.1 Host: `discx` (Rust binary in `libdisc/src/bin/discx.rs`)
+`ide1-cd0` is the QMP id a medium change addresses
+(`launcher-core/src/control.rs`, forced so a tray the guest locked
+still changes).
 
-Built by `cargo build --release -p libdisc` (a `[[bin]]`; no extra deps).
-Subcommands:
+## 6. Tests
 
-- `discx selftest <outdir>` — writes synthetic images into `<outdir>`
-  and checks them **through the C API in `capi.rs`** (call the `extern
-  "C"` functions from Rust, the same boundary `cdimage.c` uses):
-  1. `mixed.cue/.bin`: track 1 MODE1/2352 (2000 sectors of deterministic
-     pseudo-random data with computed EDC/ECC), track 2 AUDIO with `INDEX
-     00` in the file (150 sectors) + 3000 sectors of a 1 kHz tone, track 3
-     AUDIO with `PREGAP 00:02:00` + 1500 sectors; `CATALOG`, an `ISRC`.
-  2. `mixed.ccd/.img/.sub`: the same disc as CloneCD with synthesized
-     `.sub` and `[Entry]` records.
-  3. `cooked.cue/.bin`: track 1 as MODE1/2048 (the same user data) +
-     the audio tracks.
-  4. `plain.iso`: the 2000 data sectors only.
-  Checks (each prints PASS/FAIL with a name; exit 1 on any FAIL):
-  - `toc0/1/2`: READ TOC formats 0 (msf 0 and 1), 1, 2 are byte-identical
-    across 1, 2 and 3; format 0 on 4 equals `cdrom_read_toc`'s layout
-    for a single track (hand-coded expected bytes).
-  - `raw-synth`: `libdisc_read_raw` of every track-1 sector of 3 equals
-    1's stored sector (synthesis = the real thing); `read_cooked` of 1
-    equals 3.
-  - `subq-synth`: `read_sub` of 1 (synthesized) equals 2's `.sub`
-    (stored) for 200 sampled sectors including both index-0 regions;
-    CRC-16 verified on every Q.
-  - `lec`: flip one byte in one sector of 1's `.bin` (a copy):
-    `read_cooked` → `LIBDISC_EMEDIUM`, `read_raw` → the flipped bytes,
-    `read_cd_sector` with C2 requested has ≥ 1 bit set, and the
-    unmodified neighbours are fine.
-  - `edges`: LBA 0, track boundaries, `lead-out − 1` OK, lead-out and
-    `0xFFFFFFFF` → ERANGE; READ CD with expected type 2 on an audio sector
-    → EMODE; every `libdisc_mmc_read_cd_length` combination from the
-    MMC-3 table (hand-coded expected lengths, ~20 entries).
-  - `msf`: `Msf` round trips at the same points as the old `#[test]`s
-    (then delete those tests from `msf.rs`: policy).
-- `discx dump <image> <what> [args]` — prints hex of a responder's
-  bytes (`toc 0 1`, `subq 1000`, `readcd 16 0 0xf8 1`): the oracle the
-  guest test compares against.
-- `discx repair <image> <outdir>` — a copy of the image in which every
-  sector whose L-EC fails now verifies: **the negative control** (§2.6). It
-  copies each payload and the descriptor by basename, so the copy opens under
-  the same name in `<outdir>`, and rewrites nothing but the EDC, the reserved
-  gap and the ECC of the failing sectors. The user data is left exactly as
-  dumped — SafeDisc's `0x55` fill stays `0x55` — because the disc has to
-  differ from the original in the *one* signal a protection reads and in
-  nothing else. Sectors with no sync pattern are left alone: those are
-  run-out, a real drive fails them too, and repairing them would add a second
-  variable. Checked by selftest's `repair`, which corrupts a sector, repairs
-  the image and requires that the sector read cleanly, that its user data is
-  still the corrupted data, and that no byte outside the parity fields moved.
-- `discx convert <in.iso> <out.cue>` — cooked ISO → MODE1/2352 cue/bin
-  with synthesized EDC/ECC and, with `--audio tone.wav …`, appended audio
-  tracks: the way to make guest test discs from the guest-tools ISO.
-- `discx export <image> <out.iso>` — the cooked 2048-byte view written
-  out sector by sector. For a folder disc (`isodir:<dir>`, M5g) this is
-  what an ISO 9660 reader that is not ours gets handed: the `dirdisc`
-  check exports the fixture tree's volume and has xorriso (or bsdtar)
-  extract the folder back out.
-- `discx mktree <dir>` — writes that fixture tree: an empty file, a file
-  of exactly one sector and one of a sector plus a byte, 3 MB of
-  pseudo-random data, names with spaces / accents / characters Joliet
-  forbids / a pair that mangles to one 8.3 name / one at Joliet's
-  64-character limit, nine directory levels, an empty directory, and 300
-  files in one directory (more records than a sector holds).
+Integration only; the catalogue with how to run each is
+`docs/testing.md`.
 
-`scripts/test.sh` host stage: `run_check libdisc libdisc.log
-target/release/discx selftest build/test/disc`, and `run_check cdimage
-cdimage.log build/qemu/qemu-img info --output=json build/test/disc/mixed.cue`
-followed by a grep for `"format": "cdimage"` and the expected virtual
-size (`sector_count × 2048`) — the block driver is probed and reports
-through the block layer.
+### 6.1 Host: `discx` (`libdisc/src/bin/discx.rs`)
+
+Built by `cargo build --release -p libdisc`.
+
+- **`discx selftest <dir>`** (the `libdisc` check) writes synthetic
+  discs and checks them **through the C API** — the boundary
+  `cdimage.c` uses: `mixed.cue/.bin` (a MODE1/2352 track of 2000
+  pseudo-random sectors, an audio track with index 00 in the file and a
+  1 kHz tone, an audio track with `PREGAP`, `CATALOG`, `ISRC`), the same
+  disc as CloneCD with a synthesized `.sub`, a MODE1/2048 cooked copy,
+  and `plain.iso`. Cases: `msf`; `raw-synth` (synthesized raw equals
+  stored raw, cooked equals cooked); `lec` (an unreadable and a
+  repairable sector, cooked and raw, both halves of the raw rule);
+  `repair`; `edges` (range ends, EMODE on the wrong type); `subq-synth`
+  (synthesized Q equals the `.sub`, CRC on every frame); `toc` (formats
+  0–2 identical across the three images, format 0 on the ISO as QEMU
+  lays it out); `ccd`; `read-cd-length` (the MMC-3 table);
+  `read-cd-fill`; `dirdisc` (§8); `panic-safety` (a corrupt cue is an
+  error string, never an abort).
+- **`discx info` / `dump <image> <what>`** print the layout and any
+  responder's bytes (`toc 0 1`, `subq 1000`, `readcd 16 0 0xf8 1`): the
+  oracle `atapi-guest` compares against.
+- **`discx scan <image>`** L-EC-checks every sector of a real dump and
+  splits the failures the way a guest meets them: read anyway (EDC
+  intact), read after the decoder repairs them, or unreadable, listing
+  the last. On a protection band every failure must be unreadable.
+  **`subscan`** does the same for stored subchannel (Q CRC failures,
+  clustering, how often `subq::synthesize` reproduces the disc's
+  frames).
+- **`discx repair <image> <outdir>`** writes the negative control
+  (§2.6b): every L-EC-failing sector's EDC, reserved gap and ECC
+  regenerated over the dumped user data (SafeDisc's `0x55` stays), each
+  payload and descriptor copied by basename; sync-less sectors (run-out,
+  which a drive fails too) left alone. Checked by selftest's `repair`:
+  the sector reads, its data is still the corrupted data, no byte
+  outside the parity fields moved.
+- **`discx convert <in.iso> <out.cue> [--audio tone.wav …]`**: an ISO
+  as MODE1/2352 cue/bin with synthesized EDC/ECC and appended audio
+  tracks — how guest test discs are made from the guest-tools ISO.
+- **`discx export <image> <out.iso>`**: the cooked view written out, how
+  a folder disc is checked by readers that are not ours (§8).
+- **`discx mktree <dir>`**: the folder-disc fixture tree (§8).
+
+The `cdimage` check has `qemu-img info` report `"format": "cdimage"`
+and `sector_count × 2048` on the selftest's cue.
+
+**An independent EDC/ECC oracle.** Neill Corlett's `ecm` (ecm-tools
+1.03, public domain; `pacman -S ecm-tools`, or `ecm.c` + `common.h` +
+`banner.h` from github.com/alucryd/ecm-tools and `gcc -O2 -o ecm
+ecm.c`) strips a sector's EDC/ECC only when its own regeneration
+reproduces them, so `ecm mixed.bin x.ecm` reporting `Mode 1
+sectors.......... 2000` proves `ecc.rs` byte-exact (1999 on `lec.bin`,
+whose flipped sector does not). Its "Mode 2 form 1 sectors … 151" are
+the all-zero audio pregap (ecm's false positive on zero blocks). Re-run
+it after any change to `ecc.rs`.
 
 ### 6.2 Guest, DOS: `tools/atapi-guest-test.py`
 
-Same harness as `tools/x87-guest-test.py` (NASM `.COM`, FreeDOS floppy
-fetched once, `-serial file:`, `-cpu pentium3`): the program talks to the
-secondary IDE channel (0x170/0x376; `-cdrom` = master) directly, sends
-PACKET (0xA0) commands by PIO and hex-dumps every reply and every REQUEST
-SENSE to COM1. Command list: INQUIRY, READ TOC formats 0 (msf 0/1), 1, 2,
-READ CD `0xF8`/subch 0, 1, 2 at LBA 0, 16, the last sector of track 1 and
-the first of track 2, READ(10) of the flipped sector (expect CHECK
-CONDITION, sense 03/11/05) and of its neighbours, READ SUB-CHANNEL format
-1/2/3, PLAY AUDIO MSF of 2 seconds of track 2 then READ SUB-CHANNEL twice
-100 ms apart (position must advance), PAUSE, STOP — both of them, STOP
-PLAY/SCAN and the START STOP UNIT a Windows guest sends instead, each
-followed by the sub-channel status that must read 0x15 — GET CONFIGURATION, MODE
-SENSE 0x2A and 0x0E, MODE SELECT 0x0E then MODE SENSE 0x0E back. Run the
-data commands with byte-count limits 512 and 65534 (BCL splitting in
-`ide_atapi_cmd_reply_end`). The Python side builds the disc with `discx
-selftest`, boots `qemu-system-i386 -cdrom build/test/disc/mixed.cue
--audiodev none,id=a0` and compares every dumped reply with `discx dump`
-of the same request: the guest must see exactly what libdisc computed.
-Wired into the guest stage as `atapi-guest`.
+The `x87-guest-test.py` harness (NASM `.COM`, FreeDOS floppy, COM1 out,
+`-cpu pentium3`). The program drives the secondary channel
+(0x170/0x376, `-cdrom` is its master) by PIO PACKET commands and dumps
+every reply and every REQUEST SENSE: INQUIRY, READ TOC 0/1/2, READ CD
+across track boundaries, READ(10) of the unreadable sector (03/11/05),
+the repairable one and their neighbours, READ SUB-CHANNEL 1/2/3, PLAY
+AUDIO MSF with the position advancing, PAUSE, both stops (STOP PLAY/SCAN
+and START STOP UNIT, each followed by status 0x15), GET CONFIGURATION,
+MODE SENSE 0x2A / 0x0E and MODE SELECT 0x0E read back — at byte-count
+limits 512 and 65534. Every reply must equal `discx dump` of the same
+request. Then the shelf (patch 52). The `atapi-guest` check;
+`ATAPI_READ_ERROR=1` is `atapi-read-error` (patch 55).
 
 ### 6.3 Guest, Windows
 
-- XP and Win98 (`scripts/test.sh` guest stage, and by hand on the Air):
-  `discx convert` the newest guest-tools ISO to `guest-tools.cue`, boot
-  with it on `format=cdimage`, copy `D:\D3DPT\*.EXE` to the scratch disk
-  (XP: `RUN.BAT` addition; Win98: by hand), hash on the host against the
-  ISO's files. Proves cooked reads through the real OS driver, DMA
-  included.
-- `guest-tools/src/cdtest.c` (`TESTS\CDTEST.EXE`, msvcrt-linked like the
-  rest): `mciSendString("open cdaudio alias cd")`, `status cd number of
-  tracks`, `play cd from 2 to 3` (TMSF), poll `status cd position` for
-  3 s, print everything to `C:\2KSBOX\CDTEST.LOG`. Run on the mixed test disc with
-  `-audiodev wav,id=embed0,path=build/test/cd.wav` (headless) or the
-  player's audio (by ear): the wav must contain the 1 kHz tone (Python:
-  RMS over the middle second, dominant frequency by a naive DFT), and the
-  `status cd mode` right after `stop cd` must not still say `playing` —
-  that line is what a drive ignoring MCI's stop looks like from inside the
-  guest, and it sat in the log unchecked until 2026-09-07.
-- Reference material (doc 09): ATAPI traces from the rig's real drive
-  while a protected title checks its disc — a Windows XP SPTI logger is
-  the tool to write when M5c starts (a filter driver is out of scope);
-  dumps of owned discs with CloneCD (subchannel) for SecuROM and with a
-  raw-capable tool for SafeDisc.
+- **Copying a disc through the OS driver**: `tools/xp-cdimage-test.sh`
+  boots XP with a converted guest-tools disc (or any `.cue` / `.ccd` /
+  `.mds` / `.iso` / `isodir:`), copies it through `cdrom.sys` and
+  compares every file (the `guest-cdimage` and `guest-dirdisc` checks).
+  Win98 has `tools/dirdisc-guest-test.sh`.
+- **`CDTEST.EXE`** (`guest-tools/src/cdtest.c`, `TESTS\` on the ISO):
+  MCI `open cdaudio`, the track count, `play cd from 2 to 3`, positions
+  for 3 s, `C:\2KSBOX\CDTEST.LOG`. With `CDTEST=`, `xp-cdimage-test.sh`
+  records the drive's audiodev to a wav, which must hold the 1 kHz tone,
+  and `status cd mode` right after `stop cd` must not say `playing`.
+  MCI answers from the state it commanded, so the drive and the wav are
+  the verdict, not MCI; `tools/cdaudio-guest-test.sh` adds the trace
+  (§5.4).
+- **Still wanted** (doc 09): ATAPI traces from the rig's real drive while
+  a protected title checks its disc (an XP SPTI logger; a filter driver
+  is out of scope), and CloneCD dumps with subchannel for SecuROM.
 
-### 6.x Which dumps carry a protection signal (measured 2026-09-05)
+### 6.x Which dumps carry a protection signal
 
-Checked with `discx scan` over six real dumps; the details and the per-disc
-table are in the M5 track doc. Two rules came out of it:
+`discx scan` over the real dumps (outside the repo, in
+`/mnt/data2/david/Downloads/oldstuff` on the Linux box):
 
-- ~~**The SafeDisc *version* decides whether an L-EC band exists, not the
-  dumping tool.**~~ **Disproved 2026-09-09 (§2.6c).** It read: 2.x writes
-  deliberately corrupt sectors near the start of the data track (Age of
-  Mythology 580 from LBA 825, FIFA 2002 584 from LBA 811) and 1.x writes none
-  at all (The Sims, Rayman 2, both 0 failures over a complete disc). The 2.x
-  half stands; the 1.x half does not — **Crimson Skies is SafeDisc 1.50.020
-  and its dump carries 579 sectors from LBA 807**, and its check is the only
-  one measured so far that actually reads its band. NFS Porsche Unleashed is
-  1.x with no band, so 1.x discs differ among themselves: `discx scan` is the
-  only way to know, and a 1.x title may well be an L-EC fixture.
-- **DiscImageCreator / redump sets do carry the 2.x band.** `/sf` replaces
-  each bad sector's user data with `0x55` and leaves the header and the
-  wrong parity alone ("N unmatch sector is replaced at 0x55 except header"
-  in `*.img_EccEdc.txt`), so the sector still fails L-EC and still reaches
-  the guest as `-EIO`. FIFA 2002 exists here as both a DIC set and an
-  Alcohol set of the same disc, dumped four years apart: inside the band
-  they are identical, 584 sectors either way. Outside it they differ — DIC
-  logs 64 sectors it could not descramble where Alcohol silently filled
-  them, so DIC is the more truthful record of a damaged copy.
-
-A useful shape to remember when judging a new dump: real protection is a
-**band** (hundreds of sectors against hundreds of thousands clean). Whole-
-disc failure is a format problem, not a protection one — most likely a
-scrambled image (§2.x, `ccd.rs` refuses `DataTracksScrambled=1`, but a bare
-`.scm` from DIC's pipeline carries no flag to catch it by).
-
-## 7. Milestones (detail and order in the track doc)
-
-| Step | Delivers | Proof |
+| Dump | Protection (from the disc's files) | What `discx scan` finds |
 |---|---|---|
-| M5a | cue/bin + ISO model, EDC/ECC, Q synthesis, C API, `discx`, `cdimage` driver, patch 50/51 data path + TOC + READ CD + subchannel | `discx selftest`, `qemu-img info`, `atapi-guest`, XP/Win98 copy from a converted ISO |
-| M5b | CD-DA (play/pause/stop/position, page 0x0E/0x2A, `audiodev`), player cheat-sheet lines, swap over QMP | `CDTEST.EXE` tone in the wav, Win98 CD Player by ear |
-| M5c | CCD + `.sub` replay, raw TOC verbatim, a SecuROM title from an owned dump | the title's launch check passes on the Air and the Linux box |
-| M5d | SafeDisc: L-EC path against a real dump, `secdrv.sys` running | **done 2026-09-09** (§2.6c): Crimson Skies' SafeDisc 1.50.020 launch check passes once a raw READ CD of an unreadable sector fails as a drive's does. Regression guards: `discx selftest`'s `lec` case (both halves of the raw rule) and `atapi-guest`'s flipped-sector case |
-| M5e | MDS/MDF (+ DPM data), CHD, a seek/read timing profile if StarForce needs it | documented result per doc 05's table |
-| M5f | disc shelf / swap in the player and launcher (with M6) | — |
-| M5g | a host directory as a disc: ISO 9660 + Joliet generated lazily from the tree (`isodir:/path`, `libdisc/src/isodir.rs`, a second BlockDriver in our own `cdimage.c`) | `discx selftest`'s `dirdisc` case round-tripped through `bsdtar`; XP copies the folder back identical (`docs/tracks/m5-dirdisc.md`) |
+| `fifa2002/` (DIC and Alcohol sets) | SafeDisc 2.x (`00000001.TMP`, `DRVMGT.DLL`, `SECDRV.SYS`) | 584 sectors from LBA 811, identical in both sets |
+| `AOM_D1.ccd` | SafeDisc 2.x | 580 weak sectors, LBA 825–12000: valid sync and header, `0x55` fill, wrong EDC |
+| `AOM_D2.ccd` | none | clean |
+| `the settlers 3/CD01.ccd` / `.cue` | VOB ProtectCD (`.ficken` in `S3.EXE`) | 697 failures, identical in both |
+| `CD02` | none | only its run-out, 234254–234403 |
+| The Sims (CCD), `rayman2/` (redump) | SafeDisc 1.x | 0 failures |
+| `nfs_porsche/*.mds` | SafeDisc 1.x | 0 failures over 281,279 sectors |
+| Crimson Skies (`C_SKIES.cue`) | SafeDisc 1.50.020 | 579 sync-less sectors, LBA 807–10018 (§2.6c) |
+
+Settlers CD01's 697: the 538-sector band at LBA 195539–196076 (corrupt
+in the data and in Q's relative timing), nine scattered singles past it
+with the EDC wrong too, and 150 sync-less run-out sectors at
+219692–219841 before track 02. The protection is on disc 1 only.
+
+What the table teaches:
+
+- **SafeDisc 2.x writes a band; 1.x discs differ.** Crimson Skies has
+  one, The Sims, Rayman 2 and Porsche none: `discx scan` is the only way
+  to know, and a 1.x title may be an L-EC fixture.
+- **DiscImageCreator / redump sets carry the band.** `/sf` replaces a
+  bad sector's user data with `0x55` and keeps its header and wrong
+  parity ("N unmatch sector is replaced at 0x55 except header" in
+  `*.img_EccEdc.txt`), so the sector still fails and still reaches the
+  guest as an error.
+- **The two FIFA 2002 sets differ outside the band.** DIC logs 64
+  sectors it could not descramble (LBA 135084–135086, 161089, 223875,
+  224045) that fail as `-EIO` and break an install; the Alcohol set read
+  them cleanly. **Run the `.mds`**, and keep the DIC `.cue` as the
+  verification fixture: its bad-sector list provably equals the dumper's
+  log.
+- **Real protection is a band** — hundreds of sectors against hundreds
+  of thousands clean. Whole-disc failure is a format problem, most
+  likely a scrambled image: `ccd.rs` refuses `DataTracksScrambled=1`,
+  but a bare `.scm` from DIC's pipeline carries no flag to catch.
+
+## 7. Milestones
+
+| Step | Delivers | State |
+|---|---|---|
+| M5a | cue/bin and ISO model, EDC/ECC, Q synthesis, C API, `discx`, the driver, patches 50/51's data path, TOC, READ CD, subchannel | done |
+| M5b | CD-DA (play, pause, stop, position, pages 0x0E / 0x2A, `audiodev`), swaps over QMP | done; Win98's CD Player by ear not recorded |
+| M5c | CCD + `.sub` replay, the raw TOC verbatim, a SecuROM title | replay done; no SecuROM title tested |
+| M5d | SafeDisc: L-EC against a real dump | done (§2.6c): Crimson Skies passes once an unreadable raw read fails; guarded by selftest's `lec` and `atapi-guest` |
+| M5e | MDS/MDF (+ DPM), CHD, a timing profile if StarForce needs one | MDS done without DPM; CHD and timing open |
+| M5f | the disc shelf in the launcher and the guest (with M6) | done (patch 52, doc 07) |
+| M5g | a host folder as a disc (§8) | done |
+
+Open items — re-measuring the protected dumps on the rig since the
+EDC-first correction, SecuROM, multisession, CHD, a speed model — are in
+`docs/tracks/m5-cdrom-backend.md`.
+
+## 8. Folder discs: `isodir`
+
+`isodir:/path/to/folder` serves a host directory as a read-only
+ISO 9660 + Joliet volume, generated lazily inside libdisc: no image file
+written, nothing copied, no `xorriso` at run time. It is small because a
+`Disc` was never tied to an image file: `isodir.rs` is a layout builder
+that emits one `Source::File` extent per host file (`Cooked2048`, with
+sync, header and EDC/ECC synthesized as for an `.iso`) and `Source::Mem`
+extents for the metadata. `read_cooked` / `read_raw`, the responders,
+patch 51, `qemu-img` and the shelf are unchanged, and `libdisc_open` on
+a directory is the whole interface (`LIBDISC_API_VERSION` stays 1).
+
+### Decisions
+
+1. **Read-only.** Files leave a guest through a FAT scratch disk, never
+   vvfat read-write.
+2. **Snapshotted at insert**, like a burned disc. Host edits appear on
+   the next eject and insert (the shelf's LOAD, whose UNIT ATTENTION
+   makes the guest's CD file system drop its cache); a file changed
+   under a mounted disc reads as `EMEDIUM`, never torn (§2.1).
+3. **Generated lazily, never written out.** `discx export` writing a
+   real ISO is the test oracle, not the mechanism.
+4. **Joliet for Windows and ISO 9660 level 1 (8.3) for DOS** in one
+   volume, both trees pointing at the same extents. No Rock Ridge: no
+   guest reads it.
+5. **A protocol prefix, not a probe** (§5.1). Everything that inspects a
+   medium string must understand the prefix, not only what passes it
+   on: the shelf's C side strips it before `access()`ing the host path
+   (`cdshelf_host_path()`), and once listed every folder as `[missing on
+   the host]`. Patch 52's LOAD passes the name with no format and the
+   block layer resolves the prefix itself.
+6. **No QEMU patch**: the driver is in our overlay file `cdimage.c`.
+7. **Not bootable.** No El Torito; a boot image named in the folder and
+   a catalogue at a fixed LBA would add it without a redesign.
+
+### Layout
+
+One Mode 1 data track, LBA 0 to the lead-out:
+
+| LBA | Contents |
+|---|---|
+| 0–15 | system area, zero |
+| 16 | Primary Volume Descriptor (type 1, `CD001`, version 1) |
+| 17 | Joliet Supplementary VD (type 2, escape `%/E`, UCS-2 level 3) |
+| 18 | Volume Descriptor Set Terminator (type 255) |
+| 19… | L and M path tables, primary then Joliet |
+| … | directory records: the primary tree, then the Joliet tree |
+| … | file extents, 2048-aligned, one contiguous run per file |
+| last | 150 zero sectors (`TAIL_PAD`: guest drivers read ahead past the last extent, and every real ISO has it) |
+
+Rules that are easy to get wrong:
+
+- **Both-endian fields.** A directory record's extent LBA and length are
+  8 bytes each, LE then BE; the PVD's path-table pointers are four
+  4-byte fields (L, optional L, M, optional M), the optional ones 0.
+- **Dates.** Directory records carry 7 binary bytes (year − 1900 … GMT
+  offset in 15-minute units) from the file's mtime; the PVD's volume
+  dates are the 17-byte digit form.
+- **Every directory starts with `.` and `..`** (identifiers `0x00`,
+  `0x01`); the root's `..` is the root. A record never straddles a
+  sector: pad to the next.
+- **Path tables** are ordered by level, parent number, identifier; the
+  root is 1 and a parent's number is ≤ its child's. Joliet has its own
+  pair of the same shape.
+- **Primary names**: level 1, `A–Z 0–9 _`, 8.3, files `;1`,
+  directories no extension or version, anything else `_`, collisions
+  `~1`, `~2`… decided from a **sorted** listing (otherwise which name
+  gets `~1` depends on readdir order and two runs differ). This is the
+  tree MSCDEX reads, and why level 2 is not used.
+- **Joliet names**: UCS-2 BE, ≤ 64 characters, `* / : ; ? \` and
+  controls → `_`, `;1` appended. A name that is not UTF-8 is skipped,
+  not mangled.
+- **Deterministic order**: directories breadth-first, entries by primary
+  identifier, files laid out in the same walk; two opens of an unchanged
+  tree are byte-identical.
+- **An empty file** has length 0 and owns no sectors, but gets the first
+  file extent's LBA rather than 0 (an extent inside the system area is
+  the kind of thing a reader drops).
+- **Volume space size** = every sector including the system area and
+  the tail padding = the lead-out = READ CAPACITY.
+
+### Limits (`isodir.rs` constants)
+
+- **Refused**, with a message naming the path: a file of 4 GiB or more
+  (single extent only; multi-extent files are a Windows-version
+  minefield), nesting deeper than 30, a symlink loop, and a tree larger
+  than **4,173,824 sectors (a dual-layer DVD-9, 8.1 GiB)**. The size is
+  measured before anything is laid out, and the message carries both
+  sizes; it reaches the shelf's error line through `cdimage.c`'s
+  `error_setg`.
+- **Warned, then carried on**: deeper than 8 levels (ISO 9660's limit;
+  Windows reads the Joliet tree, MSCDEX may not), a file of 2 GiB or
+  more (dicey on Win98), more than 65,535 directories. Symlinks are
+  followed for files and directories; sockets, FIFOs and devices are
+  skipped with a warning.
+- **CD or DVD.** Up to an 80-minute CD the medium is a CD; above that
+  the drive reports a DVD-ROM (patch 53; `READ DVD STRUCTURE` needed
+  nothing), so the CD's MSF ceiling (~878 MiB) no longer bounds a
+  folder. Win98 and XP both read marker files at 703 MiB, 878 MiB,
+  2 GiB, 4 GiB and 7.8 GiB of one folder disc (`BIG=1
+  tools/dirdisc-guest-test.sh`).
+
+**Validate where the disc is built, and make the arithmetic after it
+unable to fail.** A 34 GiB folder once got past the builder and
+panicked in MSF on the TOC's lead-out, which reached the guest as
+`LIBDISC_EIO` on an unrelated command. The size is now refused up front
+and `Msf::from_lba` saturates; the `msf` selftest pins both ends of the
+clamp.
+
+### Model additions (`libdisc/src/lib.rs`)
+
+- `Source::Mem`: cooked blocks from an in-memory blob — descriptors,
+  path tables, directory records; a few hundred KB for tens of thousands
+  of files.
+- `eof_pad` on `Source::File` (§2.1).
+- Lazy payload handles behind the 8-entry MRU cache: eager opens of
+  5,000 files pass macOS's default limit of 256 descriptors. Every open
+  re-`stat`s (§2.1); the builder still opens each file once, so a
+  missing file fails at open time.
+- `extent_at` as a binary search: a linear scan is a comparison per file
+  per sector read.
+
+### Tests
+
+- `discx selftest`'s `dirdisc` case: a hostile tree (an empty file, 300
+  entries in one directory, 9 levels, accents, spaces, `*`, colliding
+  8.3 forms, a 64-character name), every refusal, the stale-file
+  `EMEDIUM` case, and a byte-identical second open. `discx mktree <dir>`
+  writes the fixture tree (plus files of exactly one sector and one
+  sector plus a byte, 3 MB of pseudo-random data and an empty
+  directory).
+- The `dirdisc` check: xorriso extracts the exported volume identical;
+  bsdtar with Joliet off reads the 8.3 tree, including which of the two
+  colliding names holds which contents; `qemu-img` names `isodir` and
+  converts byte-identically to `discx export`; SeaBIOS probing the
+  drive under `CDIMAGE_TRACE=1` proves `cdimage_disc()` found the model
+  through the `raw` node, against a plain `.iso` as the control.
+- `guest-dirdisc` (XP copies a folder through `cdrom.sys`), `dirshelf`
+  (the launcher's verbs), `tools/dirdisc-guest-test.sh` for Win98.
+- The stale-file rule is checked host-side only: in a guest it would
+  race XP's read-ahead. There is no MSCDEX leg: the FreeDOS floppy the
+  DOS tools use carries no CD driver, and bsdtar with Joliet off stands
+  in for it.

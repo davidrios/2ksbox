@@ -1087,7 +1087,7 @@ pub struct Machine {
     /// Whether the machine gets the USB tablet: an *absolute* pointing
     /// device, so the host pointer and the guest cursor are the same
     /// pointer and the window never has to grab anything (doc 03's
-    /// pointer model, doc 06's "USB tablet optional"). `false` leaves
+    /// pointer model, doc 06's "Pointer" rows). `false` leaves
     /// the machine the PS/2 mouse the chipset already gives it, which is
     /// relative — the player then grabs on a click and Ctrl+Alt+G gives
     /// the pointer back, which is what mouselook needs and the only

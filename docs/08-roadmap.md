@@ -1,343 +1,256 @@
 # 8. Roadmap and milestones
 
-Ordered so the riskiest bets are validated first (in-process embedding,
-3D-output interop into wgpu, Apple Silicon TCG performance). Each milestone
-ends in something runnable.
+The milestones, what each set out to do, where it stands and what is
+left. Ordered so the riskiest bets were validated first (in-process
+embedding, 3D output into wgpu, TCG performance on Apple Silicon); each
+ended in something runnable. The design of each lives in its doc, the
+working state in its track doc (`docs/tracks/`), the order of work
+across tracks in `docs/00-status.md` "Next steps", and the decisions
+in doc 10. This doc keeps no history: git and the track docs do.
 
-Reference-rig capture sessions (doc 09) slot in as inputs: rig benchmarks
-before M1 (baseline for the Apple Silicon XP verdict), CRT photo set before
-M2, ATAPI traces and disc dumps before M5, real-GPU screenshots during M3/M4.
+Reference-rig sessions (doc 09) were inputs: benchmarks before M1, CRT
+photos before M2, ATAPI traces and disc dumps before M5, real-GPU
+screenshots during M3/M4.
 
-## M0 — Foundation  ✅ (2026-09-02)
+| | Milestone | Status | Design · track |
+|---|---|---|---|
+| M0 | Foundation | done | doc 02 |
+| M1 | Architecture validation | done | docs 02, 11 |
+| M2 | Pixel accuracy and input | done, leftovers | doc 03 |
+| M3 | 3D for Win98 and Glide | done, leftovers | doc 12 |
+| M4 | Paravirtual Direct3D device | done | doc 14 · `m4-d3d-device.md` |
+| M5 | CD-ROM backend, folder discs | done | docs 05, 17 · `m5-cdrom-backend.md`, `m5-dirdisc.md` |
+| M6 | Launcher and packaging | shipped, continues | doc 07 · `m6-launcher.md` |
+| M7 | XP display driver | done, evolving | doc 15 · `m7-display-driver.md` |
+| M8 | x87 / SSE fast paths | done | docs 13, 16 · `m8-tcg-fastpaths.md` |
+| M9 | TCG on Apple Silicon | done | doc 22 · `m9-tcg-aarch64.md` |
+| M10 | Win98 display driver | active (step 5) | doc 19 · `m10-win98-driver.md` |
+| M11 | Windows host | done, leftovers | `build-windows.md` · `m11-windows-host.md` |
+| M12 | Music | done | doc 20 · `m12-music.md` |
+| M13 | Gamepads | done | `m13-gamepads.md` |
+| M14 | Voodoo 2 device | active | doc 21 · `m14-voodoo2.md` |
+| M15 | Direct3D executor on Wine | active (steps 5–6) | doc 14 · `m15-wine-executor.md` |
 
-- Repo scaffold per doc 02; QEMU submodule pinned v9.2.4 (qemu-3dfx cadence);
-  qemu-3dfx submodule; `prepare-qemu.sh` (overlay + patch + sign) and
-  `configure-qemu.sh` (uv-managed Python); patched QEMU builds and runs with
-  glidept/glidelfb/mesapt regions live — verified on Linux x86_64 (Arch) and
-  **macOS Apple Silicon (M1 Air)**. Windows cross-built since 2026-09-06 (M11).
-- Rust workspace: `player` (winit + wgpu 30 window, XRGB8888 test pattern
-  with integer 4:3 viewport, mailbox present), `libdisc` (MSF/LBA + types),
-  `launcher` stub. CI (manual trigger) for Linux/Windows/macOS-arm64.
-- Detour: a libretro core was built and validated in RetroArch, then dropped
-  (ADR-005).
+## M0 — Foundation ✅
 
-## M1 — Architecture validation  ✅ (2026-09-02; Windows closed by M11)
+The repository per doc 02; QEMU pinned at v9.2.4 with the qemu-3dfx
+overlay and our patch queue (`prepare-qemu.sh`, `configure-qemu.sh`,
+uv-managed Python); the Rust workspace with a first `player` (winit +
+wgpu, integer 4:3 viewport). Built and run on Linux x86-64 and the M1
+Air; Windows since M11. A libretro core was built on the way and
+dropped (ADR-005).
 
-Done, all through the in-process embed path:
-- `10-embed-api` builds `libqemu-embed-<target>` from QEMU's meson; shim
-  `embed/libqemu_embed.{h,c}` (lifecycle on one thread, display listener,
-  input via bottom-half, VM control, audio ring, refresh interval; API v3);
-  `qemu-embed` crate (hand-written FFI, rpath via `links` metadata).
-- Display: FreeDOS and **Windows 98** render in the player — Linux and the
-  M1 Air (dylib). sRGB-correct on macOS swapchains.
-- Input: keyboard (scripted `PLAYER_KEYS` verified in FreeDOS; typing in
-  Win98 on the Air), USB-tablet absolute mouse (never grabs), PS/2 relative
-  grab with Ctrl+Alt+G release.
-- Audio: `embed` audiodev → SPSC ring → cpal; verified (ring fills on
-  FreeDOS `echo ^G`; Win98 plays sounds on the Air).
-- librashader chain: `--shader <preset.slangp>` (submodule
-  `third_party/slang-shaders`); verified with crt-lottes via GPU readback.
-- Latency instrumentation (`PLAYER_LATENCY=1`), 16 ms refresh pull.
-  **Measured on the M1 Air (Win98, crt-lottes, 2026-09-02):** publish→present
-  p50 6–10 ms, p95 15–17 ms, max 18 ms — the vsync-phase floor at 60 Hz;
-  Linux/Wayland reads the same. Meets the ≤ 1 host frame budget (doc 03).
-- Spike A step 1: qemu-3dfx GL pass-through at 500+ fps on the Air
-  (standalone `-display sdl`, SDL/native-OpenGL backend, no XQuartz at
-  runtime; superseded by the window-less embed provider and zero-copy in M3).
-- XP boot + TCG benchmark on the Air against the rig baseline (doc 09):
-  XP boots in the player (sound, tablet, clean power-off), ~30 s to desktop;
-  vs. the rig's P4 1.7: integer 1.3–2× faster (7-Zip), x87 FP 21 % (Super PI
-  1M 9:49 vs 2:02), 31 % after patch 05 (6:33), and 104 % with patch 06
-  (1:57) — `reference/benchmarks/README.md`.
-- QMP over socketpair: `player/src/qmp.rs` — socketpair, id-matched
-  synchronous `execute`, event queue drained on the UI thread;
-  `PLAYER_QMP=1` logs every event, `PLAYER_QMP_EXEC='<json>'` runs
-  commands after the first guest frame (verified: query-version/status/
-  block, error classes, RTC_CHANGE events on FreeDOS).
-- Windows host: closed 2026-09-06 by M11 (`docs/tracks/m11-windows-host.md`,
-  `docs/build-windows.md`): cross-builds from Linux with mingw-w64, packages as
-  portable zip, WHPX included.
+## M1 — Architecture validation ✅
 
-## M2 — Pixel accuracy + input polish  ✅ (2026-09-05/07)
+QEMU in-process through `libqemu-embed-<target>` and the `qemu-embed`
+crate (doc 11): display, input (keyboard, USB tablet, PS/2 grab),
+audio (the `embed` audiodev into cpal), QMP over a socketpair
+(`player/src/qmp.rs`), the librashader CRT chain. FreeDOS, Win98 and XP
+run in the player on Linux and the Air.
 
-- ~~Mode analysis table (doc 03)~~ ✅ 2026-09-05 (`player/src/mode.rs`): geometry
-  stage takes the display aspect from the table (320×200 is 4:3, not 1.6:1;
-  so are 640×350, 640×400, 720×400 text, and mode X sizes), and the scanline count
-  reaches the preset through `vga_mode` / `inter` — 320×200 draws 400 scanlines,
-  640×480 draws 480. `player --mode-sweep` is the check.
-- ~~Whole-pixel geometry~~ ✅ 2026-09-06: viewport size and origin rounded to
-  integers to prevent fractional grid crawling during window resize; minimum inner
-  window size clamped to 1x picture in physical pixels.
-- ~~Native guest screenshots~~ ✅ 2026-09-06: Ctrl+Alt+S writes the guest's
-  unscaled, unshaded native frame to `PLAYER_SHOT_DIR/2ksbox-NNNN.png`.
-- ~~Event-driven geometry updates~~ ✅ 2026-09-07: mode analysis, minimum window
-  size, preset scanline parameters, and fitted rect are computed on actual
-  surface changes (`Gpu::guest_surface_changed` / `Gpu::resize`) rather than
-  recalculated multiple times per rendered frame.
-- Remaining: overscan crop options and final calibration against rig CRT photos.
+- **Latency** on the Air (Win98, crt-lottes): publish → present p50
+  6–10 ms, p95 15–17 ms — the vsync-phase floor at 60 Hz, within doc
+  03's one-frame budget (`PLAYER_LATENCY=1`).
+- **XP under TCG against the rig's P4 1.7** (`reference/benchmarks/`):
+  integer 1.3–2x faster; x87 21 % of it at first, 104 % after M8's
+  patches 05/06 (Super PI 1M 9:49 → 1:57 against the rig's 2:02).
 
-## M3 — 3D for Win98 + Glide  ✅ (2026-09-02/06; design: doc 12)
+## M2 — Pixel accuracy and input ✅
 
-- GL pass-through renders inside the player on Linux **and macOS** (patches 30–32,
-  `embed/mglcntx_embed.c`, embed API v4): EGL surfaceless pbuffer on Linux,
-  CGL + FBO stand-in on macOS. Win98 wglgears in the player: 420–450 fps.
-- **Linux zero-copy** (GBM dma-buf ring → Vulkan import, API v5): 575–600 fps.
-- **macOS zero-copy** (IOSurface ring → Metal, API v6) verified on the Air.
-- **Glide pass-through with OpenGLide** ✅ 2026-09-06 (patch 33, `glidept/`):
-  qemu-3dfx ships no host Glide library, so we build OpenGLide (LGPL, 121
-  exports). Reversed window handshake (`GlideHostOps`) renders into our
-  window-less context through the CRT chain.
-- Verified in guest with `TESTS\GLIDETEST.EXE` (4 cases, 0 failed) through
-  `tools/glide-guest-test.sh` in the player.
+Mode analysis (`player/src/mode.rs`: display aspect from the mode
+table, scanline count to the preset; `player --mode-sweep` checks it),
+whole-pixel geometry, native screenshots (Ctrl+Alt+S), geometry
+recomputed only on surface changes. Doc 03 has the design.
 
-## M4 — Paravirtual Direct3D device (XP & Win98)  ✅ (2026-09-04; doc 14, ADR-006/007)
+**Left:** overscan crop, the curated preset pack calibrated against the
+rig's CRT photos, presets with no resolution override, the player's own
+overlay controls (pause, snapshot, disc swap; doc 07).
 
-- **P0 spike:** DXVK d3d9 native on macOS over KosmicKrisp (ADR-007, macOS 26)
-  and on Linux (RADV) — decided DXVK as host executor. Reference scene
-  (`guest-tools/src/d3dgame9.c`, `d3dgame8.c`) golden on rig (P4 + GeForce 6200).
-- **P1 transport + device:** SysBus `hw/d3dpt` (patch 40), protocol
-  `d3dpt/d3dpt_proto.h`, decoder + executor `libd3dpt_exec`, guest `d3d9.dll`.
-  XP D3D9TEST 640×480: 2840 fps on device vs 1100 on WineD3D.
-- **P2 resources + fixed function:** vertex/index buffers, textures (RGB, DXT),
-  transforms, lights, depth/stencil. D3DGAME9 byte-identical to native DXVK.
-- **P3 shaders + queries:** SM1–3 vertex/pixel shaders, constants, occlusion
-  and event queries, StretchRect, cube textures. `D3DFEAT9` byte-identical.
-  Occlusion query polling yield fixed 2026-09-07 (`guest-tools/src/d3dfeat9.c`).
-- **P4 D3D8 over d3d9:** `d3d8.dll` wrapper; D3DGAME8 byte-identical. Max Payne
-  and GTA Vice City running on device.
+## M3 — 3D for Win98 and Glide ✅
 
-## M5 — CD-ROM backend & DirDisc  ✅ (2026-09-04/06; docs 05, 17, `docs/tracks/m5-cdrom-backend.md`)
+qemu-3dfx's GL pass-through renders into the player's window-less
+context on Linux (EGL), macOS (CGL) and Windows (WGL), zero-copy through
+a dma-buf ring on Linux and IOSurface on macOS (doc 12). Glide 2 through
+our own OpenGLide build (doc 12 §5, patch 33, `glidept/`), since
+qemu-3dfx ships no host Glide library; `GLIDETEST.EXE` passes in a guest.
 
-- **M5a libdisc (Rust):** cue/bin + CCD + MDS + ISO models, EDC/ECC,
-  Q-subchannel synthesis, C API, `discx` tool; `cdimage` QEMU block driver
-  (patch 50); ATAPI patch 51 (raw sector reads, READ CD, subchannel, raw TOC).
-- **M5b CD-DA playback:** `audiodev` on `ide-cd`, mode pages, sample-accurate
-  seeking; MCI stop command maps to `START STOP UNIT` (2026-09-07 fix).
-- **M5c–e Protection checks & dumps:** SafeDisc 2.x, mixed-mode + CD-DA,
-  and VOB ProtectCD verified with real game dumps (Age of Empires Gold, Moto
-  Racer, The Settlers 3, FIFA 2002); negative control testing with `discx repair`.
-- **M5g DirDisc (`isodir:`)** ✅ 2026-09-06 (`docs/tracks/m5-dirdisc.md`):
-  host directory mounted as on-the-fly generated ISO 9660 + Joliet volume;
-  XP and Win98 copy all files identical without burning disc images.
-- In-guest disc shelf integration (`patch 52`, `cdshelf/cdshelf_proto.h`,
-  `CDSHELF.EXE` / `CDSHELF.COM`).
+**Left:** a Glide title by hand (the evidence is headless: Rayman 2,
+Carmageddon DOS), a macOS `glide-host` check and a Glide guest on the
+Air, a Windows Glide wrapper, fence sync instead of `glFinish`.
 
-## M6 — Companion launcher & packaging  ✅ (2026-09-06/07; doc 07, `docs/tracks/m6-launcher.md`)
+## M4 — Paravirtual Direct3D device ✅
 
-- **Architecture (ADR-014):** `launcher-core/` library owns all logic, models,
-  state machines, bundle formats, and debug CLI verbs.
-- **Shipped front end (ADR-015):** `launcher-qt/` on Qt 6 / QML via cxx-qt
-  installs as `2ksbox`. The egui view `launcher/` was kept as a second
-  front end until 2026-09-13, when it was deleted (ADR-017).
-  `launcher-capi/` exposes C ABI for external embedding.
-- **Machine library & wizard:** 4 families (Win98, XP, DOS, Other), RAM bounds,
-  CPU throttling for DOS (`cpu_speed`), display adapter choice (`d3dpt`, `cirrus`, `std`),
-  **networking defaults to off on new machines** (avoids guest DHCP delays and popups; easily toggled on),
-  seamless mouse toggle, emulation optimization toggles.
-- **Disc shelf & snapshots:** natural-sorted disc shelf with live insertion/ejection;
-  internal snapshot manager over QMP.
-- **Shader profile manager:** animated preset detection, live preview with
-  wgpu rendering, controlled `PathField` component, and clean model refresh in Qt launcher.
-- **Packaging:**
-  - Linux tarball (`scripts/package-linux.sh`) with relocatable layout and desktop entry.
-  - Flatpak (`packaging/flatpak/`, `scripts/package-flatpak.sh`) on `org.kde.Platform` 6.10, fully offline build.
-  - macOS `.app` / `.dmg` (`scripts/package-macos.sh`) with complete dylib closure, pruned unused Qt frameworks (saving 6 MB), dyld `@rpath` resolution checks, hardened runtime, Vulkan loader, notarized.
-  - Windows portable `.zip` (`scripts/build-windows.sh`, `scripts/package-windows.sh`) cross-built via container with WHPX.
+ADR-006/007, doc 14. Guest `d3d9.dll` / `d3d8.dll` serialize the API to
+the `d3dpt` device (patch 40); the host decoder runs it on DXVK. P0 (DXVK
+on KosmicKrisp and RADV), P1 transport, P2 fixed function, P3 shaders
+and queries, P4 D3D8 over d3d9; D3DGAME9, D3DGAME8 and D3DFEAT9 are
+byte-identical to native DXVK. On XP the M7 driver replaced the per-game
+DLLs; they remain the Win98 path and the executor's harness.
 
-## M7 — XP guest display driver  ✅ (2026-09-04/05; doc 15, `docs/tracks/m7-display-driver.md`)
+**Left:** a D3D8/9 game by hand on the DLL path, its stubs, a decoder
+thread (the track doc).
 
-- **M7a framebuffer driver:** `d3dpt-vga` PCI adapter (stdvga core + register BAR),
-  `d3dptvid.sys` miniport + `d3dptdisp.dll` display driver; zero-copy inside QEMU,
-  host mode table.
-- **M7b DirectDraw DDI:** VRAM surfaces, paced page flips against hardware frame
-  counter, vertical blank waiting, hardware cursor (v4 register set).
-- **M7c Direct3D DDI:** DX8 DDI landed (`D3DCAPS8`, hardware T&L, DX8 token
-  stream rewrite, state sets, render-to-texture); vs 1.1 / ps 1.4 shaders (protocol v7);
-  palettized P8 textures & color keying (protocol v8); DX3 execute buffers for
-  1997 titles (`IDirect3DDevice::Execute`, Moto Racer); untracked GDI write
-  shadowing; video-memory vertex/index buffers (protocol v9).
+## M5 — CD-ROM backend and folder discs ✅
 
-## M8 — CPU fast paths in TCG  ✅ (2026-09-04; docs 13, 16, `docs/tracks/m8-tcg-fastpaths.md`)
+Docs 05 and 17. `libdisc` (Rust) models cue/bin, CCD, MDS and ISO with
+EDC/ECC and Q-subchannel synthesis behind the `cdimage` block driver
+(patch 50) and raw ATAPI (patch 51); CD-DA through the drive's
+`audiodev`; the in-guest disc shelf (patch 52, `CDSHELF`). SafeDisc,
+mixed-mode and ProtectCD dumps verified; `discx repair` is the negative
+control. M5g: `isodir:` serves a host folder as a generated ISO 9660 +
+Joliet disc (doc 17 §8).
 
-- **x87 shadow doubles (patches 05/06, doc 13):** host FPU at 53/24-bit precision;
-  translator keeps x87 stack as doubles across instructions in TCG. XP Super PI
-  1M on Air: 9:49 (softfloat) → 1:57 (faster than reference rig's P4 1.7 at 2:02).
-- **SSE inline in TCG (patch 11, doc 16):** packed ops on vector unit, scalar in
-  GPRs; native x86-64 `fmin_vec`/`fmax_vec`/`fcmp_vec` opcodes mapping to VMINPS/VMAXPS/VCMPPS;
-  SSEBENCH clamp+cmp 10.0× over helpers.
-- **SIMD/MMX inline in TCG (patch 12, doc 16):** integer/permutation ops inline;
-  `tbl_vec` opcode; `mulsh_vec`/`muluh_vec` and `ssnarrow_vec`/`usnarrow_vec` native ops.
-  Merged to `main`.
+**Left:** FIFA 2002's no-match, a second SafeDisc 2 title, SecuROM,
+multisession, CHD (the track doc).
 
-## M9 — TCG on Apple Silicon  ✅ (2026-09-05/06; `docs/tracks/m9-tcg-aarch64.md`)
+## M6 — Launcher and packaging ✅
 
-- Profile-first tuning on aarch64 with `-perfmap` (patch 13).
-- **Patch 14:** JIT write-protect toggle per thread (Super PI 1M: 1:36.2 → 1:25.3).
-- **Patch 15:** vAPIC TB invalidation storm fix (ROM page invalidations clamped).
-- **Patch 16:** softmmu TLB 4096-entry floor (eliminates context-switch thrashing;
-  Moto Racer slow path: 48 % → 1.3 % of vCPU).
-- **Patch 17:** REP MOVS/STOS fast path via host `memcpy`/`memset` (MOVSD 2.15 → 0.07 ns/elem).
-- **Patch 18:** same-value SMC store filter (Moto Racer race: 7.3 → 21.7 fps at start, 39.2 fps at 60 dumps/s).
-- **Patch 19:** TLS/RCU lock overhead reduction in code-page store path (standing start 40.4 fps).
-- **Patch 20:** inline jump-cache lookup for `ret`/`call *`/`jmp *` (7-Zip +12 % compress / +7 % decompress).
-- **Patch 21:** pinned guest registers x20–x28 across chained TBs (doc 18, opt-in).
-- Merged to `main`.
+Doc 07. `launcher-core` owns every rule (ADR-014); `launcher-qt` is the
+shipped front end (ADR-015; the egui one was deleted, ADR-017);
+`launcher-capi` and `launcherx` are its other callers. The machine
+library and form (four families, per-family defaults, the adapter,
+Direct3D, sound, music and optimization pickers), the disc shelf,
+snapshots, shader profiles with a live preview, clone. Packages: Linux
+tarball, Flatpak (`org.kde.Platform` 6.10, offline), macOS app in two
+builds (ADR-019), Windows zip.
 
-## M10 — Native Win98 display driver  (Active; doc 19, `docs/tracks/m10-win98-driver.md`)
+**Left:** an AppImage, a Windows installer, the preview as a
+`QQuickRhiItem`, grid thumbnails, bundle import/export, Flathub
+screenshots (the track doc's "Open").
 
-- Architecture (ADR-012): split XP display driver into OS-independent core
-  plus thin OS layer.
-- 9x driver model: 16-bit `d3dpt9x.drv` (DIB engine), ring-0 mini-VDD `d3dpt9v.vxd`,
-  and ring-3 DirectDraw/D3D HAL. Built with Open Watcom v2.
-- **Milestones achieved (2026-09-06/07):**
-  - Toolchain and builds established (`guest-tools/build-driver9x.sh`).
-  - Mini-VDD maps VRAM and register BAR; BARs survive entire boot.
-  - GDI loads driver; mode switches to linear mode (e.g. 800×600×16).
-  - VGA text-mode exception decoding from top 32 KB of VRAM.
-  - `ExtTextOut` thunk argument fix.
-  - PnP INF-only clean installation (`pnpdrvr.drv`, `DelReg`, `DRIVER9X\`).
-  - `SETUP /ALL` clean 9x restart via detached process (`SETUP /REBOOTNOW`).
-  - Win98 machine family defaults to `d3dpt-vga`.
-  - Desktop shell painting resolved (boots straight to desktop at 800×600×16 or chosen mode).
-- Next: core split and 9x DirectDraw/Direct3D HAL.
+## M7 — XP display driver ✅
 
-## M11 — Windows host support  ✅ (2026-09-06; `docs/tracks/m11-windows-host.md`, `docs/build-windows.md`)
+ADR-008, doc 15. The `d3dpt-vga` adapter with the miniport + display
+DLL pair (`guest-tools/src/d3dptvid/`), register set v5.
 
-- Cross-compilation container based on Fedora mingw-w64 (`scripts/win-cross.sh`).
-- Built artefacts: `2ksbox.exe` (Qt launcher), `2ksbox-player.exe`, `libqemu-embed-i386.dll`,
-  `d3dpt_exec.dll`, `qemu-img.exe`, firmware, guest tools.
-- WHPX acceleration support detected and built in.
-- Portable zip packaging (`scripts/package-windows.sh`).
-- Windows-specific fixes: C-runtime descriptor translation (`qemu_embed_socket_to_fd`, embed API v7),
-  debug logging (`launcher.log`, panic hook, `2ksbox-debug.bat`), cxx-qt emutls proxy fix (`once_proxy.cpp`),
-  the Windows 11 style (FluentWinUI3) following the desktop's light/dark mode
-  (2026-09-22; light-only on the "Windows" style before), WGL backend for OpenGL.
+- **M7a** framebuffer driver: the host's mode table, 8 bpp palettes,
+  hardware cursor (v4), gamma ramps (v5).
+- **M7b** DirectDraw: VRAM surfaces, flips paced by a vertical blank,
+  colour keys.
+- **M7c** Direct3D, DX3 execute buffers through a DirectX 8 DDI:
+  hardware T&L, vs/ps 1.x (protocol v7), palettized textures and colour
+  keys (v8), VRAM vertex/index buffers (v9), sixteen streams (v10), cube
+  (v11) and volume (v12) textures, full-screen multisampling (v13),
+  anisotropic filtering, the rest of DX8's texture formats, untracked
+  GDI writes caught by a target shadow.
 
-## M12 — Music  (Active; doc 20, `docs/tracks/m12-music.md`)
+FIFA 2000, Max Payne, Vice City, Moto Racer 1997, Diablo and GTA 2 play
+on it. **Left:** a title for each probe-only DX8 feature, more 8 bpp
+titles, a driver stage in `scripts/test.sh`.
 
-The half of a period machine's audio QEMU never had: an **OPL3** (Nuked)
-at 0x388 and at the Sound Blaster's own base, an **MPU-401** at 0x330,
-and behind it either a **SoundFont General MIDI** synthesizer or a
-**Roland CM-32L**; QEMU's own **Gravis Ultrasound** offered as a card.
-All three engines are pure Rust in `libsynth/`, linked into QEMU the way
-`libdisc` is, so music mixes on the guest's own clock and a headless run
-can capture it to a wav.
+## M8 — CPU fast paths in TCG ✅
 
-- **M12a the engines** ✅ 2026-09-09: `libsynth` + `synthx selftest`
-  (OPL detection, an FM note, the shipped GPL-2 bank, running status).
-- **M12b the devices:** `hw/audio/opl3.c`, `hw/audio/mpu401.c`, patch 25.
-- **M12c the pickers:** `bundle::Sound` / `bundle::Music`, per-family
-  defaults (doc 20 §6), both front ends, the `music` check.
-- **M12d packaging:** the bank into `share/2ksbox/soundfonts/`.
-- **M12e the guest end-to-end:** `tools/midi-guest-test.py`.
+x87 on the host FPU with the stack kept as host values inside TCG
+(patches 05/06 and later, doc 13), SSE inline (patch 11) and MMX/integer
+SIMD inline (patch 12, doc 16). **Left:** a Direct3D title with and
+without `*-fast=off`.
 
-## M13 — Gamepads  (Done 2026-09-10; `docs/tracks/m13-gamepads.md`)
+## M9 — TCG on Apple Silicon ✅
 
-Opened 2026-09-09 out of doc 08's post-v1 list. QEMU has **nothing** to
-build on — no gameport, no gamepad HID (`hw/input/hid.h` knows mouse,
-tablet and keyboard only), and no joystick class in the input core — so
-each guest-facing path is new code in the patch queue. Three of them,
-because they reach different guests:
+Profile-first work on aarch64 (`-perfmap`, patch 13): JIT write-protect
+per thread, TB-invalidation and TLB fixes, REP fast path, same-value SMC
+filter and soft immediates, inline jump-cache lookup, and the later TLB
+and TB-list patches (`patches/qemu/README.md`). Doc 22 measures the
+queue at 2.34x geomean over pristine 9.2.4 on the Air. Optimization was
+closed by user decision (2026-09-12). Patch 21 (`pinned-regs`, doc 18)
+crashes XP and is not offered in the form.
 
-- **Step 0 the host end** ✅ 2026-09-09: `gilrs` in the player (evdev /
-  XInput / GameController), the abstract pad and its shaping in the new
-  `gamepad/` crate — shared the way `shader-chain` is, because the player
-  must not depend on the launcher — `bundle::Pad` (`none` / `keys`) and
-  its wizard row in `launcher-core`, `player --pads` and
-  `--pad-sweep`, and `PLAYER_PAD_SCRIPT`, a synthetic pad, without which
-  no headless check can drive a controller and the whole track is
-  hand-testing only. The `pad` check guards it. Embed API v8 moved to
-  path A, where it has a consumer.
-- **Path C the key mapping** ✅ 2026-09-09: pad → the key events the
-  player already sends, `--pad keys` written from `bundle::Pad`. Every
-  guest, no QEMU patch, no analog. The mapping recomputes the wanted set
-  of keys each poll and diffs it, so shared keys (d-pad *and* stick on
-  the arrows) release only when the last holder does, and a stick crossing
-  centre releases before it presses. Its guest test was **dropped by
-  decision** 2026-09-10 — driving a guest's keyboard from a scripted pad
-  and reading the keys back inside Windows is more harness than the path
-  is worth — so it is guarded on the host side alone, by
-  `player --pad-sweep`, which is where every bug in it has been.
-- **Path A `usb-gamepad`** ✅ 2026-09-09 (patch 26): a whole device —
-  `gamepad/qemu/dev-gamepad.c`, two analog sticks, an 8-way hat with a
-  null state and twelve buttons in a six-byte report, built under
-  `CONFIG_USB_HID`. Driven by absolute state through embed API v8
-  (`qemu_embed_pad_state`), so a dropped update is corrected rather than
-  leaving a button held; a second one is refused at realize. The
-  joystick event class the plan wanted was dropped: QEMU's input core is
-  built around consoles and a gamepad has no console affinity, so the
-  shim calls the device directly — which is not upstreamable as it
-  stands, and the track doc says so. XP, Win98 SE and Me should see it on
-  their in-box HID stack with nothing to install — XP does; Windows 98 SE
-  binds its own driver but asks for the Windows 98 source files the first
-  time. DOS cannot, and is not offered it. **Guests have enumerated it**:
-  `pad-guest-xp` and `pad-guest-98` boot one each and ask what a game
-  asks, and a real DualSense has been in both families' Game Controllers
-  panel by hand (2026-09-09).
-- **Path B the gameport** ✅ 2026-09-09 (patch 27): four RC one-shots at
-  0x201, computed against `QEMU_CLOCK_VIRTUAL` on read. The only path that
-  reaches DOS, and the busy-wait timing risk is bounded by the DOS
-  family's existing `-icount shift=N,align=on` — measured in both
-  machines, paced and not, by `pad-guest`. The d-pad drives the first
-  stick's axes to their ends inside the device, because a pad with no pots
-  has no other way to be read; a real DualSense has done it in a Windows
-  98 DOS box.
+**Left:** the Air's game tests uncapped, binary32 at PC=24 on aarch64,
+the measurements doc 22 still owes.
 
-  **The 9x analog stack (`VJOYD` / `MSANALOG`) was dropped rather than
-  built**, 2026-09-10: the port would have wanted "Standard Game Port"
-  through Add New Hardware and a calibration pass so a *Windows* game
-  could see a joystick, and a Windows game on 98 already has one — the
-  USB pad of path A reaches DirectInput **and** winmm's `joyGetPosEx`,
-  which is what VJOYD would have been serving. Measured by the
-  `pad-guest-98` check, which asserts both columns. The port keeps its
-  DOS job, DOS boxes under Windows included.
+## M10 — Native Win98 display driver (active)
 
-**The track is closed.** Every path that reaches a guest has a check in
-the suite's guest stage — `pad-guest`, `pad-guest-xp`, `pad-guest-98` —
-rather than a hand run. One thing is open and owed to nobody: a real
-controller has never driven path C, whose output is scancodes rather than
-a device, so a wrong binding there would look like a broken game.
+ADR-012, doc 19. The XP driver split into an OS-independent core
+(§19) plus a 9x layer: `d3dpt9x.drv`, the mini-VDD `d3dpt9v.vxd` and the
+ring-3 HAL `d3dpt9hl.dll`, built with Open Watcom. Steps 0–4 are done:
+PnP install from the INF alone, the whole M7c matrix on 98 (§24–§25),
+visible blue screens and power-down, and `d3dpt-vga` as a new Win98
+machine's default (since 2026-09-16). Step 5, real titles (§26 on), is
+under way: Crimson Skies, 3DMark 99 / 2001 SE, Carmageddon in Mode X,
+Blood in a DOS box.
 
-## M14 — The Voodoo 2 device  (Active; doc 21, `docs/tracks/m14-voodoo2.md`)
+**Left:** the doc 04 Win98 title matrix against the Glide / WineD3D
+control, and the track doc's next steps. WineD3D-in-guest stays the
+fallback until M15's last step.
 
-Opened 2026-09-12 on the user's decision: 86Box's Voodoo 2 emulation as
-a QEMU PCI device, `-device voodoo2`, beside the Glide pass-through (M3)
-rather than instead of it (ADR-016). Vendored verbatim under `voodoo/`
-with a shim of 86Box's platform headers, one meson patch (62). Step 0 —
-the port builds and a FreeDOS guest with no 3dfx code drives it through
-the whole path to a frame on the console — landed the day it opened.
-Steps: 3dfx's own driver in a Win98 image and the launcher pick; a game
-and the numbers, on this box and the Air; the command-FIFO window as RAM
-and the region without the BQL if the profile asks; a hardened
-`fatal()`; Windows.
+## M11 — Windows host ✅
 
-## M15 — The Direct3D executor on Wine, on the host  (Opened 2026-09-22; ADR-018, `docs/tracks/m15-wine-executor.md`)
+`docs/build-windows.md`. A cross build from Linux in a container (QEMU
+with clang, patch 68), a portable zip with the Qt launcher, WHPX, the
+WGL backend (doc 12 "The WGL rule"), DXVK as `dxvk_d3d9.dll` and
+Windows' own Direct3D 9 as the below-floor fallback (ADR-007). A native
+MSYS2 build for debugging on a Windows PC. Guests run on the user's PC.
 
-Opened on the user's decision: a host below DXVK's Vulkan 1.3 floor gets
-the same paravirtual device and the same executor, with the D3D9
-supplied by Wine's d3d9 on the host — the Windows build of
-`d3dpt_exec.dll` in a host program under Wine, VRAM and the command
-window shared as one file, the five calls of `d3dpt_exec.h` over the
-child's stdio — instead of a 2015 Wine copied into the guest per game.
-Steps: the spike (the dp2 frame through the DLL on Wine's d3d9, diffed);
-the transport; the reference scene in the guest; the launcher's third
-verdict and the packages; a real game on a below-floor host; then
-WineD3D-in-guest removed in one commit.
+**Left:** Moto Racer's speed on the PC, live control over AF_UNIX, the
+Windows-built ISO in a guest, an installer, DXGI zero-copy, a check that
+boots a guest, a Windows Glide wrapper (the track doc).
+
+## M12 — Music ✅
+
+Doc 20. An OPL3 at 0x388 and the Sound Blaster's base and an MPU-401 at
+0x330 (patch 60), on three pure-Rust engines in `libsynth/` (Nuked OPL3,
+SoundFont General MIDI, a CM-32L on the user's ROMs), mixed in QEMU on
+the guest's clock; QEMU's Gravis Ultrasound offered as a card. The
+sound-card and music pickers, the bank in every package and the
+`midi-guest` check all landed; beside them the SB16's interrupt (patch
+25) and mixer (patch 61) fixes.
+
+**Left:** Win98's own MIDI through our port loses instruments (capture
+it, doc 20 §7.2); optionally a host MIDI port (doc 20 §8).
+
+## M13 — Gamepads ✅
+
+QEMU had no gameport, no gamepad HID and no joystick input class, so
+each path is new: the host end (`gilrs`, the `gamepad/` crate,
+`PLAYER_PAD_SCRIPT` for headless runs), a key mapping for every guest
+(path C), a `usb-gamepad` HID device for Windows (path A, patch 26) and
+an ISA gameport for DOS (path B, patch 27). The 9x analog stack was
+dropped: the USB pad already reaches DirectInput and winmm on Win98.
+`pad-guest`, `pad-guest-xp` and `pad-guest-98` guard it.
+
+**Left:** a real controller on the key mapping; the USB pad on Win98
+FE / Me.
+
+## M14 — The Voodoo 2 device (active)
+
+ADR-016, doc 21. 86Box's Voodoo 2, vendored verbatim under `voodoo/`
+behind a shim, as `-device voodoo2` beside (never instead of) the Glide
+pass-through. 3dfx's own driver runs Quake II, Unreal Tournament, NFS
+Porsche, FIFA 2000 and Carmageddon; the command FIFO lives in guest RAM
+(`ramfifo=on`, Quake II 41 → 147.5 fps); the 8 MB board is the default.
+
+**Left:** a second Glide game after one quits sometimes starts
+glitched; a client resuming on a dead ring; the Air and Windows builds;
+patches 64 and 71 upstream (the track doc).
+
+## M15 — The Direct3D executor on Wine, on the host (active)
+
+ADR-018, doc 14 §"The executor on Wine, in another process". A Linux or
+macOS host below DXVK's Vulkan 1.3 floor runs the same executor on
+Wine's d3d9 in a child process. Steps 1–4 are done: the spike, the
+transport, the guest on XP and Win98, the launcher's third verdict and
+the packages (the macOS community build carries the pair; no package
+ships a Wine).
+
+**Left:** step 5, a real game on a below-floor host (the community app
+on a real macOS 15); then step 6, WineD3D-in-guest removed in one commit
+and the Flatpak's Wine decided.
 
 ## Post-v1 candidates
 
-Recording/streaming, CRT bezel packs, VRR pacing,
-suspend/resume, a host MIDI port for a real module (doc 20 §8),
-upstreaming campaign (libdisc, embed API).
+Recording and streaming, CRT bezel packs, VRR pacing, suspend/resume,
+a host MIDI port for a real module (doc 20 §8), QEMU in its own process
+(ADR-010), upstreaming (libdisc, the embed API).
 
 ## Standing risks
 
-| Risk | Status & Mitigation |
+| Risk | State |
 |---|---|
-| Spike A: GL→wgpu interop on macOS & Linux | **Resolved:** Zero-copy dma-buf ring on Linux and IOSurface ring on macOS (embed API v5/v6) flowing into wgpu presentation. |
-| Host-side Glide support | **Resolved:** Custom OpenGLide build (`third_party/openglide`, patch 33, `glidept/`) integrated with window-less provider. |
-| Apple GL deprecation | Long-term watch. ANGLE/Zink escape hatch remains designed if Apple drops OpenGL.framework. |
-| XP-on-TCG performance on Apple Silicon | **Addressed:** Tested and benchmarked against rig P4 1.7. Patches 05, 06, 11, 12, 14–20 bring integer performance beyond P4 and x87 FP to 104 % of P4 1.7. |
-| Fork drift from upstream QEMU | Pinned to v9.2.4 cadence; strict patch-queue discipline in `patches/qemu/` with automated `scripts/prepare-qemu.sh`. |
-| QEMU dependency bloat | **Addressed:** Disabled unused UI, audio, network, and block backends; reduced shared library dependencies from 175 to 93. |
-| Protection checks needing dump features | Clear UI guidance and error messages; `discx` provides inspection, verification, and negative-control repair tools. |
+| GL → wgpu interop | Resolved: zero-copy rings on Linux and macOS (embed API v5/v6). |
+| Host-side Glide | Resolved: our OpenGLide build (doc 12 §5); the Voodoo 2 device beside it. |
+| Apple's GL deprecation | Watched; ANGLE / Zink is the escape hatch. |
+| XP on TCG on Apple Silicon | Addressed: integer beyond the P4 1.7, x87 at its speed (M1, M8, M9). |
+| Hosts below DXVK's Vulkan floor | Addressed: Windows' own d3d9 (ADR-007), Wine on the host (ADR-018). |
+| Drift from upstream QEMU | Pinned at v9.2.4; a patch queue re-applied by `prepare-qemu.sh`. |
+| QEMU dependency bloat | Addressed: unused backends disabled, 175 → 93 shared libraries (the `no-optionals` check). |
+| Protection checks needing dump features | `discx` inspects, verifies and makes negative controls. |

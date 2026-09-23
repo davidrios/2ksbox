@@ -7,8 +7,8 @@ Direct3D, and a game that works on it needs nothing from this folder.
 Use these files when that is not enough:
 
   - the game does not start, or draws wrongly, on the display driver;
-  - or the host has no Vulkan 1.3 graphics card, so the machine offers no
-    Direct3D of its own at all.
+  - or the host has no Direct3D executor (no Vulkan 1.3 graphics card and
+    no Wine), so the machine offers no Direct3D of its own at all.
 
 WHAT TO COPY
 

@@ -11,8 +11,7 @@ its design doc; the build that produces what the tools run is
 - **Integration and end-to-end only, no unit tests.** A test exercises a
   real boundary — decoder + executor on a real batch, a guest program
   under TCG, a frame diffed against a golden BMP — never a function in
-  isolation. No `#[cfg(test)]` modules, no per-function cases (the
-  `#[test]`s in `libdisc/src/msf.rs` predate the rule; add no more).
+  isolation. No `#[cfg(test)]` modules, no per-function cases.
 - When something starts working, add or extend a tool here and wire it
   into `scripts/test.sh` so it guards against regressions.
 - **Run `scripts/test.sh all` before every commit that touches QEMU, the
@@ -28,7 +27,7 @@ its design doc; the build that produces what the tools run is
 
 ```sh
 scripts/test.sh            # host stage (~30 s): everything without a guest
-scripts/test.sh guest      # the XP guest stage
+scripts/test.sh guest      # the DOS batteries and the XP guest
 scripts/test.sh all        # both (~2 min)
 ```
 
@@ -37,9 +36,11 @@ It builds nothing big: it expects `build/qemu`, `build/dxvk` and
 small tools in `tools/`. Output goes to `build/test/`, one log per check;
 the verdict is PASS / FAIL / SKIP per check, and a check that cannot run
 on this host (no x86, no display, no image, no FreeDOS floppy yet) is a
-SKIP, not a failure. Each DOS battery skips on its own line — run
-`tools/x87-guest-test.py` once to fetch the FreeDOS floppy. A failed guest
-run leaves the previous run's logs in `build/test/`: read timestamps.
+SKIP, not a failure. A failed guest run leaves the previous run's logs in
+`build/test/`: read timestamps. A change to anything a guest sees (a
+drive's behaviour, a device register) needs `all`, not `host`: the DOS
+batteries are in the guest stage, and a patch that broke `atapi-guest`
+once went unnoticed for days behind a green `host`.
 
 Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 `guest-tools/out/guest-tools-3dfx-*.iso`), `TEST_ACCEL` (`kvm|tcg`),
@@ -85,21 +86,23 @@ Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 | `crtcal` | `build/crtcal-render`: every calibration pattern's circle round on its tube |
 | `mode-sweep` | `player --mode-sweep`: the display path without a guest |
 | `d3dgame9-nat`, `d3dfeat9-nat` | the reference scene / feature test natively on DXVK, against the rig golden; kept as the guest stage's oracle |
+
+### Guest-stage checks
+
+First the DOS batteries, each a FreeDOS floppy under our QEMU (they need
+nasm, mtools and the floppy — run `tools/x87-guest-test.py` once to fetch
+it — and skip on their own lines without them). Then XP (Linux; KVM when
+`/dev/kvm` is writable, TCG otherwise) boots `WINXP_IMG` with
+`snapshot=on`, the newest guest-tools ISO and a fresh FAT32 scratch disk
+carrying `RUN.BAT`, driven through the Run dialog over QMP:
+
+| Check | What it proves |
+|---|---|
 | `x87-guest`, `rep-guest`, `smc-guest`, `sse-guest` | the DOS CPU batteries |
 | `atapi-guest`, `atapi-read-error` | the ATAPI battery, and with injected EIO |
 | `midi-guest`, `pit-guest`, `vbe-palette` | music devices, the PIT, VBE 4F09h from a DOS guest |
 | `voodoo-guest`, `-d3dpt`, `-mmiofifo`, `-undither` | the Voodoo 2 battery and its three variants |
 | `pad-guest` | the gameport under the player (needs a display) |
-
-### Guest-stage checks
-
-XP (Linux; KVM when `/dev/kvm` is writable, TCG otherwise) boots
-`WINXP_IMG` with `snapshot=on`, the newest guest-tools ISO and a fresh
-FAT32 scratch disk carrying `RUN.BAT`, driven through the Run dialog over
-QMP:
-
-| Check | What it proves |
-|---|---|
 | `guest-ddvm` | the DirectDraw shim's video-memory answer (DDVMTEST) |
 | `guest-G9=native`, `guest-G8=native` | D3DGAME9/8 pixel-identical to the native frame outside the HUD |
 | `guest-G9~rig`, `guest-G8~rig` | the same frame within budget of the rig golden |
@@ -108,6 +111,9 @@ QMP:
 | `pad-guest-xp`, `pad-guest-98` | `tools/pad-guest-test.py xp` / `win98` (own boots) |
 
 ## Driving a guest
+
+What every guest tool below has in common, and what to know before
+writing another.
 
 - **User images are read-only.** The user plays on `~/vms/*.qcow2` and
   the launcher machines by hand. Boot a qcow2 overlay
@@ -126,10 +132,7 @@ QMP:
   early if the guest exits (`GW_PID`). Never a screendump as evidence of
   life: `vga_draw_text` draws a blinking caret over a dead machine.
 - **`tools/qmpc.py`** drives a guest over an extra
-  `-qmp unix:…,server,nowait`: keys, typing, screendumps. A QMP
-  screendump shows only the VGA surface, frozen while 3D presents — use
-  the player's headless dump (`PLAYER_DUMP_OUT`, `PLAYER_SHOT_EVERY`) for
-  3D frames.
+  `-qmp unix:…,server,nowait`: keys, typing, screendumps.
 - **End Win98 runs with the ACPI power button** (`system_powerdown`); a
   modal dialog swallows keystrokes and a machine not powered off leaves
   the FAT dirty, so the next boot is safe mode — no driver, empty debug
@@ -137,11 +140,59 @@ QMP:
 - Never two TCG guests at once on one box, and never a sleep-polling
   waiter beside a run: they starve the guest and a slow run reads as a
   failure.
-- The shell traps (self-matching `pgrep -f`, `pkill -x` on the truncated
+- The shell traps (self-matching `pgrep -f`, `pgrep -x` on the truncated
   `qemu-system-i38` name, `AF_UNIX path too long` from a deep `OUT=`,
-  editing a running script) are in `CLAUDE.md`.
-- Guest programs write their logs to `C:\2KSBOX` (`guestlog.h`);
-  `set BOXLOG=E:\` in the guest puts them on a scratch disk instead.
+  editing a running script) and the other traps that read as the thing
+  under test failing are in `docs/00-status.md`, "Driving a guest
+  headless".
+
+### Getting things in and out
+
+- **Files out of XP:** a raw FAT32 image as `-hdb` is E:. Make it with
+  `truncate -s 64M`, `sfdisk` (one partition at 2048) and `mkfs.fat -F 32
+  --offset 2048`, read it with `mcopy -i img@@1048576 ::/path out`. XP's
+  lazy writer can hold a small write for minutes, so wait on COM1 and
+  read the disk after shutdown. Guest programs write their logs to
+  `C:\2KSBOX` (`guestlog.h`); `set BOXLOG=E:\` in the guest puts them on
+  the scratch disk.
+- **When a guest freezes,** the guest DLLs' and drivers' lines in the
+  QEMU log are the only reliable channel: they arrive through the
+  device's DEBUG register, in order with the device's own (`d3dpt:
+  guest: …`), while files on the scratch disk sit in the guest's write
+  cache. A DLL log with no `DLL_PROCESS_DETACH` means the process was
+  terminated or crashed at exit.
+- **Frames:** a QMP `screendump` shows only the VGA surface, frozen while
+  3D presents; use `PLAYER_DUMP_OUT` or the player's shots
+  (`PLAYER_SHOT_EVERY`) for 3D frames. `grim` hangs inside the agent
+  sandbox.
+- **A disc swap under a running guest:** QMP `blockdev-change-medium` on
+  `ide1-cd0`. Copy-protection runs need the disc on its own channel
+  (`ide.1`, where the player puts it): SafeDisc 2 refused FIFA 2002 as
+  the boot disk's slave (doc 17 §2.6b).
+
+### Writing a harness
+
+- **mtools scratch disks:** `mformat` leaves the BPB's hidden-sectors
+  field at 0, and with the partition at LBA 2048 XP then mounts no E: at
+  all — the run reads as "the batch never ran". Pass `-H 2048`
+  (`mkfs.fat --offset` sets it).
+- **A probe that waits for a marker in a log deletes the log first**, or
+  it reads the previous run's marker.
+- **`cmd | grep -q` under `set -o pipefail`** fails when the producer
+  gets SIGPIPE: capture the output, then match.
+- **`--print-args` re-split by a shell cannot carry a path with a
+  space.** The launcher spawns an argv, so the limit is the harness's.
+- **macOS** has no `timeout`, `truncate` or `du -sb`, GNU `stat -f` means
+  something else there, and BSD `tr` refuses the guest's CP-850 bytes in
+  a UTF-8 locale (`LC_ALL=C`).
+- **bsdtar** normalizes names to NFD on macOS (`café.txt` from a folder
+  disc shows as missing; xorriso round-trips the bytes, which is why the
+  `dirdisc` check prefers it), keeps ISO 9660's read-only modes (make an
+  old extraction writable before deleting it), and lists an ISO in extent
+  order, not directory order.
+- **Assert the value, not the line.** `d3dfeat9`'s occlusion query must
+  answer `0x00000000` with a non-zero pixel count; grepping for the line
+  passed while the native oracle said `S_FALSE, 0 pixels`.
 
 ## CPU and TCG
 
@@ -159,10 +210,10 @@ QMP:
 | `tools/string-bench.py` | rep movs/stos/scas throughput for two QEMU binaries (patch 09) |
 | `guest-tools/src/ssebench.c`, `tools/xp-ssebench.sh` | `SSEBENCH.EXE` ns/op for SSE and x87; the script runs it in XP per `-cpu` config |
 | `tools/specbench/` | doc 22's benchmark tier (nbench, 7-Zip, Super PI, SSEBENCH) in XP, one boot per emulator configuration: `build-guest.sh`, `run.sh <image> all` (resumable, `--status`, `PAUSE=1`, ~10 min a configuration, never beside other load), `report.py --md`; `SPEC=1` adds the CINT2006 ancestors |
-| `tools/tcg-profile.sh <image> <name> ['cmd']` | where the vCPU's time goes (macOS `sample` + `-perfmap`, `tools/tcg-profile.py`); `CDS=`, `VGA=d3dpt`, `QEMU_BIN=`, `FPS=`, second pass `DFILTER=` + `tools/tcg-hot.py` |
+| `tools/tcg-profile.sh <image> <name> ['cmd']` | where the vCPU's time goes (macOS `sample` + `-perfmap`, `tools/tcg-profile.py`); `CDS=`, `VGA=d3dpt`, `QEMU_BIN=`, `FPS=`, `SECS=`, `WARM=`, `BOOT_WAIT=`, `KEYS=`, `MEM=`, `PERFMAP=0`, `DDFLAGS=` (`32` puts a title back on its own software renderer), `QEMU_EXTRA=`; second pass `DFILTER=` + `tools/tcg-hot.py` (mnemonics need `capstone`) |
 | `tools/tcg-fps.py <sock> <s>` | a guest's VGA frame rate from distinct screendumps; blind to 3D-device frames |
-| `tools/moto-watch.py` | a per-second view of `info jit` with screendumps while a guest plays |
-| `tools/memtrace.c` | LD_PRELOAD counting QEMU's large memcpy/memset per caller |
+| `tools/moto-watch.py` | a row per second of a running guest: TB invalidations and host code generated (`info jit` at 4 Hz), a screendump, the worst seconds kept. A fourth argument (`4:3`) cycles throttle / brake over the same QMP connection (QEMU serves one client, so what measures must drive). `WATCH_TRACE_LOG=` (pages retranslated per phase), `WATCH_MEMSAVE=` (for `smc-diff.py`), `WATCH_SAMPLE_PID=` / `_PHASE` / `_SECS` (macOS `sample`); usually run by `xp-moto-race.sh` |
+| `tools/memtrace.c` | LD_PRELOAD counting QEMU's `memcpy`/`memmove`/`memset` calls of ≥ 4 KiB per return address (perf cannot unwind out of glibc's AVX loops), into `$MEMTRACE_OUT.<pid>`; usage as a `QEMU_BIN=` wrapper in its header. Linux |
 | `tools/hvf-el1/`, `tools/hwmmu/` | M9's Hypervisor.framework EL1 probe and the hardware-MMU census (macOS; see their READMEs and the M9 track) |
 
 ## Display, adapters and the display drivers
@@ -171,16 +222,16 @@ QMP:
 |---|---|
 | `target/release/player --mode-sweep <dir>` | every mode through mode analysis, geometry and a real CRT preset: aspect, integer vertical scale, the preset's parameters, the scanline count counted in the frame; `PLAYER_MODE_PARAMS=0` the control; `mode-sweep` |
 | `build/crtcal-render <dir>` (`tools/crtcal-render.c`) | doc 09's eight calibration patterns (`guest-tools/src/crtcal.h`) at every era mode, circles round; `crtcal`. `TESTS\CRTCAL.EXE` shows them on a real tube, `TESTS\TEXTCAL.COM` the 720×400 text-mode ones, `player --shader <preset> --calib <bmp\|dir>` renders them through a preset at 3200×2400 |
-| `tools/vga-dirty-guest-test.py [13h\|vesa] [std\|cirrus]` | the display sees what the guest wrote to video memory, page by page (patch 28): polls screendumps throughout (an idle display hides lost dirty bits), stripes `rep stosw` against a byte loop (`FLIP=1`), and the guest reads back its own writes (`VERIFY_BAD=`) to separate a lost store from a missed redraw; `--refill`. `VBEPAL=1 … vesa` is the `vbe-palette` check: our VGA BIOS's 4F09h (`patches/seabios/`, `scripts/build-vgabios.sh`, `firmware/vgabios-*.bin`) |
-| `tools/xp-driver-test.sh <image> <mode>` | the XP display-driver loop headless (docs 15): `install`, `ddtest` (8/16/32 bpp + windowed), `modes`, `d3d7` (frame diffed against `d3dpt-dp2-test`'s), `d3dgame8` (XP's own d3d8.dll on the DX8 DDI), `shtest`, `cktest`, `ebtest [-rgb]`, `gamma`, `probe <NAME>`, `probes` (all ten DX8 probes, one boot), `cubetest`, `cmd '<line>'`, `bat <file>` (staged as `E:\RUN.BAT`: the Run box truncates). Knobs: `CPU=pentium3`, `GAME_ISO=`, `SHOTS=n`, `SHOT_KEYS="12:esc"`, `QEMU_EXTRA=`, `VGA=cirrus` (inbox-driver control), `DRIVER_ISO=` (another build's driver), `NO_EXEC=1` (no executor), `EXEC=wine`, `OUT=` |
-| `tools/win98-driver-test.sh <image> [boot\|install]` | the 9x display driver (doc 19): installs the binaries, boots `d3dpt-vga`, reports the BARs, the driver's DEBUG-register lines, the screendump's colour count (≤ 16 = fell back to VGA) and the VGA text page read from VRAM, where a fatal exception writes itself (doc 19 §15) — believe it over the screendump. `PROG=<exe>` starts a program through WIN.INI `run=` (`ddprobe.exe` exercises DirectDraw). Raw copy; the `test98` machine, not `~/vms/win98.qcow2` |
+| `tools/vga-dirty-guest-test.py [13h\|vesa] [std\|cirrus]` | the display sees what the guest wrote to video memory, page by page (patch 28): polls screendumps throughout (an idle display hides lost dirty bits), stripes `rep stosw` against a byte loop (`FLIP=1`), and the guest reads back its own writes (`VERIFY_BAD=`) to separate a lost store from a missed redraw; `--refill`. Two traps that look like a QEMU bug: the 6-bit DAC is expanded by `c6_to_8()`, which replicates the low bit (33 reads back 135, not 132), and the VBE window granularity is 64 KiB on std but 16 KiB on the Cirrus — read it from the mode-info block `VBEPAL=1 … vesa` is the `vbe-palette` check: our VGA BIOS's 4F09h (`patches/seabios/`, `scripts/build-vgabios.sh`, `firmware/vgabios-*.bin`) |
+| `tools/xp-driver-test.sh <image> <mode>` | the XP display-driver loop headless (doc 15): `install`, `ddtest` (8/16/32 bpp + windowed), `modes`, `d3d7` (frame diffed against `d3dpt-dp2-test`'s), `d3dgame8` (XP's own d3d8.dll on the DX8 DDI), `shtest`, `cktest`, `ebtest [-rgb]`, `gamma`, `probe <NAME>`, `probes` (all ten DX8 probes, one boot), `cubetest`, `cmd '<line>'`, `bat <file>` (staged as `E:\RUN.BAT`: the Run box truncates). Knobs: `CPU=pentium3`, `GAME_ISO=`, `SHOTS=n`, `SHOT_KEYS="12:esc"`, `QEMU_EXTRA=`, `VGA=cirrus` (inbox-driver control), `DRIVER_ISO=` (another build's driver), `NO_EXEC=1` (no executor), `EXEC=wine` (the executor under Wine), `FBVER=N` (the adapter reports another register-set version), `KEEP=1` (leave the guest up), `NO_KVM=1`, `OUT=`. `install` puts DRVINST's lines on COM1 and screendumps every 20 s |
+| `tools/win98-driver-test.sh <image> [boot\|install]` | the 9x display driver (doc 19): installs the binaries, boots `d3dpt-vga`, reports the BARs, the driver's DEBUG-register lines, the screendump's colour count (≤ 16 = fell back to VGA) and the VGA text page read from VRAM, where a fatal exception writes itself (doc 19 §15) — believe it over the screendump. `PROG=<exe>` starts a program through WIN.INI `run=` (`ddprobe.exe` exercises DirectDraw). `NAME_IN_INI=1` names the driver in SYSTEM.INI instead of letting PnP pick it ("does this build work", not "does it install"), `NO_EXEC=1`, `DDFLAGS=` (9x reads the high half), `SHOTS=`, `SETTLE=`, `BOOT_WAIT=`. Raw copy; the `test98` machine, not `~/vms/win98.qcow2` |
 | `tools/win98-bsod-test.sh <image>` | a 9x blue screen is visible on `d3dpt-vga` (doc 19 §29): `BSOD.EXE` loads `BSODVXD.VXD`, whose init faults in ring 0; requires `message mode` and `linear mode off`, a blue screendump, the text page naming the VxD, then `linear mode on` after a key and a clean power-off. `WHEN=event` faults from a timer (`BSODTMR.VXD`, no screen switch), `TRIGGER=`/`STAGE=` another way |
 | `tools/win98-reboot-test.sh <image> [qmp\|guest\|both]` | Win98 survives a restart (patch 22): a second SeaBIOS banner on the debugcon, a boot's worth of disk reads after it, `LVT0` back to ExtINT. `QEMU=`/`BIOS=0` the stock control |
-| `DRIVER\PWRPROBE.EXE` | Windows' monitor power-down on demand (doc 19 §41): a blank reaches the driver as a screen switch only, so `switched out` then `linear mode off` within a millisecond in the QEMU log is the pass; `NO_DRIVER=1` is the control that must fail. `STAGE=…/pwrprobe.exe PULL=PWRPROBE.LOG GUEST_CMD='start /w C:\PWRPROBE.EXE 5' RUN_SECS=100 tools/win98-game-test.sh <image> pwr` |
+| `pwrprobe.exe` | Windows' monitor power-down on demand (doc 19 §41): a blank reaches the driver as a screen switch only, so `switched out` then `linear mode off` within a millisecond in the QEMU log is the pass; `NO_DRIVER=1` is the control that must fail. `STAGE=…/pwrprobe.exe PULL=PWRPROBE.LOG GUEST_CMD='start /w C:\PWRPROBE.EXE 5' RUN_SECS=100 tools/win98-game-test.sh <image> pwr` |
 | `DRIVER\SETMODE.EXE` | lists / switches XP display modes from a script |
 | `DRIVER\DDTEST.EXE` | DirectDraw 7 through our driver: HAL caps, VRAM flip chain, windowed blit, fps, palette rotation at 8 bpp; `scanout offset` lines are the page flips |
 | `DRIVER\DITEST.EXE` | a game-style DirectInput keyboard: what buffered data, state, `GetAsyncKeyState` and `WM_KEYDOWN` each see |
-| `DDPROBE.EXE` | a DirectDraw object's HAL/HEL caps and `WaitForVerticalBlank` (9x), `C:\2KSBOX\DDPROBE.LOG` |
+| `ddprobe.exe` | a DirectDraw object's HAL/HEL caps and `WaitForVerticalBlank` (9x), `C:\2KSBOX\DDPROBE.LOG`. It, `pwrprobe.exe` and `bsod.exe` are built by `guest-tools/build-driver9x.sh` into `guest-tools/out/driver9x/` and staged by the harness; they are not on the ISO |
 | `tools/embed-3d-test.c` | the window-less Mesa backend without a guest (Linux): several frames per dma-buf slot, each slot's memory followed; `embed-3d` |
 | `tools/zc-vulkan-test.c` | the same ring through the frontend's Vulkan import alone, `--stage=`, `--use=`, `--threaded`, `--draw=` (doc 12 §4); every combination is clean |
 | `tools/wgl-probe.c` | the Windows embed backend's WGL sequence without QEMU (built into `build/win/wgl-probe.exe`, shipped in the package): run it first on a Windows host that will run a GL guest. It cannot catch the WGL rule's fault (doc 12) |
@@ -203,7 +254,7 @@ QMP:
 | `DRIVER\DXTTEST.EXE` | every D3D8 texture format × pool: CheckDeviceFormat, Create, Lock, a quad read back; `C:\2KSBOX\DXTTEST.LOG` |
 | DX8 probes: `CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST MGDTEST` | one program per D3D8 feature (`guest-tools/src/d3dptvid/*.c` over `d3d8probe.h`), every draw read back. A feature the caps lack ends `(not offered: <why>)`, so the same program becomes the check the day it is offered. Verdict PASS / NOT OFFERED / FAIL; no log is a FAIL |
 | `D3DPT_DP2_TRACE=<flag file>` | QEMU env: one whole DP2 frame per `touch` — states, tokens, first vertices, bound textures' texel means, every level and the target after each draw as `.ppm` (count pixels per `draw-<n>.ppm` to name the draw that paints an artefact). `D3DPT_DDI_REREAD=1` tells a stale host texture from VRAM never written, `D3DPT_DDI_NOFOG=1` rules fog out |
-| `tools/xp-game-test.sh <image> "<dir>" <exe> [name]` | a game on the M4 DLL device headless: `CDS=a.iso:b.iso`, `FRESH_DLLS=1`, `TRACE=1`, `KEYS=8:ret,25:esc`, `SHOTS=n` (message boxes you cannot otherwise see), `DUMP_EVERY=n`, `DRW_AFTER=s` (Dr. Watson: every thread's stack; `stacks <log>` prints them), `PAGEHEAP=1`, `CPU=pentium3` |
+| `tools/xp-game-test.sh <image> "<dir>" <exe> [name]` | a game on the M4 DLL device headless: `CDS=a.iso:b.iso`, `FRESH_DLLS=1`, `TRACE=1`, `KEYS=8:ret,25:esc`, `SHOTS=n` (message boxes you cannot otherwise see), `DUMP_EVERY=n`, `DRW_AFTER=s` (Dr. Watson: every thread's stack; `stacks <log>` prints them), `PAGEHEAP=1`, `CPU=pentium3`, `QEMU_EXTRA=`, `NO_ATTACH=1` (a run that expects no D3D device) |
 | `tools/xp-wined3d-test.sh <image>` | ADR-013's WineD3D-in-guest path, in the player with no host Vulkan (`VULKAN=1` keeps it): `SETUP /GAME 4` and `/I 2` stage the set, frame 300 diffed against the rig golden. `VGA=d3dpt` the launcher's XP machine. Known: fails the budget on two WineD3D defects, parked (wine9x rule); the mapper's install sometimes fails silently and the harness reruns INSTDRV to COM1 |
 | `tools/wined3d-sys-test.sh [image]` | WineD3D as the whole 9x machine's DirectDraw (doc 19 §43): `SETUP /I 7`, then `no-exec=on` (helper writes `KnownDLLs\DDRAW`, a probe with no Wine DLLs of its own finds WineD3D) and the executor back (value removed, probe on ours) |
 | `tools/macvm-wine-spike.sh`, `tools/macos-wine-spike-local.sh` | the Wine executor on a pre-26 macOS: in a UTM VM (no GL there: Apple's paravirtual GPU is Metal-only) and on a second macOS volume on the same Mac; frames diffed against DXVK's |
@@ -223,12 +274,12 @@ QMP:
 | Tool | Proves / runs |
 |---|---|
 | `target/release/discx` | the CD model (doc 17): `selftest <dir>` (`libdisc`), `info`/`dump`, `scan` (L-EC per sector, failures split into read-anyway / repaired / unreadable — a protection band must be all unreadable), `repair <image> <out>` (the negative-control copy), `subscan`, `convert`, `export`, `mktree` |
-| `tools/atapi-guest-test.py` | DOS drives the ATAPI drive by PIO on a cdimage disc (patch 51): replies identical to `discx dump`, sense, audio positions, both stops; the shelf (patch 52) with `CDSHELF.COM`. `ATAPI_READ_ERROR=1` (Linux, `tools/read-error-inject.c`) makes audio sectors fail with EIO and play must continue as silence (patch 55); `atapi-guest`, `atapi-read-error` |
+| `tools/atapi-guest-test.py` | DOS drives the ATAPI drive by PIO on a cdimage disc (patch 51): replies identical to `discx dump`, sense, audio positions, both stops — after a stop the head stays where playback ended, not at the last sector read (patch 54); the audio status prints in *decimal* (`21` is `0x15`, play completed); the shelf (patch 52) with `CDSHELF.COM`. `ATAPI_READ_ERROR=1` (Linux, `tools/read-error-inject.c`) makes audio sectors fail with EIO and play must continue as silence (patch 55); `atapi-guest`, `atapi-read-error` |
 | `tools/cd-rate-guest-test.py [image]` | what the guest reads does not depend on how fast it asks: PIO and bus-master DMA, several request sizes, byte-count limits and paces, checksummed against the host; `.iso` vs `.cue` is the driver A/B; `SCAN=1`. The guest must set PCI bus-master enable itself or DMA "succeeds" and writes nothing |
 | `tools/xp-cdimage-test.sh <image> <disc> <ref>` | XP copies a whole disc (`.cue/.ccd/.mds/.iso` or `isodir:<dir>`) through cdrom.sys and every file matches; `CDTEST=` also plays track 2 through MCI into the drive's wav. Runs on macOS (mtools). `guest-cdimage`, `guest-dirdisc` |
 | `tools/dirdisc-guest-test.sh <image> [win98\|xp]` | a host folder as the CD on each family, proved by the guest's `dir`/`type`; `BIG=1` places markers past 703 MiB, 878 MiB, 2, 4 and 7.8 GiB (both families read all five), `MARKS=` |
 | `tools/cdaudio-guest-test.sh <image> [win98\|xp]` | CD-DA through the guest's MCI with `CDIMAGE_TRACE=1`, printing the commands each family sends (Win9x stops with a SEEK, doc 17 §5.4); the drive and the wav are the verdict, not MCI's `status mode`. `PLAY=`, `DISC=`, `WAIT_SECS=` |
-| `tools/cdshelf-guest-test.sh <image> [xp\|win98]` | `CDSHELF.EXE` in Windows: list, load an ISO and read it with `dir`/`type`, refuse a missing disc, eject; SWAPTEST swaps in one step |
+| `tools/cdshelf-guest-test.sh <image> [xp\|win98]` | `CDSHELF.EXE` in Windows: list, load an ISO and read it with `dir`/`type`, refuse a missing disc, eject; SWAPTEST swaps in one step. The verbs' stdout is redirected to COM1, which XP's `cmd` passes; a `win98` pass is not recorded |
 | `TESTS\CDTEST.EXE` | CD audio through MCI: tracks, play, positions while playing / paused / resumed |
 | `CDSHELF\CDSHELF.EXE` / `.COM` | the disc shelf from inside the guest (doc 07); `CDSHELF LIST`, `CDSHELF <n>`, `CDSHELF E`; log `C:\2KSBOX\CDSHELF.LOG` |
 
@@ -281,7 +332,7 @@ All local only; each works on a raw copy or overlay of an image.
 | `tools/w98-moto.sh <name>` | Moto Racer into a practice race by screendump classifier (`tools/motoracer-state.py`); `SOFT=1` software renderer, uncapped with `EXTRA='-global d3dpt-vga.ddflags=32768'` |
 | `tools/w98-quake2.sh <name>` | Quake II's software timedemo, `fps.txt` from `QCONSOLE.LOG` |
 | `tools/xp-motoracer.sh install\|play\|vm\|stop <image>` | Moto Racer on the XP driver (DX3 path): installer, then menus by `motoracer-state.py` into a race |
-| `tools/xp-moto-race.sh <image> <name> [qemu]` | the M9 game oracle's fps; `RACE_SAMPLE=`, `RACE_MEMSAVE=` (for `smc-diff.py`), `RACE_DELAY=`, `FPS_RATE=`, `PERFMAP=0` |
+| `tools/xp-moto-race.sh <image> <name> [qemu]` | the M9 game oracle's fps; `RACE_SAMPLE=`, `RACE_MEMSAVE=` (for `smc-diff.py`), `RACE_DELAY=`, `FPS_RATE=`, `PERFMAP=0`; `RACE_BRAKE=1` (throttle and brake apart), `RACE_WATCH=<s>` / `RACE_CYCLE=A:B` / `RACE_TRACE=1` (`moto-watch.py`), `RACE_STAGE=demo` (the attract demo, no menus) |
 | `tools/xp-vicecity.sh play\|vm\|attach\|stop <image>` | GTA Vice City on the DX8 DDI into the city, `rates.txt` from `ddi:` lines; `DDFLAGS=` for the A/B, `NO_KVM=1`; the game's frame limiter must be off |
 | `tools/xp-fifa-match.sh kvm\|tcg <image>` | FIFA 2000 into a match and a keyboard test (Esc's pause menu is the pass); `EXEC=wine` |
 | `tools/xp-fifa2000.bat`, `tools/xp-maxpayne.bat` | batch files for `xp-driver-test.sh bat`: FIFA 2000 and Max Payne on the HAL with no wrapper DLL |

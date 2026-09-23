@@ -1,45 +1,38 @@
 # launcher-qt — the launcher
 
-The front end the product ships (ADR-015, 2026-09-07): the machine grid,
-the guided creation wizard, the disc shelf, snapshots, and the shader
-profile manager with its live preview, on **Qt 6 / QML through
-[cxx-qt](https://github.com/KDAB/cxx-qt)**. Every package installs this
+The front end the product ships (ADR-015): the machine grid, the
+machine form, the disc shelf, snapshots, and the shader profile manager
+with its live preview, in Qt 6 / QML through
+[cxx-qt](https://github.com/KDAB/cxx-qt). Every package installs this
 binary as `2ksbox`.
 
-It began as a costed spike — "how would this go in Qt", answered with
-something that runs. **The comparison, the numbers and what shipping Qt
-costs each packager are in `docs/07-frontend.md`** ("Two front ends, one
-core"); the build and test loop is in `docs/tracks/m6-launcher.md`. Read
-those, not this file.
-
-Nothing here decides anything — every rule is in `launcher-core`, and
-this crate is Qt. (An egui front end over the same core was retired on
-2026-09-13, ADR-017.)
+Nothing here decides anything: every rule and every sentence a window
+shows is in `launcher-core` (ADR-014), and this crate is the Qt view
+over it. The design is doc 07 (`docs/07-frontend.md`); the rules for
+working on the launcher, the scratch-library variables and the full
+test loop are in `docs/tracks/m6-launcher.md`; the checks themselves are
+described in `docs/testing.md`.
 
 ## Building
 
-Needs Qt 6 development files — `qt6-base` and `qt6-declarative` — and
-nothing else beyond the usual toolchain. There is no CMake step:
-`cxx-qt-build` finds Qt through `qmake6` and drives `moc` and
-`qmltyperegistrar` itself.
+Needs Qt 6's `qt6-base` and `qt6-declarative` development files and
+nothing else. There is no CMake step: `cxx-qt-build` finds Qt through
+`qmake6` and drives `moc` and `qmltyperegistrar` itself.
 
 ```sh
-scripts/build.sh qt   # the stage that builds this, in the default set
-cd launcher-qt        # its own workspace, deliberately: see Cargo.toml
-cargo build
+scripts/build.sh qt   # the stage that builds it, in the default set
+cd launcher-qt && cargo build
 ```
 
-The root `cargo build` still does **not** build this crate, which is the
-point even now that it is the shipped one: everything else in the tree
-has to keep building on a host with no Qt 6 (a Mac without it, CI, a
-sandbox). Such a host builds all of that and can roll no package —
-`scripts/build.sh` says so in its summary, and `scripts/test.sh` skips
-the `package` check with the reason.
+The crate is its own cargo workspace so that the root `cargo build`
+never needs Qt 6 (a Mac without it, CI, a sandbox). Such a host builds
+everything else and can roll no package; `scripts/build.sh` says so in
+its summary and `scripts/test.sh` skips the `package` check.
 
-## Running it against something other than your real library
+## Running it on a scratch library
 
-`create` and `adddisc` below write files. Point the launcher's usual
-environment knobs at a scratch copy first:
+`create`, `adddisc`, `clone` and the debug verbs write for real, so
+point the launcher's paths at scratch copies first:
 
 ```sh
 export LAUNCHER_LIBRARY_DIR=/tmp/lib
@@ -48,46 +41,35 @@ export LAUNCHER_SHADER_PROFILES_DIR=/tmp/profiles
 ./target/debug/launcher-qt
 ```
 
-## Debug verbs and headless screenshots
+## Debug verbs and headless windows
+
+`launcher-qt` answers every `launcher_core::cli` verb exactly as
+`launcherx` does, for example:
 
 ```sh
-# the same report `launcher --paths` prints
 ./target/debug/launcher-qt --paths
-
-# prints "animated" or "still" — whether the editor would keep redrawing
-# this preset — and `PREVIEW_FRAME=<n>` names the frame to render, since
-# the editor itself takes that from a clock
+# "animated" or "still": whether the editor would keep redrawing this
+# preset; PREVIEW_FRAME=<n> picks the frame, which the editor takes
+# from a clock
 ./target/debug/launcher-qt --preview-shader <preset.slangp> <image> <out.png>
 ```
 
-Screenshots need no clicking: `LAUNCHER_QT_SHOT=<file.png>` arms a grab,
-`LAUNCHER_QT_SCREEN=` picks what to open first — `wizard`, `discs`,
-`snapshots`, `profiles`, `editor`, or the scripted `create` / `adddisc`
-— `LAUNCHER_QT_ARG=` is that screen's argument, and
-`LAUNCHER_QT_DELAY=<ms>` is the settle time.
+The real windows run with no clicking. `LAUNCHER_QT_SCREEN=` picks the
+window or scripted case to open (the list is in `qml/Main.qml`),
+`LAUNCHER_QT_ARG=` is its argument, `LAUNCHER_QT_SHOT=<file.png>` arms a
+grab and `LAUNCHER_QT_DELAY=<ms>` is the settle time.
 
 ```sh
+# no shot: the case runs, prints what the window shows, and quits
+QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG=win98 \
+  ./target/release/launcher-qt
+# [diag] wizard memory: shown 256, model 256, range 32..512
+
 LAUNCHER_QT_SHOT=/tmp/editor.png LAUNCHER_QT_SCREEN=editor \
 LAUNCHER_QT_ARG="/path/crt-aperture.slangp;/path/frame.png" \
   ./target/debug/launcher-qt
 ```
 
-`QT_QPA_PLATFORM=offscreen` renders with no display, but `grabToImage`
-needs a real session to hand back a picture — take the shots against a
-running X/Wayland session, and one whose GPU is not already being held by
-something like a running player: the grab then never completes and the
-process sits there.
-
-**`LAUNCHER_QT_SCREEN` with no `LAUNCHER_QT_SHOT`** drives the same
-scripts without photographing anything: the window is opened, whatever
-that screen prints (`diag.note`) goes to stderr, and the process quits.
-No GPU, no session, and it is what a check reads — the `qt-wizard` check
-in `scripts/test.sh` uses it to compare what the memory spin box *shows*
-with what the shared form says, which is the one thing asking the model
-cannot tell you.
-
-```sh
-QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG=win98 \
-  ./target/release/launcher-qt
-# [diag] wizard memory: shown 256, model 256, range 32..512
-```
+The first form needs no GPU and no session, and is what the `qt-*`
+checks read. A grab that never completes is a GPU someone else holds —
+typically a running player; take it again with nothing else on the GPU.

@@ -1,7 +1,6 @@
 //! Live control of a running machine: media swap and snapshots on a
-//! guest that's already up (doc 07's "runtime disc mount/eject/swap from
-//! the disc shelf" and "QEMU internal snapshots via in-proc QMP,
-//! surfaced in the overlay *and the launcher*").
+//! guest that's already up (doc 07's "How the launcher reaches a running
+//! machine" and "Snapshots").
 //!
 //! **No new protocol and no player change.** The launcher adds
 //! `-qmp unix:<path>,server,nowait` to the arguments it spawns the

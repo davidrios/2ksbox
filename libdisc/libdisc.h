@@ -10,7 +10,7 @@
  * names one file per shared file — is behind a lock.
  *
  * libdisc_open also takes a *directory*: it is then served as a generated
- * ISO 9660 + Joliet volume over that tree (isodir, docs/tracks/m5-dirdisc.md).
+ * ISO 9660 + Joliet volume over that tree (isodir, docs/17-cdrom-implementation.md §8).
  */
 #ifndef LIBDISC_H
 #define LIBDISC_H

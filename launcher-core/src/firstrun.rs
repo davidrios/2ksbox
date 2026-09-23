@@ -232,8 +232,8 @@ impl FirstRun {
 }
 
 /// The marker file: plain text in the profile directory, so somebody who
-/// finds it can read what it is and delete it (doc 07's "a plain,
-/// documented directory, no database").
+/// finds it can read what it is and delete it (doc 07's "Shader
+/// profiles, presets and the preview").
 pub fn marker(profiles_dir: &Path) -> PathBuf {
     profiles_dir.join("first-run.txt")
 }

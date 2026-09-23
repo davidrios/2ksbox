@@ -1,49 +1,51 @@
-# hvf-el1 — the Hypervisor.framework EL1 feasibility probe (M9)
+# hvf-el1 — the Hypervisor.framework EL1 probe (M9)
 
-Answers, with numbers from the Air, whether TCG's Arm output could run
-inside a Hypervisor.framework VM with the x86 guest's page tables
-mirrored in the VM's stage-1 tables (the "fastmem" idea of
-`docs/tracks/m9-tcg-aarch64.md`), and what such a VM would have to
-contain. It is a bare-metal aarch64 guest (Rust, `aarch64-unknown-none`,
-37 KiB) plus a host program that creates the VM, shares a 64 MiB arena
-with it at the same address in both worlds, and services its exits.
+Measures whether TCG's Arm output could run inside a Hypervisor.framework
+VM whose stage-1 tables mirror the x86 guest's page tables, so that a
+guest load is one host load. The design, the numbers and the verdict
+(feasible, then abandoned for the time being by user decision) are in
+`docs/tracks/m9-tcg-aarch64.md`, "The HVF EL1 probe" and "Gauging the
+gain"; this file says what the probe does and how to run it.
 
-The guest brings up the MMU (4 KiB granule, 48-bit VA), installs
-exception vectors, builds an x86-style two-level page table in "x86 RAM",
-mirrors it lazily into a 4 GiB VA window from the data-abort handler (one
-stage-1 root per x86 CR3, ASID-tagged), and measures:
+It is a bare-metal aarch64 guest (Rust, `aarch64-unknown-none`, 37 KiB,
+`payload/`) plus a host program (`host/`) that creates the VM, shares a
+64 MiB arena with it at the same address in both worlds, and services
+its exits. The guest brings up the MMU (4 KiB granule, 48-bit VA),
+installs exception vectors, builds an x86-style two-level page table in
+"x86 RAM" and mirrors it lazily into a 4 GiB VA window from the
+data-abort handler (one ASID-tagged stage-1 root per x86 CR3). It then
+measures:
 
-- a VM exit (HVC, and an MMIO load through a stage-2 miss) against an
-  in-VM exception and an in-VM function call;
-- the first touch of a window page (abort → x86 walk → PTE → eret), the
-  hardware TLB miss afterwards, an x86 #PF delivered to a resume point,
-  the dirty-bit upgrade of a clean page, a CR3 switch with the tables
-  kept vs. the flush-and-refault model;
-- the load kernels of `bench.S` through the window vs. the exact sequence
-  `tcg/aarch64` emits for a softmmu load (against a TLB that always hits),
-  for working sets from 64 KiB to 32 MiB, dependent and independent —
-  and the same kernels natively in the host process for the baseline;
-- executing code written by the host process, self-patching without a
-  W^X toggle, and the latency of a host-thread kick to the guest's IRQ
-  handler;
-- the `rep movsd` blit loop of a 2D game (`exp_movs` / `native_movs`,
-  `results-movs-m1air-2026-09-05.txt`): TCG's actual loop transcribed
-  from a `-d out_asm` log, the same with pinned guest registers, with
-  direct window accesses, and a per-page-run probe + vector-copy fast
-  path — with `env` in the identity map and inside the window, because
-  a store to block-mapped memory followed by a store through a 4 KiB
-  page mapping costs ~2 ns extra per pair in the VM (the `diag3` lines).
+- a VM exit (HVC; an MMIO load through a stage-2 miss) against an in-VM
+  exception and an in-VM function call;
+- the first touch of a window page, the hardware TLB miss after it, an
+  x86 #PF delivered to a resume point, the dirty-bit upgrade of a clean
+  page, and a CR3 switch with the tables kept against flush-and-refault;
+- the load kernels of `bench.S` through the window against the exact
+  sequence `tcg/aarch64` emits for a softmmu load (with a TLB that always
+  hits), 64 KiB to 32 MiB working sets, dependent and independent, plus
+  the workload-shaped `mix4` / `mix12` / `copy` kernels `tools/hwmmu/`
+  uses — and the same kernels natively in the host for the baseline;
+- running code the host wrote, self-patching without a W^X toggle, and
+  the latency of a host-thread kick to the guest's IRQ handler;
+- the `rep movsd` blit loop of a 2D game (`exp_movs` / `native_movs`):
+  TCG's loop transcribed from a `-d out_asm` log, with pinned registers,
+  with direct window accesses, and a per-page-run copy — with `env` both
+  in the identity map and in the window, because a store to block-mapped
+  memory followed by one through a 4 KiB page costs ~2 ns extra per pair
+  in the VM (the `diag3` lines).
 
 ```sh
-tools/hvf-el1/build.sh                     # payload (flat binary) + host, signed with hv.entitlements
+tools/hvf-el1/build.sh                     # payload + host, signed with hv.entitlements
 build/hvf-el1/hvf-el1 build/hvf-el1/payload.bin
 build/hvf-el1/hvf-el1 x --native-only      # only the host baseline
 ```
 
-macOS on Apple Silicon only (`kern.hv_support`); ~2 s. Every line is
-`key: value` text; the results and their reading are in the track doc.
-A reference run is `results-m1air-2026-09-05.txt`. Not part of `scripts/test.sh` — it is a measurement, not a regression
-guard. On a guest fault the host prints the vCPU state (`dump`) and the
-guest's own `ESR_EL1`/`FAR_EL1`/`ELR_EL1`; `llvm-objdump -d` on
+macOS on Apple Silicon only (`kern.hv_support`), ~2 s, alone on the
+machine. Output is `key: value` lines; reference runs from the M1 Air are
+`results-m1air-2026-09-05.txt` and `results-movs-m1air-2026-09-05.txt`.
+It is a measurement, not a regression guard, so it is not in
+`scripts/test.sh`. On a guest fault the host prints the vCPU state and
+the guest's `ESR_EL1` / `FAR_EL1` / `ELR_EL1`; `llvm-objdump -d` on
 `build/hvf-el1/payload/aarch64-unknown-none/release/payload` maps the
 addresses.

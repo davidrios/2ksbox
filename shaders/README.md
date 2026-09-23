@@ -1,30 +1,29 @@
 # shaders
 
-Curated slang preset pack (design doc 03): a shadow-mask preset derived from
-the reference CRT (doc 09), a Trinitron-style one, "clean sharp". Populated in
-M2. Presets reference upstream libretro slang-shaders; only our `.slangp`
-parameter files and any custom passes live here.
+Our own CRT presets. The preset collection itself is libretro's
+slang-shaders, the `third_party/slang-shaders` submodule; only `.slangp`
+parameter files of ours (and any custom pass) live here. The display
+pipeline is doc 03; shader profiles are doc 07.
 
-- `syncmaster-753dfx.slangp` — the rig's own monitor, a 17" Samsung DynaFlat
-  with a delta dot trio at ≈0.20 mm. Derived from the tube's geometry, *not*
-  yet calibrated against it; the file says which value came from where.
-  `player --shader shaders/syncmaster-753dfx.slangp --mode-sweep <dir>` renders
-  it over every mode in the table.
+- `syncmaster-753dfx.slangp` — the reference rig's monitor (doc 09), a
+  17" Samsung DynaFlat with a delta dot trio at ≈0.20 mm. Derived from
+  the tube's geometry, not yet calibrated against photographs of it; the
+  file says where each value came from.
 
-The upstream preset tree is the `third_party/slang-shaders` submodule
-(libretro/slang-shaders, shallow). Try:
-`player --shader third_party/slang-shaders/crt/crt-lottes.slangp -- <qemu args>`
-(also `crt-geom`, `crt-easymode`, `crt-royale`, `crt-aperture`).
+```sh
+player --shader shaders/syncmaster-753dfx.slangp --mode-sweep <dir>   # every mode in the table
+player --shader third_party/slang-shaders/crt/crt-lottes.slangp -- <qemu args>
+```
 
-**Shader profiles** (doc 07 settings taxonomy): the launcher's "Shader
-profiles…" manager names a preset plus a set of parameter overrides on
-top of it (`launcher/src/shader_profile.rs`), stored one per file under
-the profile library (`LAUNCHER_SHADER_PROFILES_DIR`, default the platform
-data dir's `shader-profiles`). A machine picks a profile by name in the
-wizard; the launcher resolves it into the player's own `--shader
---shader-params` (see docs/development.md) when spawning it — hand-written bundles
-can still set `machine.toml`'s `shader` field directly instead, bypassing
-profiles entirely. The manager also previews a profile live against a
-chosen image (a screenshot), rendering the actual filter chain
-(`shader-chain/`, shared with the player) inside the launcher's own
-window and re-rendering as sliders move.
+(`crt-geom`, `crt-easymode`, `crt-royale` and `crt-aperture` are worth
+trying too; the player's flags are in `docs/development.md`.)
+
+A machine normally gets its shader through a **profile**: a preset plus
+parameter overrides, one file per profile under the data directory's
+`shader-profiles/` (`LAUNCHER_SHADER_PROFILES_DIR` moves it;
+`launcher-core/src/shader_library.rs`, `shader_profile.rs`), picked by
+name in the machine form and turned into the player's `--shader` /
+`--shader-params` at launch. A hand-written `machine.toml` can name a
+preset in its `shader` field instead. Without the submodule, or in a
+package built without `--with-shaders`, the profile manager downloads
+the collection into the data directory (`shader_source.rs`).

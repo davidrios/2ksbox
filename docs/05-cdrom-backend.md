@@ -1,133 +1,119 @@
 # 5. CD-ROM backend: raw images and copy protection
 
+The problem the CD-ROM backend solves, the shape of the answer and the
+acceptance table, one row per protection scheme. How it is built — the
+disc model, the formats, the C API, the MMC byte layouts, the QEMU
+driver and patches, CD-DA and the tests — is doc 17; the track record is
+`docs/tracks/m5-cdrom-backend.md`, and a host folder as a disc is doc 17
+§8.
+
 ## Problem
 
-QEMU's CD-ROM emulation is ISO-shaped: single data track, cooked 2048-byte
-sectors. Everything a 1996–2005 game disc actually relies on is thrown away:
+QEMU's CD-ROM emulation is ISO-shaped: one data track of cooked
+2048-byte sectors. Everything a 1996–2005 game disc relies on beyond that
+is thrown away:
 
-- **Multi-track layouts and CD-DA** — Red Book audio tracks played via ATAPI
-  audio commands (in-game music for a huge share of Win9x titles).
-- **Raw 2352-byte sectors** — mixed-mode discs, Mode 2 forms.
-- **Subchannel data (P–W, especially Q)** — read by SecuROM.
-- **Deliberate defects** — SafeDisc's unreadable/weak sectors must return
-  errors *at the right LBAs*; a drive that reads everything cleanly fails the
-  check.
-- **Raw TOC / session layout** — multisession and protection fingerprinting.
-- **Data position measurement (DPM)** — StarForce-class checks measure sector
-  angular position/timing; images carrying DPM data (MDS) can satisfy them.
+- **Multi-track layouts and CD-DA**: Red Book audio played through ATAPI
+  audio commands, the in-game music of a large share of Win9x titles.
+- **Raw 2352-byte sectors**: mixed-mode discs, Mode 2 forms.
+- **Subchannel data (P–W, especially Q)**, read by SecuROM.
+- **Deliberate defects**: a disc's unreadable sectors must fail *at the
+  right LBAs*; a drive that reads everything cleanly fails such a check.
+- **Raw TOC and session layout**: multisession and protection
+  fingerprinting.
+- **Data position measurement (DPM)**: StarForce-class checks time
+  sector positions; images that carry DPM data (MDS) can satisfy them.
 
-Goal: mount a raw dump of a disc you own and have the *unmodified* protection
-code in the guest pass, because the virtual drive is indistinguishable from a
-period drive with that disc inserted. This is preservation-grade drive
-emulation — the DRM runs and succeeds; nothing is patched, stripped, or
-bypassed, and no-CD/crack functionality is out of scope.
-
-## Implementation
-
-Doc 17 is the implementation spec (model, formats, the C API header, MMC
-byte layouts, the `cdimage` block driver, the ATAPI patch, CD-DA, tests);
-the ordered plan is `docs/tracks/m5-cdrom-backend.md`. Two refinements of
-the design below, decided 2026-09-04: the QEMU side is a *format block
-driver* (`-cdrom game.cue` probes to it, medium swap stays QMP
-`blockdev-change-medium`) and the MMC response bytes are built in Rust, the
-C in `hw/ide/atapi.c` only moves buffers. Copy-protection fidelity for
-SafeDisc comes from verifying EDC/ECC on every cooked read exactly as a
-drive would, not from annotating bad sectors.
+The goal: mount a raw dump of a disc you own and have the *unmodified*
+protection code in the guest pass, because the virtual drive is
+indistinguishable from a period drive with that disc in it. The DRM runs
+and succeeds; nothing is patched, stripped or bypassed, and no-CD or
+crack functionality is out of scope.
 
 ## Prior art
 
-- **CDEmu/libmirage (Linux):** proves the approach end-to-end against real
-  protection drivers; libmirage (GPL-2.0+) parses all relevant formats and
-  models the disc as tracks/sectors/subchannel with on-the-fly generation of
-  whatever a format lacks.
-- **86Box/DOSBox-X:** implement cue/bin + CD-DA + some raw commands inside
-  their own drive emulation (good reference for ATAPI behavior with real
-  Win9x drivers).
-- QEMU has **none** of this; that's the gap we fill.
+- **CDEmu / libmirage** (Linux, GPL-2.0+) proves the approach against
+  real protection drivers: every relevant format, a disc modelled as
+  tracks, sectors and subchannel, and whatever a format lacks generated
+  on the fly.
+- **86Box and DOSBox-X** implement cue/bin, CD-DA and some raw commands
+  in their own drives: a reference for ATAPI behaviour under real Win9x
+  drivers.
+- QEMU has none of it.
 
 ## Design
 
-A new QEMU block driver + ATAPI behavior work, structured for upstreaming:
-
 ```
-image file (cue/bin, ccd/img/sub, mds/mdf, chd, iso)
-   → disc model layer ("libdisc"): sessions, tracks, indices,
-     per-sector raw data + subchannel + error/DPM annotations
-   → QEMU block driver exposing a "raw optical" interface
-   → ATAPI device layer: full MMC command surface against the disc model
+image (cue/bin, ccd/img/sub, mds/mdf, iso; chd later; or a host folder)
+  → libdisc: sessions, tracks, indices, raw sectors, subchannel
+  → the cdimage block driver (cooked view for the block layer)
+  → hw/ide/atapi.c: the MMC command surface answered from the model
 ```
 
-- **Disc model layer ("libdisc"): implemented in Rust** (ADR-004) as a crate
-  with a C API, built as a staticlib linked into the QEMU fork; the ATAPI
-  device code in C stays a thin shim over it. libmirage is the *behavioral
-  reference* (readable GPL source, format knowledge, protection handling),
-  not a dependency — this sidesteps its glib/API-shape friction with QEMU's
-  block layer, and format parsing is exactly the workload where Rust pays for
-  itself. QEMU upstream's experimental Rust support keeps eventual
-  upstreaming of libdisc realistic. The MMC exerciser tests libdisc directly
-  as a normal Rust dev-dependency, no QEMU involved.
-- Formats priority: **cue/bin → CCD (img+sub) → CHD → MDS/MDF (incl. DPM)**.
-  ISO keeps working through the same path.
-- Missing data is synthesized like real hardware would produce it: subchannel
-  Q generated from the TOC when no .sub file exists, error-free C2 for clean
-  sectors, etc. Protection-relevant data is only as good as the dump — docs
-  must be explicit that SafeDisc needs a dump that recorded the bad sectors,
-  SecuROM needs subchannel, StarForce needs DPM.
+- **libdisc is Rust** (ADR-004): a crate with a C API, linked into QEMU
+  as a staticlib. libmirage is the behavioural reference, not a
+  dependency. The MMC reply bytes are built in Rust; the C in `atapi.c`
+  moves buffers and drives the IDE state machine.
+- **The QEMU side is a format block driver**, so `-cdrom game.cue`
+  probes to it and a medium swap stays QMP `blockdev-change-medium`. A
+  plain `.iso` stays on QEMU's `raw` driver, byte for byte as before.
+- **Protection fidelity comes from modelling the drive**, not from lists
+  of bad sectors: every data sector is checked against its EDC/ECC and
+  what a drive could not correct fails as it would (doc 17 §2.5, §2.6c).
+- **Missing data is synthesized** as hardware would produce it:
+  subchannel Q from the TOC when there is no `.sub`, EDC/ECC for a
+  cooked image. Protection data is only as good as the dump: SafeDisc
+  needs one that recorded the bad sectors, SecuROM one with subchannel,
+  StarForce DPM.
+- Format priority: cue/bin, CCD (img + sub), MDS/MDF (landed early,
+  DPM ignored), then CHD.
 
-### ATAPI/MMC command coverage (the actual work)
+### The command surface
 
-Beyond what QEMU has today:
+Beyond stock QEMU: `READ CD` / `READ CD MSF` for every sector type with
+subchannel and C2 error pointers; `READ SUB-CHANNEL`; `READ TOC` formats
+0–2 including the raw TOC and multisession; the audio commands with mode
+page 0x0E routing, played into QEMU's audio as the drive's analogue
+output; the right sense codes for unreadable sectors; `GET
+CONFIGURATION` and mode page 0x2A describing a period drive. There is
+no seek or read timing model: data arrives as fast as the host reads it
+(doc 17 §5.3), and one waits for a check that needs it.
 
-- `READ CD` (0xBE) / `READ CD MSF` (0xB9): all sector types, raw 2352,
-  subchannel selection bits, **C2 error pointer reporting**.
-- `READ SUB-CHANNEL` (0x42): current position + Q from the model.
-- `READ TOC/PMA/ATIP` (0x43): all formats including **raw TOC (format 2)**
-  and multisession.
-- Audio: `PLAY AUDIO (10/12/MSF)`, `PAUSE/RESUME`, `STOP`, `SCAN`;
-  mode page 0x0E (volume/routing). Audio rendered into QEMU's audio backend
-  mixed as the "analog" CD output (period-correct), sample-accurate seek.
-- Error semantics: defective sectors return the right sense codes
-  (medium error / L-EC uncorrectable) with plausible retry timing.
-- `GET CONFIGURATION` / mode page 0x2A capabilities that match a period
-  CD/DVD-ROM drive profile (protection code sometimes sniffs capabilities).
-- Optional (later): coarse seek/read timing model — some checks are timing
-  sensitive (DPM especially); start with honest-latency, add a period drive
-  timing profile if StarForce-class checks demand it.
+### What the guest sees
 
-### Guest visibility
-
-- Win98 and XP see a bog-standard IDE/ATAPI CD-ROM — inbox drivers, no guest
-  software needed. That is the entire point: protection drivers
-  (secdrv.sys and friends) run unmodified.
-- Frontend UX: mount/eject/swap disc images at runtime (multi-disc installs),
-  with a per-machine virtual "disc shelf".
-- A **host directory** can go in the drive too, as a lazily generated
-  ISO 9660 + Joliet volume (`isodir:/path`) — the way to hand a guest a
-  pile of files without burning an image or booting a network stack.
-  Read-only and snapshotted when the tray closes, like a disc that was
-  burned. A CD while it fits on one, a DVD-ROM above that and refused
-  past a dual-layer DVD-9 — Win98 and XP both read 7.8 GiB of one.
-  M5g, opened 2026-09-06: `docs/tracks/m5-dirdisc.md`.
+- Win98 and XP see an ordinary IDE/ATAPI CD-ROM with their in-box
+  drivers; protection drivers (`secdrv.sys` and the like) run
+  unmodified.
+- Discs are mounted, ejected and swapped at run time from a per-machine
+  disc shelf, in the launcher and from inside the guest (`CDSHELF`,
+  patch 52; doc 07).
+- A **host folder** can go in the drive too (`isodir:/path`, doc 17 §8):
+  a read-only ISO 9660 + Joliet volume generated lazily and snapshotted
+  when the tray closes, a CD while it fits on one and a DVD-ROM up to a
+  dual-layer DVD-9 above that. It hands a guest a pile of files with no
+  image to burn and no network stack.
 
 ## Acceptance tests (M5 exit criteria)
 
-Using dumps of discs we own, one title per scheme:
+Dumps of discs we own, one title per scheme. A check only counts once it
+has been seen to fail: the `discx repair` copy of a dump (its bad
+sectors made good, nothing else changed) is the negative control (doc 17
+§2.6b).
 
 | Scheme | Expectation | Result |
 |---|---|---|
-| Plain mixed-mode + CD-DA | installs; in-game CD audio plays, tracks/seek correct | **PASS** — Age of Empires Gold and Moto Racer both play their CD soundtracks while the game runs, in XP, in the player, from their `.mds` (user, 2026-09-05). Step 6 had proven CD-DA host-side and through MCI; this is the first time a title's *own* audio code drove the path |
-| **SafeDisc 2.x** | ~~launch check passes from raw dump with error sectors~~ — **premise disproved, see result** | **The title runs; the check does not read the error sectors.** FIFA 2002 installs, launches and reaches its menus from `FIFA2002.mds` and from the repaired copy alike, and an ATAPI trace of a passing launch (2026-09-05) shows **0 of 781 reads touching the 584-sector band**. Its probe is LBA 800 then one pseudo-random single sector, ×13, all of them good sectors. Doc 17 §2.6b |
-| **SafeDisc 1.x** | launch check passes from a raw dump whose error sectors **fail to read**, as they do on a drive | **PASS, and the first check watched to fail and then pass on our drive model alone (2026-09-09).** Crimson Skies (SafeDisc 1.50.020, the user's Win98 install) reads its own 579-sector band (LBA 807..10018) raw — `READ CD` byte 9 = `0xF8`, single sectors, an anchor at LBA 800 between each — and refuses with *"Cannot locate the CD-ROM"* while our raw path delivers those sectors' bytes. With a raw read of an unreadable sector answered `03/11/05` instead, the same launch decrypts `CRIMSON.ICD` and reaches the game's video dialog. Corroboration: NFS Porsche Unleashed is also 1.x, its dump has **0** L-EC failures, and it works. The old premise of this row — "1.x writes no error sectors at all" — was measured on two dumps that happen not to carry one. The evidence is the *unpatched* `CRIMSON2.EXE`; the user's own install runs a no-CD patch that never reads the disc and has a separate, open rendering bug. Doc 17 §2.6c |
-| SecuROM (early + 4.x) | launch check passes from dump with subchannel | not tested. Early needs a `.sub` (replay path exists); 4.x needs DPM, which `mds.rs` ignores — that is the stretch goal below, not this row |
-| VOB ProtectCD | ~~launch check passes from a dump carrying both the data and the Q anomaly~~ — **premise disproved, see result** | **The title runs; the check does not read the anomaly.** Settlers 3 plays from `.ccd`, `.cue` and the repaired CD01 alike, and an ATAPI trace of a full launch to the main menu (2026-09-05) shows **0 of 1196 reads above LBA 195000** and one READ SUB-CHANNEL in the whole session: neither the data anomaly nor the Q anomaly is read. Content reads stop at LBA 191776, below the band. Doc 17 §2.6b |
-| StarForce (stretch) | documented result with DPM-carrying MDS dump | not started |
-| Multisession disc | both sessions visible, TOC correct | not tested |
-| Multi-disc title | the guest sees a disc change and the game accepts the new disc | **PASS** — Settlers 3's campaign asked for CD2 and took it (user, 2026-09-05). Unaffected by the protection finding: this row is about the medium change, and the game demonstrably distinguished the two discs |
+| Mixed-mode + CD-DA | installs; in-game CD audio plays, tracks and seeks right | **Pass.** Age of Empires Gold and Moto Racer play their soundtracks in-game on XP, in the player, from their `.mds` (user, 2026-09-05) |
+| SafeDisc 1.x | launch check passes from a raw dump whose weak sectors fail to read, as on a drive | **Pass**, and the one check seen to fail and then pass on the drive model alone. Crimson Skies (1.50.020) reads its 579-sector band raw and refused the disc until a raw read of an unreadable sector failed with `03/11/05`; then it launches. NFS Porsche Unleashed (1.x, no band) works. Doc 17 §2.6c |
+| SafeDisc 2.x | launch check passes from a raw dump with its error sectors | **Inconclusive: the title runs, the check never reads the band.** FIFA 2002 reaches its menus from the dump and from the repaired copy alike; a trace of a passing launch has 0 of 781 reads in the 584-sector band. Doc 17 §2.6b |
+| VOB ProtectCD | launch check passes from a dump with the data and Q anomalies | **Inconclusive, the same way.** Settlers 3 plays from `.ccd`, `.cue` and the repaired copy; its launch reads nothing above LBA 191776, below the band, and one READ SUB-CHANNEL. Doc 17 §2.6b |
+| SecuROM (early, 4.x) | launch check passes from a dump with subchannel | Not tested. Early needs a `.sub` (replay exists); 4.x needs DPM, which `mds.rs` ignores |
+| StarForce (stretch) | a documented result with a DPM-carrying MDS | Not started |
+| Multisession | both sessions visible, TOC right | Not tested |
+| Multi-disc title | the guest sees the change and the game takes the new disc | **Pass.** Settlers 3's campaign asked for CD2 and took it (user, 2026-09-05) |
 
-Plus a synthetic MMC exerciser (host-side unit tests against the disc model,
-no guest needed) for command-level regression coverage. The exerciser's
-fixtures include **golden ATAPI traces captured from the reference rig's real
-drive** while protected titles run their checks (doc 09) — so we verify the
-backend against the command sequences protections actually issue. Test dumps
-are made from owned discs that verifiably pass on the real machine, giving a
-pass/fail oracle for every VM failure.
+Command-level regressions are guarded host-side by `discx selftest`,
+whose checks call the same C API QEMU does, and in a guest by
+`atapi-guest`, whose every reply must equal `discx dump` (doc 17 §6).
+Still wanted: ATAPI traces from the reference rig's real drive while a
+protected title checks its disc (doc 09), as fixtures of the command
+sequences protections actually send.

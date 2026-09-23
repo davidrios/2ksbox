@@ -1,163 +1,132 @@
 # 9. Reference hardware rig
 
-We have access to a real period machine: **Pentium 4, GeForce 6200, dual-boot
-Windows 98 / Windows XP, CRT monitor, real optical drive.** This is the
-ground truth the emulated stack is judged against. Each pillar gets concrete
-comparisons instead of guesses.
+A real period machine is the ground truth the emulated stack is judged
+against: **Pentium 4 1.7, GeForce 6200, dual-boot Windows 98 / Windows
+XP, a CRT monitor, a real optical drive.** Each pillar gets concrete
+comparisons instead of guesses. What it has produced so far lives in
+`reference/` (the Direct3D goldens in `reference/d3d/rig-2026-09-03/`, the
+benchmarks in `reference/benchmarks/rig-2026-09-04/`); the CRT photo set
+and the ATAPI traces are still to be taken. The rig stays stock — it is
+an oracle, not a dev machine.
 
-The monitor is a **Samsung SyncMaster 753DFX**: 17" (≈16" viewable, ≈320×240 mm
-of picture), Samsung DynaFlat — flat glass, and a **delta dot-trio shadow mask
-at ≈0.20 mm horizontal pitch**, not an aperture grille. That matters for the
-preset pack: this tube has no damper wires and no vertical stripe, so a
-Trinitron-style grille preset is the wrong default for it (doc 03's pack names
-are corrected accordingly). `shaders/syncmaster-753dfx.slangp` approximates it
-from that geometry; the photo set below is what would turn the approximation
-into a calibration. **Unverified:** the dot pitch and the viewable width are
-recalled from the model's class, not read off the monitor, and everything
-derived scales with them — measure the picture width and check the pitch in
-the manual before treating the numbers as fixtures.
+## The monitor
 
-## What it validates, per pillar
+A **Samsung SyncMaster 753DFX**: 17" (≈16" viewable, ≈320×240 mm of
+picture), DynaFlat flat glass, and a **delta dot-trio shadow mask at
+≈0.20 mm horizontal pitch**, not an aperture grille — no damper wires, no
+vertical stripes, so a Trinitron-style grille is the wrong default for it
+(doc 03). `shaders/syncmaster-753dfx.slangp` approximates it from that
+geometry. **Unverified:** the pitch and viewable width are recalled from
+the model's class, not read off the monitor, and everything derived
+scales with them — measure the picture width and check the pitch in the
+manual before treating them as fixtures. The photo set below turns the
+approximation into a calibration.
 
-### Display pipeline (doc 03) — the biggest win
+## What it validates
 
-- **CRT look calibration:** photograph the CRT (tripod, fixed exposure,
-  macro shots of the mask/scanlines plus full-screen shots) showing known
-  test content — DOS text mode, Win98 desktop at 640×480/800×600/1024×768,
-  320×200 game content — and tune our default shader presets against the
-  photos. "Period accurate" becomes side-by-side, not vibes.
-- **Geometry truth:** confirm real-world aspect for the tricky modes
-  (320×200 filling a 4:3 tube, 720×400 text, double-scan appearance of
-  low-res modes) against our mode table's pixel-aspect and scanline-count
-  values.
-- **Motion/refresh feel:** 70 Hz DOS content and 60/75/85 Hz SVGA on the real
-  tube as a reference for judging our frame pacing on modern displays.
+- **Display pipeline (doc 03) — the biggest win.** CRT photographs of
+  known content to tune the presets against; the real aspect of the tricky
+  modes (320×200 on a 4:3 tube, 720×400 text, double-scanned low-res
+  modes) against the mode table; 70 Hz DOS and 60/75/85 Hz SVGA on the
+  tube as the reference for our frame pacing.
+- **CD-ROM (docs 05, 17).** Golden ATAPI traces — the MMC command,
+  response and sense sequences a protected title (SafeDisc, SecuROM)
+  issues during its disc check, captured on the rig or the same drive in
+  a modern box — as fixtures for the virtual drive; known-good dumps with
+  subchannel and error data from discs that verifiably pass on the rig;
+  and the A/B: a title that fails in the VM but passes on the rig is a
+  backend bug by definition.
+- **3D (docs 04, 14).** Screenshots of the acceptance titles on the
+  GeForce 6200 (native D3D8/9 and OpenGL) diffed against every emulated
+  path; `D3DGAME9`'s golden frames are the executor's oracle (doc 14
+  P0a). The 6200 is a 2004 DX9 card: the right oracle for the XP era and
+  late-98 Direct3D titles, with no Voodoo oracle for early Glide output
+  (86Box and community references cover that).
+- **Performance (docs 06, 22).** Super PI, 7-Zip and `SSEBENCH` have run
+  on the rig (`reference/benchmarks/README.md`); 3DMark 99/2001 SE/03 and
+  game timedemos are still to come. In-app expectations then read "X % of
+  the reference P4", a testable claim.
+- **OS behaviour.** Install-flow quirks, control-panel behaviour and
+  autorun checked against real Win98/XP when a VM looks suspicious.
 
-### CD-ROM backend (doc 05)
+## The CRT photo set
 
-- **Golden ATAPI traces:** run a logging tool on the real machine (or the
-  same drive in a modern box) to capture MMC command/response/sense sequences
-  while protected titles (SafeDisc, SecuROM) perform their disc checks. Those
-  traces become fixtures for the synthetic MMC exerciser — we can verify our
-  virtual drive answers the *actual command sequence* the protection issues,
-  not just our reading of the spec.
-- **Known-good dumps:** dump the owned discs on hardware we control, with
-  subchannel/error data, so acceptance-test inputs are traceable to a real
-  disc that verifiably passes its check on the real machine.
-- **Behavior A/B:** any title that fails in the VM but passes on the rig is a
-  backend bug by definition — an oracle most emulation projects never have.
+The patterns are `guest-tools/src/crtcal.h`, one definition compiled into
+both sides: `TESTS\CRTCAL.EXE` on the guest-tools ISO puts them on the
+tube at the exact mode through an exclusive full-screen DirectDraw
+primary — no blit, no stretch, because a scaler is what would otherwise
+be measured — and `build/crtcal-render` (`tools/crtcal-render.c`, the
+`crtcal` check) writes the same pixels as BMPs, which `player --shader
+<preset> --calib <dir>` runs through a preset. One photograph, one shaded
+frame, side by side; adjust the preset; repeat.
 
-### 3D acceleration (doc 04)
-
-- **Rendering correctness:** screenshot the acceptance-matrix titles on the
-  GeForce 6200 (native D3D8/9 and OpenGL) and diff against our
-  WineD3D-wrapper output. Wrapper bugs (fog, alpha test, texture stage
-  weirdness) show up as visible deltas against real-hardware captures.
-- Note the 6200 is a 2004 DX9 card: it is the right oracle for the XP era and
-  late-Win98 D3D titles; early Glide-era output has no Voodoo oracle here
-  (acceptable — 86Box and community references cover that).
-
-### Guest machines & performance (doc 06)
-
-- **Honest baselines:** benchmark the rig (3DMark99/2001SE/03, game timedemos)
-  so in-app performance expectations are phrased as "vs. a real P4 +
-  GeForce 6200" with actual numbers. Especially valuable for calibrating the
-  XP-on-Apple-Silicon TCG verdict in M1: "X% of the reference P4" is a
-  meaningful, testable claim.
-- **Driver/OS behavior reference:** install-flow quirks, control-panel
-  behavior, CD autorun etc. checked against real Win98/XP when a VM behavior
-  looks suspicious.
-
-## The CRT photo set (what to shoot, and how)
-
-The patterns are `guest-tools/src/crtcal.h`, one definition compiled into both
-sides: `TESTS\CRTCAL.EXE` on the guest-tools ISO puts them on the tube at the
-exact mode through an exclusive full-screen DirectDraw primary — no blit, no
-stretch, because a scaler is what would otherwise be measured — and
-`tools/crtcal-render` writes the same pixels as BMPs, which
-`player --shader <preset> --calib <dir>` runs through the preset. One
-photograph, one shaded frame, side by side; adjust the preset; repeat.
-
-On the rig: `CRTCAL.EXE [w h [bpp]]`, then SPACE / 1–8 to step patterns, `M`
-for the next mode, `L` to take the legend away, ESC to quit.
+On the rig: `CRTCAL.EXE [w h [bpp]]`, then SPACE / 1–8 to step patterns,
+`M` for the next mode, `L` to hide the legend, ESC to quit.
 
 | # | Pattern | What it settles | The shot |
 |---|---|---|---|
-| 1 | `grid` | does the mode fill 4:3, how much falls off each edge, is the geometry linear | whole screen, straight on, lens level with the middle of the tube |
-| 2 | `scanlines` | the beam's vertical profile, and **how many scanlines the tube really draws** | macro on a band centre; one whole-screen frame too |
-| 3 | `mask` | mask kind, pitch in mm, the stagger | macro, as close as the lens focuses, **with a ruler in the frame** |
+| 1 | `grid` | does the mode fill 4:3, what falls off each edge, is the geometry linear | whole screen, straight on, lens level with the tube's centre |
+| 2 | `scanlines` | the beam's vertical profile, and **how many scanlines the tube draws** | macro on a band centre, plus one whole-screen frame |
+| 3 | `mask` | mask kind, pitch in mm, stagger | macro, as close as the lens focuses, **ruler in frame** |
 | 4 | `bloom` | how much the beam widens as it brightens | macro across the stack, one exposure for all rows |
-| 5 | `sharp` | horizontal spot size, where the video bandwidth gives out | macro on the bar bands, repeated at every mode |
-| 6 | `halation` | how far light spreads into black | whole screen, dark room, fixed exposure, unchanged between shots |
-| 7 | `gamma` | the tube's gamma, against a dithered reference | whole screen, straight on; slightly defocused is right |
-| 8 | `colour` | phosphor primaries and colour temperature | whole screen, fixed white balance (daylight), never auto |
+| 5 | `sharp` | horizontal spot size, where the video bandwidth gives out | macro on the bar bands, at every mode |
+| 6 | `halation` | how far light spreads into black | whole screen, dark room, exposure unchanged between shots |
+| 7 | `gamma` | the tube's gamma against a dithered reference | whole screen, straight on; slightly defocused is right |
+| 8 | `colour` | phosphor primaries and colour temperature | whole screen, fixed daylight white balance |
 
-### 720x400, which needs DOS
+The two that pay for the trip: **2 at 320×200**, the direct answer to
+whether the tube draws 400 scanlines for a 200-line mode (doc 03 rule 3),
+and **3 with a ruler**, which turns the ≈0.20 mm pitch from a
+recollection into a measurement. Doc 03's "Mode analysis" says which
+shader parameters each pattern feeds; the preset file says which of its
+values are derived and which wait on these photographs.
 
-Windows 98 cannot put its desktop at 720×400 — no display driver offers it and
-it is not a VESA graphics mode. 720×400 is the VGA *text* mode, and the tube is
-already in it whenever the machine sits at a DOS prompt: 80×25 cells of 9×16
-pixels, 400 lines, 70 Hz. So `TESTS\TEXTCAL.COM` is a DOS `.COM` — run it
-from FreeDOS on the rig, or from a "Restart in MS-DOS mode" screen. Its
-patterns are built from a custom character generator, which is enough because
-a calibration pattern is periodic and 256 glyphs of 9×16 tile one exactly.
+### 720×400, which needs DOS
 
-Two of them exist nowhere else:
+Windows 98 cannot put its desktop at 720×400: it is the VGA *text* mode
+(80×25 cells of 9×16, 400 lines, 70 Hz). So `TESTS\TEXTCAL.COM` is a DOS
+`.COM` — run it from FreeDOS or a "Restart in MS-DOS mode" screen. It
+draws its patterns with a custom character generator (a periodic pattern
+tiles exactly from 256 glyphs of 9×16). Two exist nowhere else:
 
-* **Pattern 2, the 9th column.** A text cell is 9 pixels wide and the glyph is
-  8. For character codes 0xC0–0xDF the 9th column repeats the 8th; for every
-  other code it is background. Half the screen filled with a solid glyph below
-  0xC0 and half with the built-in block at 0xDB is the same intent coming out
-  as stripes on one side and continuous white on the other. That is what doc
-  03 rule 2's "9-dot characters" means, shown rather than asserted.
-* **Pattern 6 against pattern 1.** Text mode's 400 lines are scanned once;
-  mode 13h's 200 are scanned twice. The same one-on-one-off line pattern
-  therefore repeats every 2 lines on the tube in pattern 1 and every 4 in
-  pattern 6. Two photographs at one camera setting settle doc 03 rule 3
-  outright — which is the whole reason for the trip.
+- **Pattern 2, the 9th column.** A cell is 9 pixels wide and a glyph 8;
+  for codes 0xC0–0xDF the 9th column repeats the 8th, otherwise it is
+  background. A solid glyph below 0xC0 against the block at 0xDB shows
+  stripes on one half and continuous white on the other — doc 03 rule 2's
+  "9-dot characters", shown.
+- **Pattern 6 against pattern 1.** Text mode's 400 lines are scanned
+  once, mode 13h's 200 twice, so the same one-on-one-off pattern repeats
+  every 2 lines on the tube in pattern 1 and every 4 in pattern 6. Two
+  photographs at one camera setting settle doc 03 rule 3.
 
-Verified end to end under our own emulator before it ever goes near the rig:
-FreeDOS on a floppy, `TEXTCAL.COM` from `FDAUTO.BAT`, QMP `screendump`
-reporting **720x400** for the text patterns, and the player's own log naming
-the mode `720x400 VGA text 80x25 (9-dot) — 4:3 picture, pixel aspect 0.741,
-400 scanlines`.
-
-The two that pay for the trip are **2 at 320×200** — it is the direct answer to
-whether the tube really draws 400 scanlines for a 200-line mode, which doc 03
-rule 3 asserts and the shader is now told — and **3 with a ruler**, which turns
-the ≈0.20 mm dot pitch above from a recollection into a measurement.
+Checked under our own emulator: FreeDOS, `TEXTCAL.COM` from
+`FDAUTO.BAT`, a QMP screendump reporting **720x400**, and the player
+logging `720x400 VGA text 80x25 (9-dot) — 4:3 picture, pixel aspect
+0.741, 400 scanlines`.
 
 ### Getting the shot
 
-- **Shutter ≥ 2 frame periods.** A CRT is only ever lit where the beam is; a
-  fast shutter photographs a band, not a picture. At 85 Hz use 1/30 s or
-  slower, and never a flash. This is the one mistake that ruins a whole set.
-- **Manual everything.** Fixed exposure, fixed white balance (daylight), fixed
-  ISO, manual focus. The halation and bloom patterns are only comparable if
-  the exposure did not move between them; write it down.
-- **Tripod, straight on, dark room.** For `grid` the lens goes level with the
-  centre of the tube — off-axis makes a linear picture look like pincushion.
-- **A ruler in the macro frames**, taped flat to the glass, in focus with the
-  phosphors. Without a scale a mask photo says the mask's shape but not its
-  pitch, and the pitch is the number everything else is derived from.
-- **RAW if the camera has it**, and record the monitor's OSD settings —
-  brightness, contrast, colour temperature preset, and whether moiré reduction
-  is on (it must be **off**: it defocuses the beam on purpose).
-- **Let it warm up** twenty minutes; a cold tube has not settled its geometry.
-- One whole-screen frame per pattern per mode, plus the macros. `reference/`
-  in the repo is where they go, with the capture settings in the filename or a
-  sidecar note.
+- **Shutter ≥ 2 frame periods.** A CRT is lit only where the beam is; a
+  fast shutter photographs a band. At 85 Hz use 1/30 s or slower, never a
+  flash. This one mistake ruins a whole set.
+- **Manual everything:** exposure, daylight white balance, ISO, focus.
+  Halation and bloom are comparable only if exposure did not move; write
+  it down.
+- **Tripod, straight on, dark room.** For `grid` the lens is level with
+  the tube's centre; off-axis makes a linear picture look pincushioned.
+- **A ruler in the macro frames**, taped flat to the glass and in focus
+  with the phosphors: without a scale a mask photo gives shape, not pitch.
+- **RAW if available**, and record the OSD settings (brightness, contrast,
+  colour-temperature preset); **moiré reduction off** — it defocuses the
+  beam on purpose.
+- **Warm up twenty minutes**; a cold tube has not settled its geometry.
+- One whole-screen frame per pattern per mode, plus the macros, into
+  `reference/` with the capture settings in the file name or a sidecar.
 
-Doc 03's "Mode analysis" section says which shader parameters each of these
-feeds, and `shaders/syncmaster-753dfx.slangp` says which of its values are
-derived from the tube's geometry and which are waiting on these photographs.
+## `reference/`
 
-## Practical notes
-
-- Keep a `reference/` directory in the repo: CRT photo sets (with capture
-  settings), ATAPI trace fixtures, benchmark results, real-hardware
-  screenshots — versioned alongside the tests that consume them.
-- Capture sessions to schedule: (1) CRT photo set early in M2 (shader
-  calibration), (2) ATAPI traces + disc dumps before M5, (3) 3D screenshot
-  set + benchmarks during M3/M4.
-- The rig stays stock — it is an oracle, not a dev machine.
+CRT photo sets (with capture settings), ATAPI trace fixtures, benchmark
+results and real-hardware screenshots are versioned there beside the
+tests that consume them; disc dumps and disk images are not committed.
+Still to capture: the CRT photo set (M2's calibration) and the ATAPI
+traces of protected titles (doc 17's open items).

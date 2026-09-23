@@ -1,1092 +1,678 @@
-# 7. Frontend: player + companion launcher
+# 7. Front end: player + launcher
 
-Two Rust apps (ADR-005): the **player** runs one machine in one window; the
-**launcher** manages the library. Together they feel like a UTM-style app.
+Two programs (ADR-005): the **player** runs one machine in one window;
+the **launcher** manages the library and spawns a player per machine.
+This document covers both, the split between the launcher's core and
+its Qt front end, the C ABI, and the package layout. The display
+pipeline and input model are doc 03, the embed API doc 11, the machine
+definitions per family doc 06, the build and packaging commands
+`docs/development.md` and `docs/build-macos.md` / `build-windows.md`,
+and every check named here is in `docs/testing.md`.
 
 ## Player
 
-- Opens a machine bundle (`machine.toml` + disks + disc shelf); boots QEMU
-  in-process; renders through the doc 03 pipeline.
-- **Window:** the shaded display fills it; aspect-correct with black bars;
-  borderless fullscreen; optional CRT bezel later (cute, not core).
-- **Overlay UI** on hotkey/hover: pause, snapshot, disc swap, shader
-  preset picker, grab indicator, latency HUD (debug builds).
-- **Input:** grab model per doc 03 — absolute tablet for desktop mousing,
-  relative PS/2 grab for games, hotkey toggle (default Ctrl+Alt+G,
-  rebindable), auto-grab-on-click option. The host's keyboard shortcuts go
-  to the guest while the window has focus (doc 03), Ctrl+Alt+K toggles
-  that; Ctrl+Alt+Shift+D sends
-  Ctrl+Alt+Del, Ctrl+Alt+Shift+F toggles windowed full screen, and a
-  close with Alt held (Alt+F4) asks before it stops the machine.
-  Ctrl+Alt+S shoots the guest's own frame (below).
-  Gamepads are their own track (M13, `docs/tracks/m13-gamepads.md`) and
-  sit beside this grab model rather than inside it: a pad works whether
-  or not the window has grabbed the pointer, and never changes the grab
-  state.
-- **Audio:** QEMU audio → lock-free ring → cpal on CoreAudio / WASAPI /
-  PipeWire. Start ~30 ms end-to-end, instrument, tighten. CD-DA mixes
-  QEMU-side (doc 05).
-- **Media:** runtime disc mount/eject/swap from the disc shelf (multi-disc
-  installs), floppy images.
-- **Snapshots:** QEMU internal snapshots via in-proc QMP, surfaced in the
-  overlay and the launcher.
+- **What it runs is a QEMU command line**, not a bundle:
+  `player [--shader <preset>] [--shader-params k=v,…] [--pad <mode>]
+  -- <qemu args>`. The launcher translates a bundle into that line
+  (`launcherx --print-player-args <bundle>`), so everything a bundle
+  means lives in `launcher-core`; the player boots QEMU in-process (doc
+  11) and renders through doc 03's pipeline. One machine per process,
+  because QEMU's cleanup is incomplete upstream.
+- **Window:** the shaded display fills it, aspect-correct with black
+  bars; Ctrl+Alt+Shift+F is borderless full screen.
+- **Input** is doc 03's model: the absolute USB tablet for desktop
+  mousing, a relative PS/2 grab for games (Ctrl+Alt+G releases), the
+  host's shortcuts going to the guest while the window has focus
+  (Ctrl+Alt+K toggles), Ctrl+Alt+Shift+D for Ctrl+Alt+Del, Ctrl+Alt+S
+  for a shot of the guest's own frame. A close with Alt held (Alt+F4)
+  asks first, in a panel the player draws itself over the finished
+  picture (`player/src/prompt.rs`): the player has no toolkit, and Linux
+  has no message box that also works inside the Flatpak and over a
+  full-screen window. Gamepads are M13 (`docs/tracks/m13-gamepads.md`)
+  and sit beside the grab model: a pad works whether or not the pointer
+  is grabbed and never changes the grab.
+- **Audio:** QEMU's mixer writes f32 into a lock-free ring drained by
+  cpal (CoreAudio / WASAPI / PipeWire); the player limits the sum
+  rather than letting it clip. Pacing and the ring are doc 11 ("The
+  audio driver and its pacing"). CD-DA mixes QEMU-side (doc 17 §5.4).
+- **Not built: an overlay** for pause, snapshot, disc swap and the
+  shader preset. Today snapshots and disc swaps are the launcher's
+  (live, over QMP, below), and a disc swap from inside the guest is
+  `CDSHELF`.
 
 ## Launcher
 
-- Machine library grid with last-frame thumbnails, family badge, running
-  state; spawns a player per machine.
-- **Clone…** on a row (2026-09-13, `launcher-core/src/clone_machine.rs`):
-  a new machine under a name the user picks — offered as "<name> (copy)",
-  numbered when that is taken — with the same settings and its **own
-  copy of the disk**, internal snapshots included since they live in the
-  qcow2. The disk is copied wherever it is: a wizard-made bundle keeps it
-  in its own folder, but "Use an existing disk" can point anywhere, and
-  two machines on one image corrupt it the day both run. Anything else
-  the bundle names inside its own folder is copied and renamed into the
-  clone; what it names outside (shelf discs, a shader, a SoundFont) is
-  shared media and stays shared. A relative qcow2 backing file is made
-  absolute in the copy (`qemu-img rebase -u`), since the copy sits
-  elsewhere. **A running machine is refused** — its disk is being
-  written — and "running" is the grid's player map *or* a listening
-  monitor socket, so a player started by `--play` counts too. The copy
-  runs on a thread with a progress bar; the new `machine.toml` is written
-  last, so a clone still copying (or failed, whose folder is removed) is
-  never in the grid. `launcherx --clone <machine.toml> [name]` is the same
-  model headless; `lc_machines_clone` the same in C.
-- **Guided creation:** one settings window with a sidebar of sections and
-  a page each, the way VirtualBox's and UTM's are laid out (2026-09-22,
-  user request — the one long scrolling form had outgrown its window):
-  General (family, name), System (memory, processor, acceleration, the
-  emulation optimizations, extra QEMU arguments), Display (adapter,
-  Direct3D, the Voodoo 2, the host's 3D, the shader profile), Audio (the
-  sound card, music, SoundFont, MT-32 ROMs), Input (gamepad, the
-  pointer), Network, Storage (disk, install media, floppy, boot order).
-  The sections and their order are the shared form's
-  (`wizard::Section`, `lc_wizard_label(LC_LABEL_SECTION, …)`); which
-  field sits on which page is the front end's. The form opens on its
-  first page at the top for a new machine or a different one than last
-  time, and where it was left for the same one reopened. The bundle comes
-  from the reference definitions (doc 06). Never a QEMU command line, and since
-  2026-09-16 (user decision) no raw-TOML box either: the form's fields
-  are the way to edit a machine, and a hand edit is the file itself. The disk size starts at the family's own
-  (`bundle::default_disk_size_gb`: 10 GB for Win98 and Other, 20 GB for XP,
-  2 GB for DOS; 2026-09-16, user decision) and follows a family switch
-  until someone types another number.
-- **Memory and acceleration** are the two machine settings worth exposing
-  next to the family, and the same form edits them on an existing
-  machine. Memory offers the family's own default and is bounded by
-  doc 06 (Win98 stops at its 512 MB ceiling — more and it will not boot).
-  Acceleration is Automatic / KVM-required / Emulation, written into the
-  bundle as `accel`: *Automatic* becomes QEMU's own `accel=kvm:tcg`
-  fallback rather than anything the launcher probes, so it cannot be
-  wrong at spawn time; the form says separately whether this host has
-  KVM, since "Automatic" otherwise means something invisible.
-  **The default is per family: Win98 is emulated, XP is automatic.** KVM
-  runs a guest at host speed, and doc 06's `pentium3` model does not
-  protect Win9x from its own fast-CPU bugs — it is the speed that trips
-  them — while emulation is also the path docs 13 and 16's x87/SSE fast
-  paths exist for, i.e. the configuration Win98 is actually tuned and
-  tested on here. A bundle with no `accel` field follows its family
-  rather than a fixed default, so nothing written before the field
-  existed silently changes how it runs.
-- **"Other" is the one family with a sentence under the picker**
-  (`family_note()`, added 2026-09-07). The other three *are* the
-  reference machines doc 06 describes and the rest of the form explains
-  itself; Other is defined by what it does not get — our display adapter
-  and the whole 3D pass-through, all of them Windows components — and by
-  hardware chosen for guests nothing here tests (BeOS, a period Linux,
-  OS/2). Someone who is not told would find out by installing an OS onto
-  it. The note names what the machine has (a VESA-capable VGA, an
-  RTL8139, an ES1370) and says outright that there is no 3D.
-- **The display adapter** is a picker, and the one whose *list* changes
-  with the family (`bundle::video_choices`, doc 06, added 2026-09-07):
-  Windows chooses between our own adapter with our display driver and the
-  Cirrus Windows has an in-box driver for, an `Other` machine between the
-  two standard adapters, and a DOS machine chooses nothing — its titles
-  program a VGA/VESA BIOS directly. Which of them a new machine starts on
-  is the list's own first entry: ours on both Windows families (Win98
-  since 2026-09-16; it started on the Cirrus from 2026-09-07, doc 06). The
-  row hides itself on the DOS case, and neither front end knows which family that is: it asks
-  `video_applies()` and fills the combo from `video_choices()`. On the Qt
-  side the labels are a *property* rather than an invokable for exactly
-  this reason — a combo box bound to a function keeps the list it was
-  built with. An adapter a family does not offer is refused rather than
-  stored (`std` on XP would leave the guest with no driver at all), and
-  editing an existing machine's adapter draws an orange line saying the
-  guest will find new hardware on its next start.
-- **The host's 3D** is stated, not chosen (ADR-013): under the
-  acceleration row a Windows machine gets one line saying what this host
-  will give the guest's Direct3D. It needs a Vulkan 1.3 device, because
-  that is what its DXVK executor needs; below that bar 3D goes through
-  OpenGL with WineD3D in the guest instead, and the line says how to
-  install it. There is no picker because there is no decision here: the
-  host settles it, and the only failure worth preventing is finding out
-  after the machine exists. A **software** Vulkan driver counts as
-  available — DXVK will use one — but is the single case drawn as a
-  warning rather than a note, because it works and disappoints: it says
-  to expect it to be very slow and that WineD3D may well beat it, both
-  being worth trying. A host with no Vulkan at all is a plain note;
-  nothing is wrong and every machine still runs. While our adapter is the
-  one picked, that note also says to keep it (2026-09-17): the guest
-  driver reads `D3D_STATUS` before it offers Direct3D, so a host with no
-  executor loses only that half, and the Cirrus has no Direct3D either
-  while losing the flip chain's vertical blank, the 8 bpp modes, gamma and
-  the cursor. The adapter is not picked from the host on purpose: an image
-  moves between hosts, and changing its adapter is a driver install. The
-  `capi` check runs the C smoke with no Vulkan driver for this line. DOS and Other machines
-  get no line: neither has any Direct3D to place, since the guest half of
-  the pass-through is a set of Windows DLLs. The sentence is the shared form's (`graphics_note()`), like every
-  other note under a row, so the Qt build and the C ABI cannot drift; `launcher --host-check` is the same answer in full, for a
-  support question or a script (`launcher-core/src/host_gpu.rs`; the
-  `host-check` check in `scripts/test.sh`). **Since 2026-09-22 the Qt form
-  shows that answer under the Direct3D picker** rather than as a line of
-  its own under the adapter (user: "out of place" beside the picker it
-  answers, and saying the same thing twice): `d3d9_note()` carries the
-  host's headline and advice for the Automatic entry, orange for the
-  software-Vulkan case, and `graphics_note()` stays for a front end with
-  no such picker (the C smoke reads it). **On Windows that line has a
-  third answer since 2026-09-21** (ADR-007's second amendment): a host
-  below the bar there runs the same executor on the system's own
-  Direct3D 9, so the note says "runs on this PC's own Direct3D 9" rather
-  than sending the user to WineD3D, and `--host-check` says the same.
-  **And on Linux and macOS a third since 2026-09-22** (ADR-018, track
-  M15's step 4): below the bar with a Wine installed — found by the same
-  rule the executor's remote library follows, `D3DPT_WINE`, the Mac apps,
-  `PATH` — and the executor's Windows build shipped
-  (`lib/2ksbox/wine/d3dpt-exec-host.exe`), the note says "runs through
-  Wine on this host (Wine 10.0, OpenGL)" and to expect it slower than a
-  Vulkan GPU, `--host-check` exits zero, and its report names the Wine
-  and the pair. Without a Wine the old sentences stay (WineD3D in the
-  guest, until M15's last step) plus one saying which Wine to install;
-  with a software Vulkan driver *and* a Wine the advice is to try
-  `-global d3dpt-vga.exec=wine` in the machine's extra arguments as well,
-  since which of two working stacks is faster is the box's to answer.
-  `--paths` prints the Wine and the pair as `wine` and `wine-host`
-  (`HostGpu::backend`, `d3d_headline`, `d3d_advice` — the platform
-  question lives in the model, never in a front end).
-- **Which Direct3D 9 the host runs it on** is the one picker under the
-  adapter that is about the *host* rather than the guest
-  (`bundle::D3d9`, the same 2026-09-21 amendment): Automatic, DXVK, or
-  this PC's own Direct3D 9. The same three entries on every family — a
-  host question has no family dimension — and the row appears only on a
-  machine with our own adapter, which is the device that carries the
-  executor (`d3d9_applies()`). It is a picker and not a statement, unlike
-  the line above, because a host can have *both* and the user is the one
-  who can see whether a game draws right: Automatic is what everyone
-  should be on, and the other two are an A/B. `d3d9_note()` says what the
-  entry in the field means and, for Automatic, what this host will do
-  with it; the machine keeps the setting when it is moved onto another
-  adapter (the command line simply stops saying it), because a bundle is
-  portable and a setting made once should survive the move back. On the
-  Qt side this row is the one whose properties name their own
-  `cxx_name`: `#[auto_cxx_name]` turns `d3d9_labels` into `d3D9Labels`,
-  QML cannot say that a binding names a property that does not exist,
-  and the row shipped for an afternoon as a "Direct3D" label with an
-  empty combo box (user, 2026-09-21). The `qt-wizard` check asks the
-  window for the combo's count and text now, like it already did for the
-  memory field and the name.
-- **The processor** is a combo of named machines, not a number
-  (`cpu_speed` in the bundle, `bundle::CpuSpeed`): *Unthrottled* down
-  through *Pentium 133*, *486DX2-66*, *386DX-33*, *286-12*. Nobody knows
-  how many instructions per second their DOS game wants, but "it needs a
-  486" is written on the box — and DOS-era software times itself against
-  the CPU it finds, so this is the field that decides whether a game is
-  playable at all (doc 06 has the measurements). It is offered for every
-  family, because a Win98 machine runs DOS games in a DOS box too;
-  only the DOS family defaults to a throttled one. The form says, next
-  to the combo, the two things that follow: that this is what makes an
-  era game work, and that choosing a processor makes the machine
-  emulated — QEMU's `-icount` cannot run under KVM, so
-  `effective_accel()` returns TCG whenever one is chosen rather than
-  letting the machine fail to start.
-- **A floppy and a boot order** (`floppy`, `boot`): doc 06 lists a floppy
-  on the Win98 machine and this document lists floppy images among the
-  media the launcher handles, but until 2026-09-06 no bundle could
-  express either. *Boot from* is Automatic / Hard disk / Floppy / CD;
-  Automatic emits no `-boot` at all, which is what every bundle written
-  before the field did and what the wizard's "boot the installer from
-  the CD because the new disk is blank" case relies on.
-- **Our own emulator fast paths are eight checkboxes**, behind a
-  disclosure headed "Emulation optimizations — 7 of 8 on" so a machine
-  with one turned off says so while the section is closed. A *disclosure*
-  (egui's `CollapsingHeader` while that front end existed) and, since
-  2026-09-06, Qt's `Disclosure.qml` — a triangle that turns to point down, a label,
-  and no tick anywhere. The Qt side had opened the section with a
-  `CheckBox` for want of anything in Quick Controls that folds, and a tick
-  in front of "Emulation optimizations" says the one thing that is not
-  true: that clearing it turns the optimizations off (user, 2026-09-06).
-  Nothing whose state is "showing / hidden" gets a checkbox. Each is one of
-  the QEMU patches this project maintains (`patches/qemu/README.md`) with
-  the off switch that patch already carried: `x87-fast`, `sse-fast`,
-  `simd-fast` and `rep-fast` are guest-CPU properties, `smc-same-value`,
-  `inline-lookup`, `jump-cache-keep`, `eob-chain` and `tlb-retire` are
-  properties of the TCG accelerator
-  itself. **They are exposed because the switch is the oracle.** Every
-  one of them replaces simulated arithmetic with the host's own, so when
-  a guest computes the wrong number or a game stops drawing, one run with
-  one checkbox clear says whether a fast path did it — the alternative is
-  bisecting a patch queue against a Windows install. The section says the
-  measured gain under each switch, and says above them that on a machine
-  headed for KVM they do nothing at all, because there is then no
-  emulator in the path to have a fast path.
-  Everything that has shipped is on; `x87-pc64-as-53` is off, because it
-  is the one switch that changes what the guest computes. Patch 21's
-  `pinned-regs` was offered (off) until 2026-09-16 and is not any more
-  (user decision: it crashed guests for a gain too small to pursue); a
-  bundle still carrying the entry keeps it in its table, never on the
-  command line, until "All defaults" removes it
-  (`Optimizations::RETIRED`).
-  **Only the difference is stored** (`[optimizations]` in the bundle, keyed
-  by the QEMU property name): a machine that has changed nothing writes no
-  table and produces the command line it always produced, and an
-  optimization added to the patch queue later arrives on in every bundle
-  that already exists. An entry a newer launcher wrote survives a load and
-  a save in an older one, since the table is keyed by name and not by a
-  Rust enum.
-  One consequence reaches the command line: the accelerator is now spelled
-  `-accel kvm -accel tcg,…` rather than `-machine accel=kvm:tcg`, because
-  the accelerator-side properties need somewhere to live and QEMU refuses
-  the two spellings together. It is the same code path — two `-accel`
-  options are tried in order and the first that initializes wins, which is
-  exactly what `kvm:tcg` did.
-- **Extra QEMU arguments** is one text field under the fast paths
-  (2026-09-17, user request): the escape hatch for what the form has no
-  field for — a device property such as `-global d3dpt-vga.ddflags=32768`
-  (the vertical blank off), a trace, a debug knob. One line; whitespace
-  separates, single or double quotes group and are removed, and there is
-  no escape character, so a Windows path's backslashes stay as typed
-  (`bundle::split_args` / `join_args`). The bundle keeps it as a list,
-  `extra_qemu_args`, one entry per argument and absent when empty, and
-  `qemu_args` appends it **last**, so a repeated option is the user's.
-  Nothing validates the arguments themselves; a quote left open is an
-  orange note while typing and a refusal at save. The `extra-args` check
-  walks it from `--wizard-edit` to `info qtree` on our QEMU, including an
-  edit of another field (the line is joined back out of the bundle and
-  split again, so quoting must round-trip); `qt-wizard` types into the
-  real field before a family switch, and the `capi` smoke has the
-  refusal.
-- **Networking** is one checkbox (`network` in the bundle), and since
-  2026-09-07 (the user's decision) a new machine of **every** family
-  starts with it **off**. These are unpatched systems — the note under
-  the box has always said so — and a machine that is on a network before
-  anyone was asked about it is the wrong way round; the box is right
-  there for the machine that wants one, and ticking it later is a card
-  *appearing*, which Windows handles far better than one disappearing.
-  DOS had never got one anyway, for a reason of its own: it reaches a
-  network only through a packet driver the user installs by hand. The
-  default still follows the family until someone touches the box, exactly
-  like memory and the processor — the families simply agree at the
-  moment. A bundle with no `network` field has no card either, since
-  2026-09-16 (user decision: networking is off by default for every
-  machine; it used to mean on, as every bundle written before the field
-  ran, and the wizard has always written it). The checkbox is:
-  the machine either has doc 06's per-family NIC on QEMU's user-mode NAT
-  — outbound through the host, nothing on the network able to reach the
-  guest — or it has no adapter at all, so Windows never sees a card, asks
-  for its driver or waits on a network at boot. Off emits `-nic none`,
-  because QEMU otherwise supplies a NIC of its own when the command line
-  asks for none; and XP's PCI devices carry the explicit addresses their
-  order already gave them, so the NIC's absence doesn't slide the sound
-  card into its slot and make an installed guest re-detect hardware.
-- **The Voodoo 2** is a checkbox right under the display adapter
-  ("Emulated 3dfx Voodoo 2", `voodoo2` in the bundle; doc 21, M14): a 3dfx Voodoo 2 on
-  the PCI bus beside whatever display adapter the machine has, as the
-  card sat beside a 2D card. On, the machine gets `-device
-  voodoo2,addr=0x05` and nothing else changes; the guest needs 3dfx's
-  own Voodoo2 driver, and a Glide game then draws on the emulated chip
-  (software rendering on the host's cores) or on the pass-through
-  wrapper by which `glide2x.dll` it loads. Off unless picked, on every
-  family — a card the guest has no driver for is a New Hardware wizard
-  on every boot — and an absent field means off, because no bundle had
-  it before it existed. The sentences under it are
-  `voodoo2_notes()`'s; the `voodoo2` check in `scripts/test.sh` walks
-  it from the checkbox to `query-pci` on our own QEMU.
-- **"Undo its dither"** sits on that same line, because it is a setting
-  of that card and of nothing else (`voodoo2_undither` in the bundle;
-  doc 21 §12). On, the card's `-device` gains `,undither=on` and the
-  Voodoo's ordered dither is reconstructed away at scanout, so skies,
-  shading and light pools come out as the rasterizer had them instead of
-  speckled, while textures and edges are left untouched. Off unless
-  picked, and **the form keeps it with the card**: it is disabled without
-  one (`voodoo2_undither_enabled()`), turning the card off turns it off
-  too, and `--print-args` writes the property only where there is a
-  device to carry it — a setting that reaches no device would be a lie
-  on the screen. It costs about 1.4 ms of the main loop per presented
-  frame, which is why it is a choice and not simply always on. The
-  `voodoo2` check covers it: picked on its own it does not come on, it
-  reaches the device as a property of the same `-device`, and it does not
-  outlive the card in the bundle or on the command line.
-- **The pointer** is the next checkbox ("Seamless mouse",
-  `seamless_mouse` in the bundle), and it follows the family the same
-  way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the
-  PS/2 controller and would find nothing on a tablet, and **off for
-  Other**, where an absolute pointer needs a guest USB stack and window
-  system we cannot vouch for and there is no guest-tools install to fix
-  it with. On, the machine
-  gets `-usb -device usb-tablet` — an absolute device, so the host
-  pointer *is* the guest cursor, the window never grabs and the guest's
-  hardware cursor can be the host cursor (doc 03's pointer model, doc 15
-  for the cursor). Off, the machine has only the PS/2 mouse the chipset
-  already gives it: the player takes the pointer on a click and
-  Ctrl+Alt+G gives it back, which is the relative movement mouselook
-  needs — a game whose view sticks instead of turning is this checkbox,
-  not a bug. The controller goes with the device (there is nothing else
-  on it). An absent `seamless_mouse` field means on, as every bundle
-  written before it ran, for the same reason `network`'s does: the
-  pointer must not change under a machine that has been running.
-- **Shader presets come with the launcher or are downloaded by it:** a
-  source checkout has the `third_party/slang-shaders` submodule, and a
-  machine without one (no `--recurse-submodules`, or a packaged build)
-  gets a "Download presets" button in the profile manager instead of a
-  preset picker that opens on nothing — upstream's tarball, unpacked into
-  the data directory beside the machine and profile libraries, never into
-  `third_party/`. `LAUNCHER_SHADERS_DIR` overrides where they live. An
-  empty preset field's "Browse…" opens there, since a `.slangp` is never
-  somewhere a person would navigate to by hand.
-- **And the download is offered on the way up** (`firstrun.rs`,
-  2026-09-09): the button above lives two windows deep, on the profile
-  manager's preset row, which is exactly where someone who has never
-  opened the profile manager will not find it — so a launcher that finds
-  **no collection at all** asks once, as a modal question over the grid,
-  with a confirm and a cancel. Three rules keep that from being a nag.
-  The question is only asked when `shader_source::presets_dir` finds
-  nothing, which is already false in a source checkout and in any package
-  that ships presets. Answering it *either way* writes
-  `first-run.txt` into the profile directory, so "Not now" is not
-  re-asked on every start (the marker sits beside the profiles, not the
-  presets: a successful download replaces the preset directory by a
-  rename and would take it with it). And a "yes" is worth something the
-  moment it lands — the starter profiles in
-  `shader_source::DEFAULT_PROFILES` are written against the collection
-  that just arrived (**CRT Aperture** `crt/crt-aperture.slangp`, **CRT
-  Royale** `crt/crt-royale.slangp`, **Apple II**
-  `presets/apple-monitor-II.slangp`, all three at the preset's own
-  defaults, which is an *empty* override table and not a snapshot of
-  today's values), so the first machine someone creates has a CRT to pick
-  rather than four hundred `.slangp` files to guess from. A name the
-  profile library already holds is never written a second time:
-  `shader_library::create` deduplicates the slug, so re-running this
-  would otherwise hand back `crt-royale-2`. The model is
-  `launcher_core::firstrun`, and it holds **the words at every step** —
-  `Message { step, headline, detail }` from one `state()` poll, because
-  both front ends had been formatting "Downloading shader presets… 12.3
-  MB" separately, once in Rust and once in QML, which is the drift this
-  crate exists to prevent. A front end lays those two strings out in its
-  own idiom: Qt's `MessageDialog` puts them in `text` and
-  `informativeText` (the egui build stacked them in a `Modal`). **The
-  buttons are the one thing a front end may choose, deliberately.** Qt
-  uses the platform's standard buttons — Yes/No, Retry/Cancel, OK —
-  because that is what a native confirmation dialog is, and a native
-  dialog with hand-written button text is what looks wrong on every
-  desktop at once; a toolkit with no standard buttons (egui was one, a C
-  front end may be another) takes `confirm_label()` / `cancel_label()`
-  from the model. Which is why the size and the destination are in the
-  *question* and not only on a button. The Qt side is two dialogs and not
-  one — the question and the outcome — for the reason in "Five Qt traps"
-  below, and the download between them has no dialog at all: it needs no
-  answer, so it runs in the launcher's header rather than locking the
-  window for a minute. `launcherx --first-run [status|accept|decline]`
-  and `--default-profiles [<collection>]` are the same flow without a
-  toolkit (the `shader-defaults` and `qt-firstrun` checks). One thing
-  that only shows up when a collection arrives *late*: the profile
-  manager caches "there is none" for the life of the process, so
-  accepting the offer calls `editor::Presets::forget` on the way out, or
-  the manager goes on offering to download what has just been
-  downloaded.
-- **The preview moves when the preset does** (fixed 2026-09-06): plenty of
-  presets do not draw the same picture every frame — an interlaced CRT
-  puts up alternate fields, a phosphor afterglow decays over several,
-  an NTSC signal shimmers, the flicker of a TV is the whole effect — and
-  the editor's preview, which renders when something is clicked and not
-  otherwise, showed one frozen frame of all of it. So the core says which
-  presets those are and how often it wants drawing
-  (`preview::Preview::frame_interval`, `None` for a preset that stands
-  still), and the front end obeys in its own idiom: QML runs a `Timer`
-  at it (the egui build asked for a repaint after the interval). The frame number
-  the shader is given comes from a **clock at `FRAME_RATE` (60/s)**, not
-  from a count of renders, so the effect runs at the speed it would in
-  the player even on the Qt path, which reads every frame back to the CPU
-  and cannot always keep up — it drops frames rather than running slow.
-  Which presets animate is `shader_chain::preset_is_animated`: it reads
-  the preprocessed pass sources for a *use* of `FrameCount` (the
-  `params.FrameCount` member access, since 1131 of the slang-shaders tree
-  declare the uniform and only 271 read it) or of a history / feedback
-  texture, and errs towards animating — a preview that redraws a picture
-  that never changes costs a redraw, the other error is the bug itself.
-  The headless verbs pin one frame (`PREVIEW_FRAME`, default 0) so that
-  their PNGs stay reproducible.
-- **Disc shelf:** the user's disc images, labelled, shared by every machine
-  (`discs.toml` beside the machine and shader-profile libraries) — a rip is a
-  property of the person, not of the machine that installed it first. A
-  machine keeps only which disc is in its drive at boot; the rest are
-  swapped in while it runs. One-click guest-tools ISO attach.
-- **The shelf is in order by label** (2026-09-06, user-asked), not in the
-  order discs were added: a collection is something a title is looked up
-  in, and "whenever I happened to rip it" is not an order anyone can
-  search. Case-insensitively, and **digit runs compare as numbers**,
-  because disc sets are numbered and a plain string sort files `disc 10`
-  between `disc 1` and `disc 2`. It is an invariant of `DiscLibrary`
-  rather than a sort each view does for itself — the Qt GUI, the C ABI,
-  `--discs` and the flat file the in-guest CDSHELF program lists all show
-  one order, and they *must*: that file is addressed by slot number, so a
-  view that sorted for itself would offer a disc under one number and
-  load another. Two consequences for a front end: a row index is only
-  good until the next edit (an add lands where the name belongs, a rename
-  moves the row), and a *rename in progress* must not re-sort, or the
-  row would slide out from under the cursor typing into it — Qt gets
-  that for free from `editingFinished` (the egui build re-sorted when
-  the field lost focus).
-- **"Browse…" adds the disc, it does not fill a box** (2026-09-09,
-  user-reported): a file chosen in the dialog is on the shelf before the
-  dialog has finished closing. The dialog already asked the question
-  "Add to shelf" was there to ask a second time, and a picker whose only
-  visible effect is a path in a text field reads as one that did nothing.
-  "Add folder…" beside it was always this way, which is half of why the
-  other button looked broken. The field and its button stay, for a path
-  someone *types* — a mount the picker cannot reach, or one already on
-  the clipboard — and nothing is lost by the immediacy: a disc added by
-  mistake is one "Remove" away, and the shelf is a list of what you own,
-  not a document being drafted. Qt's `PathField` carries it with a
-  `picked` signal beside `edited` (egui's `path_field` handed its caller
-  the path the *dialog* produced), because it is a decision, and the check that guards it is `qt-shelf` in
-  `scripts/test.sh`: a real file dialog belongs to the window system and
-  cannot be opened offscreen, so the probe hands the field the path the
-  dialog would have and asks the *window* whether the shelf grew and the
-  field emptied.
-- **A host folder is a disc too** ("Add folder…" on the shelf): the
-  shelf takes a directory, and the machine's drive is given
-  `isodir:<path>`, which generates an ISO 9660 + Joliet volume over the
-  tree as the guest reads it (M5g, `docs/tracks/m5-dirdisc.md`). It is
-  how a pile of files — a patch, a save game, a folder of installers —
-  reaches a guest of an era whose networking nobody should trust, without
-  mastering an image first. Read-only, and a snapshot of the tree as the
-  tray closed: what changes on the host afterwards appears on the next
-  insert, which is what "Insert" already does. A folder has to fit on a
-  disc: up to an 80-minute CD it is one, above that the drive reports a
-  DVD-ROM, and past a dual-layer DVD-9 (8.1 GiB) `isodir` refuses the
-  tree — the shelf shows that, with both sizes, on the row's error line.
-- **Insert and Eject force the tray.** QMP's `blockdev-change-medium` and
-  `eject` both default to *asking* a guest that has locked the medium —
-  XP locks it for every open handle on the mounted volume — and a
-  refused ask leaves the old disc in the drive until the guest lets go,
-  so the user's click appears to do nothing and then takes effect minutes
-  later. The user pressed a button on this machine's own shelf; that is
-  the whole authority a `force` needs (`launcher-core/src/control.rs`).
-- **The shelf from inside the guest** (`CDSHELF`, guest-tools ISO): the
-  same shelf, listed and swapped from a program running in the guest — a
-  disc-2 prompt in a game is answered without leaving it. It is a
-  *window* on Windows (pick a disc, press Insert) and a key-per-disc menu
-  in a DOS box, because a disc swap is something a player does mid-game,
-  not a command line they retype; both also take verbs for scripting.
-  In the window **Insert is grey while a disc is in the drive** (user
-  decision, 2026-09-19): the tray is emptied with Eject, as a step of its
-  own, rather than under a guest that is still reading it. The verbs are
-  not gated — `CDSHELF <n>` swaps in one step for scripts. The channel is a
-  vendor ATAPI command on the machine's own CD-ROM drive (opcode 0xD0,
-  patch 52, protocol `cdshelf/cdshelf_proto.h`), because that drive is the
-  one thing DOS, Win98 and XP can all send a raw command to — PIO, ASPI
-  and SPTI respectively — and its firmware is ours. No new device, no
-  guest driver, and a machine started without a shelf answers ILLEGAL
-  REQUEST, which the program reports as "this drive has no shelf". The
-  launcher publishes the shelf to a flat file beside the machine's monitor
-  socket at spawn and on every edit, so a disc added while the guest runs
-  appears in its next listing.
-- Snapshots UI, bundle import/export.
-- UI toolkit: **Qt 6 / QML** (`launcher-qt/`) is what the product ships
-  since ADR-015, 2026-09-07 — every package installs it as `2ksbox` —
-  and since 2026-09-13 it is the only front end (ADR-017). The first one
-  was `launcher/` on **egui/eframe** (decided at M6, 2026-09-04 — see
-  `docs/tracks/m6-launcher.md`; MIT/Apache-2.0 fit the project's
-  GPL-2.0-only + open-source stance better than Slint's non-GPLv3 tiers),
-  kept as a second view from the Qt port until its deletion. Everything
-  the launcher decides lives in `launcher-core/` — "One front end over a
-  core" below.
+The launcher is optional by design: `launcherx --play <bundle>` or a
+hand-typed player line runs a machine with nothing else.
 
-The launcher is optional by design: hand-written bundles + the player binary
-is a fully supported path.
+### The library
 
-**Every Play is logged with the line it ran** (2026-09-07): the player
-binary, its shader arguments, `--` and every QEMU argument, quoted so it
-pastes back into a shell — into `launcher.log` as `[player] …`, into the
-head of `player.log`, and onto the terminal when the launcher has one.
-The command is derived from the bundle at spawn time (the family's
-devices, the disc shelf, the QMP socket, the shader profile), so a bundle
-alone does not say what ran; this does.
+- A grid of machines with the family and running state; Play spawns a
+  player. "Running" is the launcher's own child *or* a listening
+  monitor socket, so a player started by `--play` counts too. The
+  launcher only observes (`try_wait`); a spawned player outlives it.
+- **The launcher has no Stop or Kill**, on purpose: a killed guest
+  leaves a dirty FAT, so a run ends from the guest or the player window.
+- **Every Play is logged with the line it ran** — player, shader
+  arguments, `--` and every QEMU argument, quoted to paste back into a
+  shell — as `[player] …` in `launcher.log`, at the head of
+  `player.log`, and on the terminal when there is one. The line is
+  derived at spawn (family devices, shelf, QMP socket, shader profile),
+  so a bundle alone does not say what ran.
+- **The player is found** at `LAUNCHER_PLAYER_BIN`, else the
+  installed prefix's `2ksbox-player`, else beside the launcher, else the
+  root workspace's `target/<same profile>/player` — `launcher-qt` is
+  its own workspace and builds into `launcher-qt/target/`, where no
+  player sits (Play did nothing until this fallback). `--paths` prints
+  the player it will use; the grid's elided status label carries the
+  whole sentence as a tooltip.
+- **Clone…** (`launcher-core/src/clone_machine.rs`): a new machine under
+  a name the user picks — offered as "<name> (copy)", numbered when
+  taken — with the same settings and **its own copy of the disk**,
+  wherever that disk is ("Use an existing disk" can point anywhere, and
+  two machines on one image corrupt it the day both run). Internal
+  snapshots come along inside the qcow2. Files the bundle names inside
+  its folder are copied and renamed; what it names outside (shelf
+  discs, a shader, a SoundFont) stays shared. A relative backing file is
+  made absolute in the copy (`qemu-img rebase -u`). A running machine
+  is refused. The copy runs on a thread with a progress bar and writes
+  `machine.toml` last, so a clone in progress (or failed, whose folder
+  is removed) never shows in the grid. It cannot be cancelled once
+  copying: `std::fs::copy` keeps the kernel's fast paths (reflinks,
+  `copy_file_range`) and cannot stop mid-file. `launcherx --clone
+  <machine.toml> [name]` and `lc_machines_clone` are the same model.
+- **Not built:** last-frame thumbnails in the grid, and bundle
+  import/export.
 
-### How the launcher reaches a running machine (decided at M6, 2026-09-05)
+### The bundle
 
-Snapshots and disc swaps on a machine that is already up need the guest's
-monitor, and the player's own one lives on a socketpair inside its process
-(doc 11). Rather than give either binary an IPC surface, **the launcher adds
-`-qmp unix:<runtime dir>/…,server,nowait` to the arguments it spawns the
-player with and speaks QMP to that socket itself** — QEMU allows several
-monitors, everything after `--` is passed through to QEMU unchanged, and this
-is the same shape `tools/qmpc.py` already uses to drive a guest. A bundle run
-straight through `player` by hand has no such socket, which is exactly the
-"optional launcher" path above. The socket is derived from the bundle
-directory and lives in an owner-only directory (a QMP monitor is complete
-control of the machine). **The same Unix-domain socket on Windows** since
-2026-09-16: QEMU's Windows build binds `unix:` addresses, so only the
-launcher's client end differs (Winsock AF_UNIX in `control.rs`). Not a
-loopback port, which any local process can reach, and not a named pipe,
-whose QEMU chardev waits for its one client inside machine start-up. A
-Windows host that cannot bind one (no AF_UNIX, a temp directory on a
-filesystem that cannot hold a socket file, wine) is found by a trial bind
-before the player starts and simply runs without live control; so does a
-socket path longer than `sun_path`.
+A machine is a directory with `machine.toml` (`launcher-core/src/
+bundle.rs`), usually its disk, and references to shelf discs. Rules
+that keep it portable and readable:
 
-A machine that *isn't* running has no monitor, so the launcher goes at the
-qcow2 with `qemu-img snapshot` instead — the same snapshots `savevm`/`loadvm`
-write. Both are refused in the other's mode: `qemu-img` writing to an image
-QEMU has open corrupts it.
+- **Most settings are optional fields.** An absent `accel`, `video`,
+  `sound`, `music` or `pad` follows the family; an absent field that
+  predates the family rules means what every bundle before it ran
+  (`seamless_mouse` on, `voodoo2` off, `network` off since 2026-09-16).
+  `[optimizations]` stores only the switches that differ from the
+  shipped setting, keyed by QEMU property name, so a new switch arrives
+  at its default in every existing bundle and an entry a newer launcher
+  wrote survives a load and save in an older one.
+- **`[optimizations]` must stay the last field of `Machine`**: it is the
+  one field that serialises as a TOML table, and a table swallows every
+  key after it.
+- **Editing never renames the bundle directory**, even when the name
+  changes, so outside references and the disk inside stay valid. New
+  directories are slugs of the name, deduplicated (`xp-test-box`,
+  `xp-test-box-2`).
+- A bundle is validated before it is written; a corrupt `machine.toml`
+  in the library is skipped with a `[library]` log line, never fatal.
+- **Commas in paths are doubled** in every QEMU option string the
+  bundle writes (disk, floppy, disc, shelf), since QEMU splits options
+  on commas: a disk in `~/Games/Doom, Quake and friends/` used to make
+  the whole line an unknown option. The `dirshelf` check hands QEMU
+  such a path. A live insert passes a JSON string and needs no doubling.
+- Legacy per-machine shelves (`discs = [...]`) are still read:
+  `DiscLibrary::import_legacy` folds them onto the shared shelf at
+  start-up (deduplicated by path, so it can run every time),
+  `boot_disc()` falls back to the first entry, and `save` drops the
+  field.
+- The acceleration is written host-neutrally (below), so a directory
+  copied between hosts keeps its meaning.
+
+### The settings form
+
+One window with a sidebar of sections and a page each, the way
+VirtualBox and UTM lay theirs out (2026-09-22, user request): General
+(family, name), System (memory, processor, acceleration, emulation
+optimizations, extra QEMU arguments), Display (adapter, Direct3D, the
+Voodoo 2, the shader profile), Audio (sound card, music, SoundFont,
+MT-32 ROMs), Input (gamepad, pointer), Network, Storage (disk, install
+media, floppy, boot order). The sections and their order are the
+model's (`wizard::Section`, `lc_wizard_label(LC_LABEL_SECTION, …)`);
+which field sits on which page is the front end's. The form opens on
+its first page for a new machine or a different one, and where it was
+left for the same one reopened.
+
+The same form creates and edits. It never shows a QEMU command line,
+and since 2026-09-16 (user decision) has no raw-TOML box: the fields are
+the way to edit a machine, and a hand edit is the file itself.
+
+**Every per-family field follows the family until someone picks it.**
+Memory, the accelerator, the processor, the NIC and the pointer do; so
+do the four fields whose *list* is per family — adapter, sound card,
+music port, pad. Each has a `*_chosen` flag in `wizard::Form`;
+`choose_family` moves every unchosen field to the new family's default,
+`reset_*` clears the flag (so "Default" follows the family again rather
+than pinning the value), and `open_edit` sets every flag because an
+existing machine's values are deliberate. A field with a consequence
+has no setter, only `choose_*`. The `capi` smoke asserts both
+directions and "Default" (the C ABI has no pad row yet, so the pad is
+not asserted there). The disk size follows the same rule
+(`bundle::default_disk_size_gb`: 10 GB Win98 and Other, 20 GB XP, 2 GB
+DOS; user decision 2026-09-16).
+
+The fields, and why each is what it is:
+
+- **Family.** Win98, XP, DOS and Other (doc 06). **Other is the one
+  family with a sentence under the picker** (`family_note()`): it is
+  defined by what it does not get — our adapter and the whole 3D
+  pass-through, all Windows components — and by hardware chosen for
+  guests nothing here tests (BeOS, a period Linux, OS/2). The note
+  names what it has (a VESA VGA, an RTL8139, an ES1370) and says there
+  is no 3D.
+- **Memory** is bounded per family (`bundle::ram_mb_range`: Win98
+  32–512 — more and it will not boot — XP 64–3072, DOS 4–256, Other
+  16–3072; BeOS R5's 1 GB ceiling is said, not enforced).
+- **Acceleration** is Automatic / hardware-required / Emulation,
+  `accel = "auto" | "kvm" | "tcg"` on every host. `kvm` means "hardware
+  acceleration, required" and is spelled per host at spawn (`whpx` on
+  Windows; the label reads "KVM (required)" / "WHPX (required)"), and
+  required really refuses to start without it. *Automatic* is QEMU's own
+  fallback list (`-accel kvm -accel tcg`, `whpx` then `tcg` on Windows),
+  not a probe of ours whose answer could be stale by spawn time. macOS
+  has no hardware accelerator for an x86 guest, so there Automatic is
+  TCG. `player::hw_accel_available()` backs only the hint beside the
+  picker: Linux opens `/dev/kvm` for *writing* (a bare `exists()` misses
+  a user outside the `kvm` group); Windows asks `WHvGetCapability`,
+  since the feature can be installed and still off or held by
+  Hyper-V/WSL2. **Defaults: Win98 and DOS emulated, XP and Other
+  Automatic.** KVM runs Win9x at host speed, and `-cpu pentium3` does not
+  protect it from its own fast-CPU bugs; emulation is also what docs 13
+  and 16's fast paths exist for, i.e. what Win98 is tuned and tested on.
+  DOS is throttled by default and a throttle needs TCG. A bundle with no
+  `accel` follows its family.
+- **The processor** is a combo of named machines (`cpu_speed`,
+  `bundle::CpuSpeed`): *Unthrottled* down through *Pentium 133*,
+  *486DX2-66*, *386DX-33*, *286-12*. "It needs a 486" is on the box,
+  and DOS-era software times itself against the CPU it finds, so this is
+  the field that decides whether a game is playable (doc 06 has the
+  measurements). Offered on every family (a Win98 DOS box runs DOS
+  games too); only DOS defaults to a throttled one (486DX2-66). A
+  throttle is `-icount`, which cannot run under KVM, so
+  `effective_accel()` returns TCG whenever one is chosen, and the form
+  says so.
+- **Emulation optimizations** — one checkbox per switch of our QEMU
+  patch queue (`bundle::Optimization::ALL`, `patches/qemu/README.md`):
+  `x87-fast`, `sse-fast`, `simd-fast`, `rep-fast`, `x87-pc64-as-53` on
+  `-cpu`; `smc-same-value`, `soft-imm`, `inline-lookup`,
+  `tb-invalidate-fast`, `tlb-floor`, `tls-hot-paths`, `jump-cache-keep`,
+  `eob-chain`, `tlb-retire` on `-accel tcg`. Every patch has a switch
+  since patch 29 (before it, "all off" left in patches 15, 16 and 19).
+  **They are exposed because the switch is the oracle**: each replaces
+  simulated arithmetic with the host's, so one run with one box clear
+  says whether a fast path made a guest compute the wrong number —
+  instead of bisecting a patch queue against a Windows install. All ship
+  on except `x87-pc64-as-53`, the one that changes what the guest
+  computes. The section is a disclosure headed "Emulation optimizations
+  — N of M on", so a machine with one off says so while closed; it
+  gives each switch's measured gain, and says they do nothing on a
+  machine headed for KVM. "All defaults", "Turn all off" and "Turn all
+  on" sit above them (`Optimizations::disable_all` / `enable_all`,
+  `Form::*_all_optimizations`); "all on" is not the defaults because of
+  `x87-pc64-as-53`, and the note says which of the three states the
+  machine is in. Only the difference is stored, keyed by the QEMU
+  property name. Patch 21's `pinned-regs` is not offered (user
+  decision 2026-09-16: it crashed guests for too small a gain); a bundle
+  still carrying it keeps the entry but never emits it, until "All
+  defaults" removes it (`Optimizations::RETIRED`). The accelerator is
+  spelled `-accel kvm -accel tcg,…` rather than `-machine accel=kvm:tcg`
+  because the accelerator properties need somewhere to live and QEMU
+  refuses the two spellings together; two `-accel` options are tried in
+  order, exactly as `kvm:tcg` was.
+- **Extra QEMU arguments** (user request, 2026-09-17): one line, the
+  escape hatch for what the form has no field for
+  (`-global d3dpt-vga.ddflags=32768`, a trace). Whitespace separates,
+  single or double quotes group and are removed, and there is no escape
+  character, so a Windows path's backslashes stay as typed
+  (`bundle::split_args` / `join_args`). Stored as the list
+  `extra_qemu_args`, appended **last** so a repeated option is the
+  user's. Nothing validates the arguments; an unclosed quote is an
+  orange note while typing and a refusal at save.
+- **The display adapter** is the one picker whose *list* changes with
+  the family (`bundle::video_choices`, doc 06): Windows chooses between
+  our adapter with our driver and the Cirrus with its in-box driver,
+  Other between the two standard adapters, DOS between `std` and
+  `cirrus` (which VESA BIOS a title finds). A new machine starts on the
+  list's first entry: ours on both Windows families (Win98 since
+  2026-09-16). An adapter a family does not offer is refused rather than
+  stored (`std` on XP would leave the guest no driver), and changing an
+  existing machine's adapter draws an orange line: the guest will find
+  new hardware on its next start.
+- **Direct3D** — which Direct3D 9 the executor runs on
+  (`bundle::D3d9`, ADR-007's second amendment). Shown only on a machine
+  with our adapter, which carries the executor (`d3d9_applies()`), and
+  it offers only what this host can run (`bundle::d3d9_choices`):
+  Automatic and DXVK everywhere, plus "This PC's own Direct3D 9" on
+  Windows. Automatic is resolved on Windows by the launcher's Vulkan
+  probe (`d3d9=system` when there is no Vulkan 1.3 GPU or only a
+  software one); elsewhere it writes nothing and the device's own
+  `exec=auto` takes Wine on the host when DXVK finds no device
+  (ADR-018). It is a picker, unlike the rest of the 3D story, because a
+  host can have both and the user sees whether a game draws right:
+  Automatic is for everyone, the others are an A/B. A bundle saying
+  `system` opened on another host shows Automatic and keeps its value;
+  a machine moved to another adapter keeps the setting too, since the
+  command line simply stops saying it.
+- **What this host gives the guest's Direct3D is stated, not chosen**
+  (ADR-013), in the note under that picker (`d3d9_note()`, since
+  2026-09-22; `graphics_note()` keeps the same sentence for a front end
+  with no picker, the C smoke among them). The host settles it; the only
+  failure worth preventing is finding out after the machine exists.
+  `launcher-core/src/host_gpu.rs` (`HostGpu::backend`, `d3d_headline`,
+  `d3d_advice`) answers in these ways:
+  - a Vulkan 1.3 GPU: DXVK;
+  - a **software** Vulkan driver: available, drawn orange — it works and
+    disappoints, so the note says to expect it very slow and that the
+    other stack may beat it; with a Wine present too it suggests
+    `-global d3dpt-vga.exec=wine` in the extra arguments, since which
+    of two working stacks is faster is the box's to answer;
+  - Windows below the floor: "runs on this PC's own Direct3D 9";
+  - Linux or macOS below the floor with a Wine (found by the remote
+    library's rule: `D3DPT_WINE`, the Mac apps, `PATH`) and the
+    executor's Windows build shipped (`lib/2ksbox/wine/
+    d3dpt-exec-host.exe`): "runs through Wine on this host" and slower
+    than a Vulkan GPU;
+  - neither: a plain note naming the Wine to install, and WineD3D in the
+    guest until M15's last step.
+
+  While our adapter is picked on a host with no executor the note adds
+  "Keep the 2ksbox adapter anyway. Only its Direct3D needs Vulkan.": the
+  driver offers Direct3D only after `D3D_STATUS` says the executor
+  loaded, and the Cirrus has no Direct3D either while losing the flip
+  chain's vertical blank, the 8 bpp modes, gamma and the cursor. The
+  adapter is never picked from the host: an image moves between hosts,
+  and changing its adapter is a driver install. DOS and Other get no
+  note — the guest half of the pass-through is Windows DLLs. `launcher
+  --host-check` is the full answer for a script or support question
+  (exit 0 through Wine); `--paths` prints the Wine and the pair as
+  `wine` and `wine-host`.
+- **The Voodoo 2** ("Emulated 3dfx Voodoo 2", `voodoo2`; doc 21) sits
+  under the adapter, as the card sat beside a 2D card: on, the machine
+  gets `-device voodoo2,addr=0x05` and nothing else changes. Off unless
+  picked on every family — a card the guest has no driver for is a New
+  Hardware wizard on every boot. **"Undo its dither"**
+  (`voodoo2_undither`, doc 21 §12) is on the same line because it is a
+  setting of that card only: disabled without it
+  (`voodoo2_undither_enabled()`), turned off with it, and written only
+  where there is a device to carry it. It costs ~1.4 ms of the main loop
+  per presented frame, hence a choice. Notes: `voodoo2_notes()`.
+- **Sound card and music** are per-family lists (`bundle::Sound`,
+  `bundle::Music`, doc 20 §6); the FM chip comes with the card that
+  carried one.
+- **Seamless mouse** (`seamless_mouse`): on for Win98 and XP, off for
+  DOS (its mouse drivers read the PS/2 controller) and Other (an
+  absolute pointer needs a guest USB stack nobody here vouches for). On
+  gives `-usb -device usb-tablet`: the host pointer *is* the guest
+  cursor and the window never grabs. Off leaves the chipset's PS/2
+  mouse, grabbed on a click — the relative movement mouselook needs; a
+  game whose view sticks instead of turning is this checkbox, not a bug.
+  The controller goes with the device. An absent field means on, what
+  every bundle before it ran.
+- **The gamepad** is `bundle::Pad` (M13).
+- **Networking** is one checkbox, **off for every new machine** (user
+  decision 2026-09-07): these are unpatched systems, and ticking it later
+  is a card *appearing*, which Windows handles far better than one
+  disappearing. An absent `network` field means off too (user decision
+  2026-09-16). On gives doc 06's per-family NIC on user-mode NAT
+  (outbound only); off emits `-nic none`, because QEMU otherwise adds a
+  NIC of its own, and XP's PCI devices carry explicit addresses so the
+  NIC's absence does not slide the sound card into its slot and make an
+  installed guest re-detect hardware.
+- **A floppy and a boot order** (`floppy`, `boot`): *Boot from* is
+  Automatic / Hard disk / Floppy / CD. Automatic emits no `-boot`,
+  which is what the "boot the installer from the CD because the new disk
+  is blank" case relies on.
+
+### The disc shelf
+
+- **One shelf for every machine** (`discs.toml` beside the machine and
+  profile libraries): a rip belongs to the person, not the machine that
+  installed it first. A machine keeps only which disc is in its drive
+  at boot.
+- **Sorted by label**, case-insensitively, with **digit runs compared as
+  numbers** (`disc 10` after `disc 2`). It is an invariant of
+  `DiscLibrary`, not a sort each view does, because the flat file the
+  in-guest `CDSHELF` lists is addressed by slot number: a view that
+  sorted for itself would offer one disc and load another. So a row
+  index is good only until the next edit, and a rename in progress must
+  not re-sort (Qt re-sorts on `editingFinished`). The `shelforder`
+  check.
+- **"Browse…" adds the disc** the moment the dialog closes (user
+  report, 2026-09-09): a picker whose only visible effect is a path in a
+  box reads as one that did nothing. The field stays for a *typed*
+  path. `PathField` emits `picked` beside `edited`; the `qt-shelf` check
+  hands the field the path a dialog would have (a real dialog cannot be
+  opened offscreen) and asks the window whether the shelf grew.
+- **A host folder is a disc too** ("Add folder…"): the drive is given
+  `isodir:<path>`, an ISO 9660 + Joliet volume generated over the tree
+  (doc 17 §8, M5g). It is how a patch, a save game or a folder of
+  installers reaches a guest without networking or mastering an image.
+  Read-only, a snapshot of the tree as the tray closed; up to an
+  80-minute CD it is a CD, above that the drive reports a DVD-ROM, and
+  past a DVD-9 (8.1 GiB) `isodir` refuses the tree, which the row's
+  error line shows with both sizes. A folder's label is its whole name
+  (`patch1.3` keeps its `.3`).
+- **`disc_library::qemu_medium(path)` is the one place a medium is named
+  to QEMU** — `isodir:<path>` for a directory, the path for a file —
+  for the boot drive, a live insert and the flat shelf file alike. It
+  decides from the path each time, so a deleted folder is just a missing
+  file.
+- **The CD-ROM drive is always attached**, empty tray and all, with the
+  fixed id `ide1-cd0` (`control::CDROM_ID`): a drive that existed only
+  when the bundle had a disc could never be loaded later.
+- **Insert and Eject force the tray.** QMP's `blockdev-change-medium`
+  and `eject` otherwise *ask* a guest that has locked the medium — XP
+  locks it for every open handle — and the click appears to do nothing,
+  then takes effect minutes later. The user's click on this machine's
+  own shelf is the whole authority `force` needs. Insert passes no
+  `format`, so a `.cue`/`.ccd` still probes to the `cdimage` driver.
+- **The one-click guest-tools disc** is the newest
+  `guest-tools/out/guest-tools-*.iso` in a checkout or
+  `share/2ksbox/guest-tools/` installed (`LAUNCHER_GUEST_TOOLS_ISO`
+  overrides), canonicalised because it is written into a bundle.
+- **The shelf from inside the guest** (`CDSHELF`, guest-tools ISO; the
+  tool is in `docs/testing.md`): a disc-2 prompt answered without
+  leaving the game. A window on Windows, a key-per-disc menu in DOS,
+  verbs for scripts. In the window Insert is grey while a disc is in the
+  drive (user decision 2026-09-19): the tray is emptied with Eject, as a
+  step of its own; the verbs swap in one step. The channel is a vendor
+  ATAPI command on the machine's own drive (opcode 0xD0, patch 52,
+  `cdshelf/cdshelf_proto.h`), the one thing DOS, Win98 and XP can all
+  send a raw command to (PIO, ASPI, SPTI) — no device, no driver, and a
+  machine with no shelf answers ILLEGAL REQUEST. The launcher publishes
+  the shelf to a flat file beside the monitor socket at spawn and on
+  every edit; `launcherx --discs publish <bundle dir>` does the same by
+  hand.
+
+### How the launcher reaches a running machine
+
+Snapshots and disc swaps on a running machine need its monitor, and the
+player's own is a socketpair inside its process (doc 11). Rather than
+give either binary an IPC surface, **the launcher adds `-qmp
+unix:<runtime dir>/…,server,nowait` to the player's arguments and speaks
+QMP to it itself** — QEMU allows several monitors, and everything after
+`--` reaches QEMU unchanged. The socket is derived from the bundle
+directory, in an owner-only directory (a monitor is complete control of
+the machine); a stale one left by a killed player is removed before
+spawn, since QEMU will not bind over it. **Windows uses the same
+Unix-domain socket**: QEMU's Windows build binds `unix:` addresses and
+the launcher's client is Winsock AF_UNIX (`control.rs`) — not a
+loopback port, which any local process can reach, nor a named pipe,
+whose chardev waits for its one client inside machine start-up. A host
+that cannot bind one (no AF_UNIX, a temp directory that cannot hold a
+socket, Wine) is found by a trial bind and runs without live control;
+so does a path longer than `sun_path`.
+
+### Snapshots
+
+- **Live** snapshots are QMP jobs (`snapshot-save` / `-load` /
+  `-delete`), polled through `query-jobs` so the window never blocks
+  while QEMU writes a guest's RAM; buttons grey while one runs. A
+  restore resumes the VM **only if it was running**. The snapshot node
+  is looked up at run time (QEMU names it like `#block136`) and must be
+  the one with `drv == "qcow2"`: a qcow2 shows as two nodes with the
+  same filename, and only the format node holds snapshots.
+- **Offline**, the launcher goes at the qcow2 with `qemu-img snapshot` —
+  the same snapshots `savevm` writes — and lists them with `qemu-img
+  info --output=json`, a stable interface whose table form cannot escape
+  a tag with a space. `qemu-img`'s stderr is the window's error text.
+- Each mode is refused in the other: `qemu-img` writing an image QEMU
+  has open corrupts it. Restore asks for confirmation (no undo, and it
+  sits beside Delete).
+
+### Shader profiles, presets and the preview
+
+- **A profile** is a name, a `.slangp` path and a **sparse** override
+  table: only parameters someone moved are stored, so a profile follows
+  the preset's own retuning and survives new parameters. A machine's
+  `shader_profile` wins over its raw `shader` path (the hand-edit escape
+  hatch); both become the player's `--shader` / `--shader-params` at
+  spawn, and the player skips an unknown parameter with a log line.
+- **Where presets come from** (`shader_source::presets_dir()`):
+  `LAUNCHER_SHADERS_DIR` if set (then nothing else), else the checkout's
+  `third_party/slang-shaders`, else a downloaded copy in the data
+  directory. "Has presets" means a `.slangp` within two levels, so an
+  empty or half-unpacked directory reads as none.
+- **The download** is upstream's `master` tarball (a package has no pin
+  to read, and overrides are by name, so a newer tree is additive) over
+  HTTPS with `ureq`/rustls (no system OpenSSL), streamed through
+  `flate2` + `tar` on its own thread, showing MB so far (codeload sends
+  no `Content-Length`). It unpacks into a `.part` sibling and renames
+  over the old collection only once the result has presets, so an
+  interrupted download never reads as installed; symlinks, special
+  entries and `..` paths are skipped. It is offered as a button in the
+  profile manager, and **once at start-up** (`launcher_core::firstrun`)
+  when no collection exists anywhere — a modal question over the grid,
+  because a button two windows deep is where a new user never looks.
+  Answering either way writes `first-run.txt` into the *profile*
+  directory (a download replaces the preset directory by a rename and
+  would take a marker there with it). A yes writes the starter profiles
+  (`shader_source::DEFAULT_PROFILES`: CRT Aperture, CRT Royale, Apple
+  II, each at the preset's own defaults, i.e. an empty override table)
+  once the collection lands; `shader_library::create` deduplicates
+  slugs, so re-running would make `crt-royale-2` and a name already held
+  is never written twice. The model holds the words at every step
+  (`Message { step, headline, detail }`); a front end may choose only
+  the buttons — Qt uses the platform's standard ones, a toolkit without
+  them takes `confirm_label()` / `cancel_label()` — which is why the
+  size and destination are in the question. Accepting calls
+  `editor::Presets::forget`, or the profile manager's cached "none"
+  would go on offering what just arrived. `launcherx --first-run` and
+  `--default-profiles` are the flow without a toolkit.
+- **"Browse…" starts** at the field's own directory, else a suggestion
+  (the collection, for a preset), else **the last directory any dialog
+  browsed** (`browse::remember`, one line in `<data dir>/
+  last-browse.txt`, `LAUNCHER_BROWSE_MEMORY` overrides — a Qt dialog
+  given an empty folder opens in the working directory), else the OS
+  default. `launcherx --browse-start` prints the answer.
+- **The preview is the player's picture**: the scale is the player's
+  `floor(min(area/image)).max(1.0)`, integer, letterboxed and cropped
+  like a window smaller than the mode. The `.max(1.0)` is load-bearing:
+  slang CRT presets assume they upscale, and some divide by zero when
+  asked to shrink (`crt-aperture`'s `floor(OutputSize.y /
+  SourceSize.y)`) and draw black. A source over 1600×1200 is resized on
+  the CPU first (`MAX_SOURCE_W/H`), as a sanity cap.
+- **The preview moves when the preset does** — interlacing, phosphor
+  decay, NTSC shimmer. `preview::Preview::frame_interval` says how often
+  to draw (`None` for a still preset) and the front end obeys (a QML
+  `Timer`). The frame number comes from a clock at `FRAME_RATE` (60/s),
+  not a count of renders, so the effect runs at the player's speed and
+  drops frames rather than running slow. `shader_chain::
+  preset_is_animated` looks for a *use* of `FrameCount` (the
+  `params.FrameCount` access: 1131 slang-shaders passes declare it, 271
+  read it) or a history/feedback texture, and errs towards animating.
+  The headless verbs pin one frame (`PREVIEW_FRAME`, default 0) so their
+  PNGs are reproducible; the `preview-anim` check.
 
 ## Settings taxonomy
 
-- **Per-app:** shader preset library, the disc shelf, default hotkeys,
-  telemetry = none.
-- **Per-machine:** everything in the bundle (hardware, RAM, media, preset
-  override, grab behavior, the emulator's own fast paths). The fast paths
-  are per machine and not per app on purpose: turning one off is a
-  diagnosis of *one guest* — the game that draws wrong — and it must not
-  slow down every other machine in the library while that lasts.
-- Bundles live in a plain, documented directory layout the user can back up.
-
-## Platform packaging
-
-- macOS: signed .app, JIT entitlement, notarized; Apple Silicon native.
-  **Two builds since ADR-019 (2026-09-22)**: the App Store build (macOS
-  26+, Apple Silicon, DXVK + KosmicKrisp, no Wine, the sandbox) and the
-  community build (the 14.0 floor, the M15 Wine executor, a Developer ID
-  DMG from the same packager's `--community`, Intel permitted but
-  untested). The store never gets a pre-26 version.
-  **Done 2026-09-06** — `scripts/package-macos.sh`, recipe and reasoning in
-  `docs/build-macos.md` ("The app"). The bundle *is* an install prefix:
-  `Contents` has this document's `lib`/`libexec`/`share` shape and the same
-  `share/2ksbox` marker, with `MacOS/` doing `bin/`'s job because it is the
-  only directory Launch Services will start a program from — the one macOS
-  difference, and it lives in `paths::bin_dir()`. Unlike every other target
-  the app also carries its whole non-system dylib closure, since the Mac
-  that runs it has no Homebrew, no XQuartz and no Vulkan; it is the first
-  package to ship the Glide wrapper and the Direct3D executor, which the
-  packaged player points QEMU at through `player/src/companions.rs`.
-- Windows: installer + portable zip; WHPX detection with visible
-  "acceleration: …" indicator and TCG fallback.
-- Linux: Flatpak primary (bundles our patched QEMU cleanly) + distro builds.
-
-### The names (ADR-011, 2026-09-05; amended 2026-09-06)
-
-The product is **2ksbox** (`2ksbox.com`), and the application ID is
-**`com._2ksbox.Launcher`** — the desktop entry's filename, the icon's
-name, the Wayland `app_id` matching the two, and the future Flatpak /
-AppStream ID. The leading digit is escaped because no segment of such a
-name may start with one (`flatpak build-init` rejects `com.2ksbox.…`).
-Since 2026-09-06 nothing is called `win98-xp-virt` any more: the
-repository is `davidrios/2ksbox`, the docs say 2ksbox, and the user's data
-directory is `~/.local/share/2ksbox` — moved once, on the first run that
-looks for it (`launcher-core/src/paths.rs::data_dir`).
-
-### The install layout (decided at M6 step 6, 2026-09-05)
-
-Everything the launcher reaches for used to be found in the checkout it
-was *built* from — the player next to it in `target/`, `qemu-img` in
-`build/qemu`, the firmware in `qemu/pc-bios`, the guest-tools ISO in
-`guest-tools/out`, the presets in `third_party/`. An installed copy has
-none of those, so there is now a second layout, and the launcher decides
-which one it is in by looking at its own executable
-(`launcher-core/src/paths.rs`): `<exe dir>/..` containing
-`share/2ksbox` means installed.
-
-```
-<prefix>/bin/2ksbox                            the launcher
-<prefix>/bin/2ksbox-player                     the player
-<prefix>/lib/2ksbox/libqemu-embed-i386.so
-<prefix>/libexec/2ksbox/qemu-img               ours, patched — kept off PATH
-<prefix>/share/2ksbox/pc-bios/                 QEMU firmware (the player's -L)
-<prefix>/share/2ksbox/guest-tools/             the guest-tools ISO
-<prefix>/share/2ksbox/shaders/                 presets, when a package ships them
-<prefix>/share/2ksbox/desktop/                 .desktop + metainfo, for install.sh
-<prefix>/share/icons/hicolor/<n>x<n>/apps/     the application icon, at every size
-<prefix>/share/doc/2ksbox/                     COPYING, notices, README
-```
-
-Three rules hold it together:
-
-- **Everything is relative to the executable**, so an extracted tarball
-  works where it was extracted and needs no install step at all. The
-  player's own `libqemu-embed` is found the same way, through an
-  `$ORIGIN/../lib/2ksbox` rpath (`@loader_path` on macOS) that is
-  deliberately ordered *before* the absolute build-directory one, so a
-  binary copied out of a developer's `target/` is genuinely self-contained
-  once packaged instead of quietly loading the library from their build.
-- **It is one layout or the other, never a mixture.** An installed
-  launcher answers only with its own prefix, even for a file the package
-  left out; falling back to a checkout would let a broken package pass on
-  the machine that built it and fail everywhere else. `LAUNCHER_*`
-  environment overrides still win over both.
-- `qemu-img` is ours (patch 50's `cdimage` driver is compiled into it),
-  so it goes in `libexec/` where it can neither shadow nor be shadowed by
-  the system's own.
-
-`scripts/package-linux.sh` stages exactly this, checks it by asking the
-staged launcher itself with a scrubbed environment (`--paths`, and a real
-machine created and translated to a command line), and rolls a tarball;
-`packaging/linux/install.sh`, shipped inside it, copies the tree into a
-prefix and writes the desktop entry with absolute paths. The launcher's
-window carries the same identity — `app_id` = `com._2ksbox.Launcher`,
-matching the desktop file's own name, plus the icon itself for X11 and
-Windows. The Qt build sets the same pair
-(`QGuiApplication::setDesktopFileName` and a `setWindowIcon` through the
-one line of C++ in `launcher-qt/src/window_icon.cpp`, since cxx-qt-lib
-binds `QImage` but not `QIcon`).
-
-**The icon is one master and one generator.** `packaging/icon/2ksbox.png`
-is the artwork — a transparent RGBA render of a beige CRT showing a green
-hill under a teal sky, which is what the whole stack is pretending to be
-— and `scripts/gen-icons.sh` derives every size from it (16…512 PNGs and
-a four-size `.ico`), all checked in. Nothing is ever scaled up: the
-master is padded with transparency to 512×512 and centred first (its
-canvas is 500×500 and the drawing inside it 431×436, so the margin it
-already has simply gets wider), and every size is a downscale of that —
-the 512 carries the artwork's own pixels, unresampled. They have to be checked in because
-none of the places that need one can draw it: `launcher` and
-`launcher-qt` embed a 256 with `include_bytes!` at compile time, the
-Flatpak build is offline, the Windows package is cross-built in a
-container without ImageMagick, and someone running `install.sh` out of a
-tarball has no build tools at all. `gen-icons.sh --check` says whether
-they still match the master. The Linux package installs the whole set
-into `share/icons/hicolor/<n>x<n>/apps/<app id>.png` — where install.sh's
-wholesale `share/` copy already puts it, so the same tree is right for a
-distro package unpacking into `/usr` and for a private prefix; the
-desktop entry additionally gets one absolute path written into `Icon=`,
-because a prefix outside `XDG_DATA_DIRS` cannot resolve a theme name.
-macOS builds its `.icns` from the same PNGs, and on Windows the `.ico`
-goes *inside* every .exe as a resource, which is the only thing Explorer
-looks at: `packaging/windows/win-icon.rs` is `include!`d by the build
-script of `launcher`, `launcher-qt` and `player`, writes a one-line `.rc`
-and runs the cross container's `x86_64-w64-mingw32-windres` over it, then
-hands the COFF object to the linker with `rustc-link-arg-bins`. A shared
-file included into three build scripts rather than a build-dependency,
-because a crate in `Cargo.lock` would have to be vendored into the
-Flatpak's offline sources for a Linux build that never uses it; a host
-with no windres gets a warning and an icon-less binary rather than a
-failed build. Verified by cross-building a binary in the container and
-finding all four images of the `.ico` inside its `.rsrc` section. The
-package ships the loose `.ico` as well, for the things that take a path:
-a pinned shortcut, an installer.
-
-The AppStream metadata (`com._2ksbox.Launcher.metainfo.xml`, installed
-into `share/metainfo`) goes with it: a software centre needs it, and
-Flathub requires it. Its content rating is a deliberately **empty** OARS
-block — that field rates 2ksbox itself, which has no chat, no purchasing
-and nothing user-to-user, and the Windows software someone runs in a
-guest is their own content, the same reading RetroArch and other
-emulators apply. `appstreamcli validate --no-net` runs on every package
-and fails it on errors only, since the one outstanding warning (no
-screenshots) needs somewhere to host them.
-
-Still open: the Flatpak (its ID and metadata are settled by ADR-011; what
-is left is the manifest, hosted screenshots and a `flatpak-builder`) and
-the Windows installer. Windows live control landed 2026-09-16 (the same
-Unix-domain monitor socket, above). The macOS .app landed 2026-09-06.
+- **Per app:** the shader profiles and presets, the disc shelf, default
+  hotkeys; no telemetry.
+- **Per machine:** everything in the bundle — hardware, RAM, media,
+  shader profile, pointer, the emulator's fast paths. The fast paths
+  are per machine on purpose: turning one off diagnoses *one guest*,
+  and must not slow every other machine while that lasts.
+- Bundles live in a plain, documented directory layout the user can
+  back up.
 
 ## One front end over a core
 
-The launcher is **one front end over one library**: `launcher-qt/` on
-Qt 6 / QML through cxx-qt, a view over `launcher-core/`, which also has
-two callers with no window — `launcher-capi/` (the same models as a C
-ABI, "A third front end" below) and `launcherx` (the toolkit-free debug
-verbs). It was **two** front ends from 2026-09-06 (ADR-014) until
-2026-09-13 (ADR-017): `launcher/` on egui/eframe, the first launcher, and
-the Qt build, which began as a costed spike — "how would this go in Qt",
-answered with something that runs rather than an argument — and became
-a peer, then **the one every package installs (ADR-015, 2026-09-07)**;
-what that costs each packager is "What shipping Qt costs" below. The
-egui build was then a second view that nothing installed, and was
-deleted. The core it forced into existence stays exactly where it is:
-the line below is drawn at behaviour, and that argument never depended
-on how many front ends there were.
+The launcher is **one front end over one library** (ADR-014):
+`launcher-qt/` on Qt 6 / QML through cxx-qt is a view over
+`launcher-core/`, which has two more callers with no window —
+`launcher-capi/` (the same models as a C ABI) and `launcherx` (every
+toolkit-free debug verb, `launcher_core::cli`, which `launcher-qt`
+answers identically). There were two front ends from 2026-09-06: the
+first, `launcher/` on egui/eframe (chosen at M6 over Slint, whose
+licence tiers fit a GPL project worse than egui's MIT/Apache-2.0), and
+the Qt build, which began as a spike, became **the one every package
+installs (ADR-015, 2026-09-07)** — real windows, the platform's file
+dialog, HiDPI, colour scheme, accessibility, input methods, and a main
+loop that idles instead of drawing 60 frames a second beside a running
+machine — and left egui a view nothing installed, **deleted on
+2026-09-13 (ADR-017)**. The core stays exactly where it is: the line is
+drawn at behaviour, and that never depended on how many front ends
+there were.
 
 ### What is in the core, and why all of it
 
-`launcher-core/` is **everything the launcher does that is not drawing**,
-and the line is drawn deliberately far into what usually counts as UI:
+`launcher-core/` is **everything the launcher does that is not
+drawing**, and the line sits deliberately far into what usually counts
+as UI:
 
-- the data — `bundle` (`machine.toml`), `library`, `disc_library`,
-  `shader_profile` / `shader_library` / `shader_source`, `paths`;
-- the machinery — `player` (spawning one, and `qemu-img`), `control`
-  (QMP to a running machine), `snapshots`, `preview` (the shader chain on
-  a still image);
-- and **the windows' own behaviour**: `machines`, `wizard`, `shelf`,
-  `snaps`, `editor`, `firstrun`, one model per window — down to the
-  sentences they show, which is why the first-run offer's question and
-  both its button labels are the model's and not a QML string — plus
-  `browse` for the one
-  file-dialog decision that is not a dialog and `cli` for every debug
-  verb that needs no toolkit. The sentences themselves are short and
-  plain (rewritten 2026-09-16, user request): one or two per note, in
-  the words a user would use, with no dates, doc numbers, patch names or
-  benchmark stories in a window — the *why* stays in the code comments
-  and the docs, the window says what the setting does and what to do.
+- the data: `bundle`, `library`, `disc_library`, `shader_profile` /
+  `shader_library` / `shader_source`, `paths`;
+- the machinery: `player` (spawning, `qemu-img`), `control` (QMP),
+  `snapshots`, `preview`, `clone_machine`, `host_gpu`;
+- **each window's own behaviour**: `machines`, `wizard`, `shelf`,
+  `snaps`, `editor`, `firstrun` — down to the sentences they show —
+  plus `browse` for the file-dialog decisions that are not a dialog, and
+  `cli`.
 
-That last group is the part worth arguing about, and the argument is
-settled by what happened without it. When the two builds each held their
-own copy of a window's state machine, they drifted, in ways nobody
-noticed until the models were merged:
+The sentences are short and plain (user request, 2026-09-16): one or
+two per note, in a user's words, with no dates, doc numbers, patch names
+or benchmark stories — the *why* stays in the code and the docs.
 
-- the Qt wizard had **no processor, floppy or boot-order field at all**,
-  so a DOS machine created there came out unthrottled — which is the one
-  setting that decides whether a DOS game is playable;
-- its networking checkbox **did not follow the family**, so it disagreed
-  with `Machine::reference` about a new DOS machine;
-- the sentence under that checkbox said `Windows won't see a card` where
-  egui's said `the guest won't see a card`, on machines that may not run
-  Windows at all;
-- and saving a *new* shader profile **dropped the parameter overrides**
-  on the egui side (`create(…).map(|_| ())`) and kept them on the Qt
-  side. One of those two was a bug for a year of nobody looking.
+The argument is what happened without it. When each build held its own
+copy of a window's state machine they drifted unnoticed: the Qt wizard
+had no processor, floppy or boot-order field, so a DOS machine created
+there came out unthrottled; its networking box did not follow the
+family; a note said "Windows won't see a card" on machines that may not
+run Windows; and saving a new shader profile dropped the overrides on
+one side only. None of that is expressible now: a front end prints
+`ram_note()`, `accel_note()`, `network_notes()`; fills a combo from
+`Family::ALL` / `CpuSpeed::ALL` and their `label()`s; and a field with a
+consequence has only `choose_*`.
 
-None of those is expressible now. A front end reads `ram_note()`,
-`accel_note()`, `network_notes()`, `seamless_mouse_notes()` and prints
-them; it fills a combo box
-from `Family::ALL`/`CpuSpeed::ALL` and their `label()`s rather than
-retyping the strings; and a field with a *consequence* has no setter at
-all, only `choose_*`, which is what applies the rule that memory, the
-accelerator, the processor and the NIC follow the family until someone
-picks one.
+**What the core does not protect against.** A retained-mode front end
+copies the model onto properties in a `publish()` some verb must call,
+and a property nobody published stays at its default — which looks like
+a real answer. Every Qt-only bug so far had a correct model, so a check
+that asks the model passes on the broken build; the `qt-*` checks ask
+the **window** what it shows. The rules that came out of them:
 
-**What the shared core does not protect against, and what to do about
-it:** an immediate-mode build (egui was one) reads the model *while
-drawing*, so a value is never stale; the retained-mode Qt one copies the
-model onto properties in a `publish()` that some verb has to call, so a property
-nobody publishes stays at its default — which looks like a real answer.
-It cost a user-visible bug on 2026-09-06: the Qt profile list always said
-"No shader presets on this machine" and offered to download them, on a
-machine that had them, because nothing published the preset-collection
-properties until an *editor* verb ran and the list opens without one. The
-tell was in the offer itself — "Download presets ()" into "" — since
-`PresetState::Missing` carries a size and a destination and a default
-`QString` does not. The rule that follows: **a QObject whose properties
-are read before any of its verbs are called must publish in
-`cxx_qt::Initialize`**, which is the constructor QML uses, and
-`ShaderEditor` now does.
-
-The same class again on 2026-09-07, and worth its own rule: **a control
-that clamps must be given its range before its value.** The Qt wizard
-opened a fresh Win98 machine on **32 MB** — the bottom of that family's
-range, where the form said 256 (user-reported). Nothing was wrong with
-the form: `publish()` set `ram_mb` before `ram_min`/`ram_max`, and a
-`SpinBox` bounds the value it is handed against the range it has *at that
-moment* and does not revisit it when the range widens — so 256 arrived
-into the model's initial `0..0`, became 0, and was pushed up to 32 when
-the minimum landed. The value binding never re-evaluated, because the
-model's number had not changed again. Three things follow, all of them
-now true: ranges are published before the values inside them, `Wizard`
-publishes in `cxx_qt::Initialize` so a window built at start-up binds to
-a form that means something rather than to zeroes, and `open` is
-published **last**, since that is what shows the window. It is a bug the
-immediate-mode build could not have — egui's `DragValue` was handed a
-range and a value in the same call, every frame — and it is invisible to
-everything that asks the *model*, which is what every other check does:
-hence `qt-wizard` in `scripts/test.sh`, which opens the real window
-headlessly on each family and compares what the memory field **shows**
-with what the form says. Anything else in QML that bounds a value —
-another `SpinBox`, a `Slider` fed from properties rather than from a
-delegate's own row — is exposed the same way.
-
-A third rule, from a macOS-only bug on 2026-09-07 (user-reported): **a
-window whose model flag drives it must not `close()` itself from its own
-`visibleChanged`.** Every flag-driven dialog (the wizard, the shader
-editor) has two ways out — a button clears the flag, and `Main.qml`
-turns the flag into `close()`; or the title bar's close button hides the
-window, and the window's `onVisibleChanged` clears the flag so the model
-agrees. The second path re-entered `close()`: Qt's `destroy()` flips
-`visible` and emits the signal *before* it unregisters the modal window
-and hides the platform window, and the title bar's route carries none
-of the re-entry guard `QWindow::close()` sets for its own. The inner
-close deleted the platform window from inside the first close event, and
-the outer one, finding it gone, skipped the platform `setVisible(false)`
-— which on Cocoa is `endModalSession`. The dialog vanished and the main
-window stayed locked behind it; Linux never showed it, since nothing
-there is keyed to that call. The cure is a guard where the flag becomes
-a `close()` (`closeIfShown`: `visible` is already false at that moment),
-and the probe is the `closebox` screen, which sends the wizard a close
-*event* the way the window system does (`src/close_event.cpp`, since
-cxx-qt-lib cannot send one) and counts the close events the window
-receives: the `qt-close` check in `scripts/test.sh` wants exactly one,
-and the unguarded build gives two. The modal-window list is no oracle
-for this on the offscreen platform — the outer hide still empties it —
-which is why the check counts events rather than asking it.
-
-A fourth, from the shader profile editor on 2026-09-07 (user-reported,
-two symptoms with one shape): **a component must never write the
-property its owner binds to, and a window must not reach for another
-window's model.** Saving a new profile left the list behind it unchanged,
-and the next "New profile…" came up with the last profile's preset still
-in the field.
-
-The list was the second half. `ShaderEditorWindow`'s Save handler called
-`root.profiles.refresh()` — but `profiles` is `ShaderProfilesWindow`'s
-property, not this window's, so the line threw a `TypeError` and took the
-`changed()` beside it with it. The profile was on disk and nothing was
-told. `Main.qml` is where both models are, and it already refreshes them
-on `changed()`; the editor window now emits it and stops there. The
-general form: a window's handler may only touch what that window
-declares, and the wiring between windows belongs in the file that owns
-them both.
-
-The field was the first half, and is the more general trap. `PathField`
-took `value` from its owner (`value: root.editor.presetPath`) and *also*
-assigned to it from inside (`onTextChanged: root.value = text`) — and a
-QML binding is destroyed by the first imperative write to its property.
-So the field unbound itself the moment it was first filled, and the empty
-`presetPath` that `new_profile()` publishes had nothing left to arrive
-through: the control kept the last path it had been handed while the
-model was empty. It is now a controlled component — `value` in, an
-`edited(path)` signal out, the owner writing the model, the model coming
-back through the binding — which is the shape every other model-backed
-control here already has. The wizard's three path fields had the same
-latent bug (a second "New machine" would have shown the previous
-machine's disk).
-
-The third symptom found while writing the probe belongs to the same
-window: the editor's `name`, `preset_path` and `preview_image` are edited
-*in the properties*, and `publish()` copies the model's own copy back out
-over them — so any verb that published while someone was typing wrote the
-older text back. Picking a preset (which reparses, and so publishes)
-emptied a name that had been typed first, and a preset download's 300 ms
-poll did it several times a second. Every verb that publishes now hands
-the model the current text first (`ShaderEditor::catch_up`); the two that
-must not are `new_profile` and `edit`, where the model is deliberately
-the newer one. **In a retained-mode front end, a value that lives in two
-places needs one rule about which way it flows at each moment**, and this
-window now has it written down.
-
-Only a probe that drives the *windows* sees any of the three: the model
-is right in all of them. The `saveprofile` screen does the whole flow —
-list open, New profile…, a name, a preset typed into the real field,
-Save, New profile… again — and prints the list's count either side and
-what the preset field is **showing**; the `qt-profile` check in
-`scripts/test.sh` wants `0 -> 1` and an empty field, and the unfixed
-build gives `0 -> 0` with the old preset still in it.
-
-**And the wizard had the same third symptom, unnoticed, until a user hit
-it on 2026-09-08:** a machine name typed into the Name field vanished the
-moment any combo box was touched. `Wizard::pull` — the wizard's
-`catch_up`, written the same day for the same reason — existed but was
-called by two verbs only, `fill_advanced` and `submit`. Every `choose_*`
-and `reset_*` went straight to the form and then published, so the form's
-own (still empty, or still the machine's old) name went back over what
-had been typed, and the `text:` binding put the empty string in the field
-in front of the user. **Typing does not break the binding**, which is
-what makes this visible rather than merely wrong: a QML binding is
-destroyed by a write from *JavaScript*, and a keystroke is a write from
-C++ — the binding stays live and re-evaluates on the model's very next
-notify. Six fields were exposed, not one: the name, both path fields, the
-disk size, the advanced TOML and the shader profile. Every form-changing
-verb now goes through one `Wizard::edit(|form| …)` — pull, change,
-publish, in that order and never any other — because the rule only holds
-if there is one place it can be forgotten.
-
-`qt-wizard` grew the probe for it: it types a name into the real field
-(with `insert`, which is what a key press does — a JS assignment would
-unbind the field and hide the bug), moves the family combo box, and
-prints what the field is **showing** beside what the model holds. The
-unfixed build says `shown [] model []`.
+1. **A QObject whose properties are read before any verb must publish
+   in `cxx_qt::Initialize`**, the constructor QML uses. The profile list
+   once offered "Download presets ()" into "" on a machine that had
+   them, because nothing had published yet.
+2. **A control that clamps is given its range before its value.** A
+   `SpinBox` bounds a value against the range it has *at that moment*
+   and never revisits it: `ram_mb` published before `ram_min`/`ram_max`
+   opened a new Win98 machine on 32 MB. Ranges are published first,
+   `Wizard` publishes in `Initialize`, and `open` is published last,
+   since that shows the window. Any `SpinBox` or `Slider` fed from
+   properties is exposed the same way (`qt-wizard` compares what the
+   memory field shows with the form).
+3. **A window whose model flag drives it must not `close()` itself from
+   its own `visibleChanged`.** Closing from the title bar re-entered
+   `close()`; on Cocoa the outer close then skipped `endModalSession`,
+   so the dialog vanished and the main window stayed locked (Linux never
+   showed it). The guard is `closeIfShown` where the flag becomes a
+   `close()`; the `closebox` probe sends a real close *event*
+   (`src/close_event.cpp`) and `qt-close` wants exactly one.
+4. **A component never writes the property its owner binds to, and a
+   window never reaches for another window's model.** `PathField` once
+   assigned its own `value`, which destroys the binding, so a second
+   "New profile…" showed the last preset; it is now controlled — `value`
+   in, `edited(path)` out, the owner writing the model. A handler that
+   called another window's `profiles.refresh()` threw a `TypeError` and
+   took the `changed()` beside it along; wiring between windows belongs
+   in `Main.qml`, which owns both.
+5. **A value that lives in two places needs one rule for which way it
+   flows.** Typing does not break a binding (a keystroke is a C++ write;
+   only a JavaScript write unbinds), so any verb that published while
+   someone typed wrote the model's older text back into the field — a
+   typed name vanished when a combo box moved. Every form-changing verb
+   goes through one `Wizard::edit(|form| …)` — pull, change, publish,
+   never another order — and the shader editor's verbs call
+   `ShaderEditor::catch_up` first (except `new_profile` and `edit`,
+   where the model is deliberately newer). The `saveprofile` and
+   `qt-wizard` probes type with `insert`, as a key press does.
 
 ### What the front end still owns
 
-Everything that is genuinely the toolkit's, and nothing else — what a
-third front end would owe too (the egui build's answers, while it
-existed, in brackets):
+What is genuinely the toolkit's, and what any other front end owes too:
 
 | | Qt (`launcher-qt/`) |
 |---|---|
-| the file dialog | `QtQuick.Dialogs`, declarative (egui had none and used `rfd`); the desktop's own through Qt's platform theme, which on Linux `main.rs` names as the XDG portal's, since a session Qt matches no theme to otherwise gets Qt's own picker (2026-09-23) |
-| when to redraw | a `Timer` per thing being watched, off when idle (egui: every frame, the model read inline) |
+| the file dialog | `QtQuick.Dialogs`; the desktop's own through Qt's platform theme, which on Linux `main.rs` names as the XDG portal's (a session Qt matches no theme to otherwise gets Qt's own picker) |
+| when to redraw | a `Timer` per thing watched, off when idle |
 | "the list changed" | `beginResetModel` / `dataChanged` |
-| a destructive restore | a dialog (egui: the row's button became "Discard current state?") |
-| the preview frame | CPU readback → temp BMP → `Image` (egui: a texture id, zero copy) |
-| secondary screens | real top-level windows (egui: floating panels inside the one window) |
-| a headless frame | `QT_QPA_PLATFORM=offscreen` + `grabToImage` (egui: ~150 lines of synthetic-input plumbing) |
+| a destructive restore | a confirmation dialog |
+| the preview frame | CPU readback → temp BMP → `Image` |
+| secondary screens | real top-level windows |
+| a headless frame | `QT_QPA_PLATFORM=offscreen` + `grabToImage` |
 
-Two of those are real differences in kind rather than in spelling. The
-**shader preview** is where the Qt build is worse than the egui one was:
-eframe handed egui a live `wgpu::Device` and the preview borrowed it, so
-the rendered texture reached the widget by id; Qt Quick renders through
+**The shader preview is the one place the Qt build is worse, and it is
+fixable, in C++.** eframe handed egui its live `wgpu::Device`, so the
+preview's texture reached the widget by id; Qt Quick renders through
 QRhi and cxx-qt exposes no handle to it, so `launcher-qt` opens a
-*second*, windowless wgpu device (~40 MB of VRAM and another driver
-context) and the frame reaches QML through a CPU readback written to a
-temp BMP — ~3 ms readback plus ~4 ms write per 1280x960 frame, on every
-slider drag. (BMP, not PNG: ~4 ms against ~90 ms.) Doing it properly
-means a `QQuickRhiItem` subclass in C++ importing the Vulkan image.
-**This is the one place the Qt build is worse, and it is fixable, in
-C++.** The other, in Qt's favour, is that a **`Timer` says its interval
-out loud and stops when there is nothing to watch**, where the egui
-build polled the snapshot job and reaped exited players at the top of
-every frame because it had a frame anyway.
+second, windowless wgpu device (~40 MB of VRAM) and reads each frame
+back into a temp BMP — ~3 ms readback plus ~4 ms write per 1280×960
+frame, on every slider drag (BMP because PNG took ~90 ms). The fix is a
+`QQuickRhiItem` subclass importing the Vulkan image.
 
-The **windows-not-panels** difference forced one honest simplification.
-The egui shader manager was one window with two modes (list / editor)
-that resized itself between them; the Qt version is **two windows**, because a
-real window's size cannot be reliably changed once the window manager has
-mapped it — bound or assigned, the request is the WM's to ignore, and
-here it was ignored on the height, leaving the editor's preview squashed
-into a strip. Two windows with fixed initial sizes is both the fix and
-the better shape.
+The shader manager is **two windows** (list and editor), not one that
+resizes between modes: a mapped window's size is the window manager's
+to ignore (trap 4 below).
 
 ### The numbers
 
-Measured 2026-09-06, after the split, while there were still two front
-ends; the figures in brackets are what they were when the Qt build was a
-spike with ten `#[path]`-included files. The egui row went with
-`launcher/` on 2026-09-13 (1,735 lines of views then, eframe, egui, `rfd`
-and `image` beyond the shared set, a 39.8 MB self-contained binary).
+Measured 2026-09-06, after the split:
 
 | | lines |
 |---|---|
-| `launcher-core/`, the core | **4,435** (1,943) |
-| `launcher-qt/src/` — Qt bridges only | **2,132** (2,924) |
-| `launcher-qt/qml/` | **1,772** (1,678) |
-| dependencies beyond the core's | `cxx-qt`, `cxx-qt-lib`, system Qt 6 |
-| release binary | 24.4 MB **plus ~38 MB of Qt runtime** |
+| `launcher-core/` | 4,435 |
+| `launcher-qt/src/` (bridges only) | 2,132 |
+| `launcher-qt/qml/` | 1,772 |
+| dependencies beyond the core | `cxx-qt`, `cxx-qt-lib`, system Qt 6 |
+| release binary | 24.4 MB plus ~38 MB of Qt runtime |
 
-The two front ends together lost 2,171 lines; the core gained 2,469 of
-new shared modules on top of the 1,966 that merely moved. It is
-**not** a net saving in lines and it was never going to be: what was
-duplicated is now written once, documented once, and given an API
-(`ram_note()`, `choose_family()`) where it used to be a field poked
-inline. The saving is that there is one place to change any of it.
-
-The Qt binary being *smaller* than the egui one was is not a size win:
-egui, wgpu and winit were statically linked into the egui build, while
-Qt is a shared library, so the Qt build then needs ~25 MB of `libQt6{Core,Gui,Qml,Network,DBus}`
-plus the ~13 MB QtQuick QML plugin tree present on the machine. That is
-the packaging question ADR-015 answered — "What shipping Qt costs" below.
-`launcher-qt` is not in the root workspace (`Cargo.toml` declares its
-own) precisely so that a plain `cargo build` never starts needing Qt 6
-development files on the Mac, in CI or in the Flatpak; the
-`launcher-core` path dependency crosses that boundary without dragging Qt
-back the other way. Build it from its own directory, or with
-`scripts/build.sh qt` — that is the whole build command, no CMake.
+The split was not a saving in lines (the core gained 2,469 new shared
+lines on top of 1,966 moved): the saving is one place to change
+anything. `launcher-qt` is outside the root workspace so a plain
+`cargo build` never needs Qt 6 development files (the Mac, CI, the
+Flatpak); build it with `scripts/build.sh qt`, no CMake.
 
 ### Proving the core is the one implementation
 
-Checks that run without a GUI click:
-
-- **`--preview-shader` is `launcher_core::preview` on a headless
-  device**, the same code the Qt window's preview runs; while the egui
-  build existed, the two binaries rendered byte-identical PNGs through
-  it, which is how the split was shown to be one implementation.
-- **The preview's animation is one decision, checked once.** The
-  `preview-anim` check in `scripts/test.sh` renders a still preset at two
-  frame numbers (one picture, and reported still) and an interlaced one
-  at two frame numbers (two pictures, and reported animated) through the
-  shared verb, so a front end cannot quietly stop redrawing and a
-  detector regression cannot go unnoticed.
-- **The same debug verbs, from the same code.** `launcher_core::cli`
-  answers `--paths`, `--discs`, `--snapshots`, `--wizard-new`,
-  `--wizard-edit`, `--boot-disc`, `--insert-disc`, `--print-args` and the
-  rest for `launcher-qt`, where the Qt build used to reimplement two of
-  them and lack the other twenty. The verbs that *were* a toolkit —
-  `--pick-file` / `--pick-folder` (`rfd`'s dialog) and the `--diag-*`
-  frame grabs — went with the egui build; the Qt build's headless frames
-  are its offscreen screens (`LAUNCHER_QT_SCREEN`, `LAUNCHER_QT_SHOT`).
-  Since 2026-09-07 there is a caller with no toolkit behind it at all —
-  `target/release/launcherx`, `launcher-core`'s own binary — and that is
-  the one `scripts/test.sh` and `tools/dos-guest-test.py` drive, so a
-  suite that runs before every commit builds no GUI toolkit to ask
-  `--print-args` a question.
-- **A machine created through the real window is the machine the model
-  says.** `LAUNCHER_QT_SCREEN=create LAUNCHER_QT_ARG=dos:<name>` drives
-  the QML wizard under `QT_QPA_PLATFORM=offscreen`, and its
-  `machine.toml` has `family`, `ram_mb = 64`, `accel = "tcg"`,
-  `network = false`, `seamless_mouse = false`, `boot` and
-  `cpu_speed = "486dx2-66"` — the same file the egui form's
-  `--diag-wizard-frame` produced, bar the name and the disk path, while
-  both existed. Before the split, four of those six were wrong on the Qt
-  side or absent.
-
-**The `#[path]` arrangement it replaced survived its own first test** —
-rebasing the spike onto `main` picked up 61 commits, including a
-`shader-chain` that had grown `parameter`/`has_parameter` and split
-`dump_texture`, and the Qt crate built with no edit. It was still the
-wrong shape: it proved the *file formats* were portable and left every
-window's state machine written twice, which is exactly where the
-divergences above came from.
+- `--preview-shader` is `launcher_core::preview` on a headless device,
+  the same code the Qt preview runs.
+- `launcherx`, `launcher-core`'s own binary, is what `scripts/test.sh`
+  and `tools/dos-guest-test.py` drive, so the suite builds no GUI
+  toolkit to ask `--print-args` a question.
+- `LAUNCHER_QT_SCREEN=create LAUNCHER_QT_ARG=dos:<name>` creates a
+  machine through the real QML form offscreen, and its `machine.toml`
+  is the model's (64 MB, `tcg`, no network, no tablet, `486dx2-66`).
+  The screens and probes are listed in `docs/tracks/m6-launcher.md`.
 
 ## A third front end: `launcher-core` as a library
 
-Because the core is a real library and not a pile of modules two binaries
-happen to include, a front end in another language is a view over it too.
-`launcher-capi/` is the C ABI that makes that concrete — a native macOS
-app in Swift is the case it was shaped for, since Swift imports a C
-header directly with no bridge crate, but anything that speaks C works.
+`launcher-capi/` is the C ABI that makes a front end in another
+language a view over the same models — shaped for a native macOS app
+in Swift, which imports a C header with no bridge crate.
 
-- `launcher-capi/include/launcher_core.h` is the header, hand-written and
-  kept beside the code.
-- Each window is an **opaque handle** (`lc_wizard_new` / `lc_wizard_free`
-  …) and rows are addressed by index, one field at a time — which is not
-  a compromise for C: it is exactly how the Qt build's
-  `QAbstractListModel::data` already reads them.
-- Strings out are owned by the caller (`lc_string_free`) and are never
-  `NULL` for "empty", so `NULL` means only "no such row".
-- Nothing blocks on a guest: the two long operations keep their polls
+- `launcher-capi/include/launcher_core.h` is hand-written beside the
+  code.
+- Each window is an **opaque handle** (`lc_wizard_new` /
+  `lc_wizard_free` …); rows are addressed by index, one field at a time,
+  exactly as the Qt build's `QAbstractListModel::data` reads them.
+- Strings out are owned by the caller (`lc_string_free`) and never
+  `NULL` for empty, so `NULL` means only "no such row".
+- Nothing blocks on a guest: the long operations poll
   (`lc_snapshots_poll` while `lc_snapshots_job_pending`,
-  `lc_editor_preset_state` while a download runs).
-- It adds **no behaviour**. Every function is a thin wrapper, so a third
-  front end gets the same wizard rules, the same "`qemu-img` only when
-  the machine is stopped", the same "keep only the parameters the user
-  actually overrode".
+  `lc_editor_preset_state` during a download).
+- It adds **no behaviour**; every function is a thin wrapper.
 
-`launcher-capi` is a workspace member but **not a default one** — it
-builds a `cdylib` and a `staticlib` of the whole launcher, which nobody
-needs unless they are building such a front end. `cargo build -p
-launcher-capi`.
+It is a workspace member but not a default one (a `cdylib` and a
+`staticlib` of the whole launcher); `scripts/build.sh` runs `cargo check
+--workspace` so it cannot rot. `launcher-capi/examples/smoke.c` is the
+smallest front end and a test (the `capi` check). What another front
+end owes is the table above; `lc_editor_read_frame` hands over RGB8 for
+the preview.
 
-`launcher-capi/examples/smoke.c` is a third front end in the smallest
-possible form, and it is a *test*: `scripts/test.sh host`'s `capi` check
-builds it and runs it against a scratch library, creating a DOS machine
-through the shared wizard and checking the answers (64 MB, a period
-processor, emulated, no network card and no USB tablet), then the disc
-shelf, the library and the profile editor. A rename or a changed default in a model fails
-there as well as in the Qt GUI.
-
-What another front end still owes is what the Qt one owns: a file
-dialog, when to redraw, how to confirm a destructive restore, and how to
-show a preview frame (`lc_editor_read_frame` hands over RGB8).
-
-### The recommendation, revisited
-
-The 2026-09-06 spike's finding was "nothing here justifies switching, and
-nothing here rules Qt out". Keeping both is the answer to a different
-question: **what does maintaining a second front end cost, once the
-launcher's logic is not the first one's?** About 3,900 lines of view code
-for the Qt build, no behaviour, and a build that is off the default path
-— and in exchange, four real divergences got found and closed, and the
-door to a native macOS front end is a C header rather than a rewrite.
-
-**2026-09-07 (ADR-015): the Qt build is the shipped one.** A package has
-to install one launcher — a product has one, its screenshots show one,
-and a bug report names one — and the two are equal on behaviour by
-construction, so the tie went to the front end that gets real windows,
-the platform's own file dialog, the desktop integrations nobody wants to
-write (decorations, HiDPI, colour scheme, accessibility, input methods),
-and a main loop that idles instead of drawing 60 frames a second beside a
-running machine. It was already the Windows package's launcher. The egui
-build stayed as it was and was installed by nothing: the second view
-that kept the core's boundary a fact, the home of the `--diag-*-frame`
-verbs, and the fallback for a host where Qt is a problem. The one thing
-the Qt build does worse — the preview's CPU readback — is now on the
-shipped path, which is the argument for fixing it with a `QQuickRhiItem`
-rather than for keeping the door open.
-
-**2026-09-13 (ADR-017): the egui build is deleted.** `launcher/` and its
-~70 exclusive crates are gone from the workspace, and with them the
-`--diag-*-frame` verbs and `--pick-file` / `--pick-folder`. The core
-stays what it was — every rule, every sentence, every window's state
-machine — and its boundary is still exercised by more than one caller:
-the Qt front end, `launcher-capi`'s `smoke.c` in the `capi` check, and
-`launcherx` in the rest of the suite.
+## Shipping Qt
 
 ### What shipping Qt costs
 
@@ -1094,77 +680,230 @@ Qt is a shared library, so every packager gained a job (ADR-015):
 
 | package | how Qt gets there |
 |---|---|
-| Linux tarball (`scripts/package-linux.sh`) | not carried: a runtime dependency on `qt6-base` + `qt6-declarative`, named by `packaging/linux/install.sh` when the loader cannot find them |
-| Flatpak (`packaging/flatpak/`) | the runtime **is** Qt: `org.kde.Platform` 6.10 in place of `org.freedesktop.Platform` 25.08 — the same freedesktop base, so nothing else about that build changed |
+| Linux tarball (`scripts/package-linux.sh`) | not carried: a dependency on `qt6-base` + `qt6-declarative`, named by `install.sh` when the loader cannot find them |
+| Flatpak (`packaging/flatpak/`) | the runtime **is** Qt: `org.kde.Platform` 6.10, the same freedesktop base |
 | macOS (`scripts/package-macos.sh`) | `macdeployqt` before our own dylib closure, with `-qmldir=launcher-qt/qml` |
-| Windows (`scripts/package-windows.sh`) | staged by hand — the DLLs through the existing import walk, plus `plugins/`, `qml/` and a `qt.conf`; Fedora's mingw has no cross `windeployqt` |
+| Windows (`scripts/package-windows.sh`) | staged by hand — DLLs through the import walk, plus `plugins/`, `qml/` and a `qt.conf`; there is no cross `windeployqt` |
 
-Two of those need saying out loud:
-
-- **Our QML is compiled into the binary as a Qt resource** (`build.rs`'s
-  `QmlModule`), which is why an installed launcher needs no `qml/`
-  directory of its own — and why `macdeployqt` has to be pointed at
-  `launcher-qt/qml` with `-qmldir`: its import scanner reads source, and
-  a bundle deployed without it starts and then dies on `module "QtQuick"
-  is not installed`.
+- **Our QML is compiled into the binary as a Qt resource**
+  (`build.rs`'s `QmlModule`), so an installed launcher needs no `qml/`
+  of its own — and `macdeployqt` must be pointed at `launcher-qt/qml`,
+  since its import scanner reads source; without it the app dies on
+  `module "QtQuick" is not installed`.
 - **A package can pass every other check and open nothing.** Qt resolves
-  its platform plugin and every QML module by name at run time, out of
-  directories no import table mentions, so `--paths` answering correctly
-  proves nothing about whether there will be a window. Each packager
-  therefore ends by opening a real one: `QT_QPA_PLATFORM=offscreen` with
-  `LAUNCHER_QT_SHOT=<png>` (the launcher's own headless grab), and a PNG
-  out of it. On macOS the same run is watched with
-  `DYLD_PRINT_LIBRARIES=1`, so the images the QML engine pulls in have to
-  be the app's own copies too.
+  its platform plugin and QML modules by name at run time, from
+  directories no import table names. Each packager therefore opens a
+  real window offscreen (`QT_QPA_PLATFORM=offscreen`,
+  `LAUNCHER_QT_SHOT=<png>`) and requires the PNG; on macOS under
+  `DYLD_PRINT_LIBRARIES=1`, so the QML engine's images must be the
+  app's own. The Flatpak's sandbox has its own `/tmp`, so its PNG goes
+  under `$HOME`.
 
 ### Five Qt traps, each of which cost real time
 
-1. **cxx-qt's generated property setter skips the notify when the value
-   already matches** — it compares first, to avoid binding loops. So
-   writing `rust_mut().open = true` and then "publishing" it with
-   `set_open(true)` emits *nothing*, and QML keeps showing the old
-   value. Every window in the port opened once and then stopped
-   reacting. Keeping the state in a core model *beside* the properties
-   is what closes this by construction: a `publish` reads the model and
-   writes every property through its setter, and the property fields are
-   never assigned anywhere else.
-2. **`grabToImage` only works on an item the QML engine created.** It
-   starts with `qmlEngine(this)`, and a window's own `contentItem`,
-   `Overlay.overlay` and a `Popup`'s default `contentItem` are all made
-   in C++ — all three refuse, silently. The screenshot path therefore
-   grabs an item each window declares itself. A *whole-window* headless
-   shot, frame and all, would need a small C++ shim calling
-   `QQuickWindow::grabWindow()`.
-3. **`property var` holding a QObject gives QML no metadata**, so
-   `editor.open` in a binding is read once and never re-evaluated. Use
-   the registered type (`property ShaderEditor editor`) — free, since
-   `#[qml_element]` already registers it.
+1. **cxx-qt's generated setter skips the notify when the value already
+   matches.** Writing `rust_mut().open = true` and then `set_open(true)`
+   emits nothing, and every window opened once and stopped reacting.
+   Keeping state in a core model *beside* the properties closes it: a
+   `publish` writes every property through its setter, and the fields
+   are never assigned anywhere else.
+2. **`grabToImage` only works on an item the QML engine created.** A
+   window's `contentItem`, `Overlay.overlay` and a `Popup`'s default
+   `contentItem` are made in C++ and refuse silently, so the screenshot
+   path grabs an item each window declares.
+3. **`property var` holding a QObject gives QML no metadata**, so a
+   binding on it is read once. Use the registered type (`property
+   ShaderEditor editor`).
 4. **A `Window`'s size cannot be changed after the window manager has
-   mapped it** — not by a binding (which the WM's own resize breaks for
-   good) and not by assignment (which it may simply ignore, as it did
-   here for the height but not the width). A window that wants two very
-   different sizes should be two windows.
+   mapped it** — a binding is broken by the WM's own resize, an
+   assignment may be ignored. A window that wants two sizes is two
+   windows.
 5. **A `MessageDialog` cannot be driven from outside: `accept()` and
-   `close()` both come back as `rejected()`** (measured 2026-09-09 on
-   the Quick fallback — `firstRunDialog.accept()` on a Yes/No dialog
-   emitted `rejected` and nothing else). So a dialog whose visibility
-   follows a model *answers its own question* the moment the model
-   moves: the first-run offer's Yes started the download, the model's
-   step changed, the code closed the dialog to get out of the way, and
-   the close arrived back as a "No" that put the whole offer away — with
-   the marker already written, so it never asked again. The rule that
-   falls out of it is a good one anyway: **one dialog per thing there is
-   to answer, opened when that step arrives and closed only by the
-   person pressing one of its buttons.** The offer is two — the question
-   (`FirstRunDialog.qml`) and the outcome
-   (`FirstRunResultDialog.qml`) — and the step in between, the download,
-   has no dialog at all because it has nothing to answer. A probe that
-   wants to press a button emits the dialog's own `accepted` /
-   `rejected` signal, which is what a press delivers; it must not call
-   the like-named *methods*.
+   `close()` both come back as `rejected()`.** A dialog whose visibility
+   followed the model answered its own question — the first-run Yes
+   started the download, the code closed the dialog, the close arrived
+   as "No" and put the offer away for good. Hence **one dialog per
+   thing to answer, closed only by a press of its buttons**: the offer
+   is `FirstRunDialog.qml` and `FirstRunResultDialog.qml`, and the
+   download between them runs in the launcher's header. A probe presses
+   a button by emitting `accepted` / `rejected`, never by calling the
+   like-named methods.
+
+### More Qt traps
+
+- **Bindings and bridges.** A binding to a `Q_INVOKABLE` never
+  re-evaluates: a combo box bound to a function keeps the list it was
+  built with, so per-family lists are properties, and the optimization
+  checkboxes bind one bitmask property (`optimizationsMask`; cxx-qt has
+  no `QList<bool>`). A bridge method without `#[qinvokable]` is not
+  callable from QML — a `TypeError` in the log and a click that does
+  nothing ("Turn all on / off" shipped that way; the `optall` probe
+  clicks them now). `#[auto_cxx_name]` turns `d3d9_labels` into
+  `d3D9Labels`, and QML cannot tell a binding names a missing property —
+  the Direct3D row shipped as a label over an empty combo; the D3D9
+  properties name their `cxx_name` and `qt-wizard` asks the combo's
+  count and text.
+- **Esc.** Each secondary window binds Esc to `close()` with a
+  `Shortcut`, which fired while that window's own file dialog was up (on
+  macOS the dialog is a sheet and AppKit offers the key to the window
+  under it). `PathField` publishes `browsing`, and the shelf, the form
+  and the shader editor disable Esc while any `PathField` or their
+  `FolderDialog` is open — a new dialog there joins that `enabled:`
+  line. And **at most one visible window may have an armed Esc**: a
+  transient window reports `isActive()` whenever its parent is, two
+  matches for one key are ambiguous and neither fires. A window opened
+  over another disarms the one under it; the `escfocus` probe and
+  `qt-esc` want exactly one match (`src/focus_window.cpp` names the
+  focus window, which `Window.active` cannot).
+- **Native styles.** Never replace a Quick Controls control's
+  `background` or `contentItem`: on macOS and Windows `appearance.cpp`
+  keeps the native style, which refuses and warns for every instance.
+  The lists are stock `ListView` + `ItemDelegate`. Quick Controls has
+  no disclosure widget: `launcher-qt/qml/Disclosure.qml` is ours (a
+  rotating triangle, no tick), and nothing whose state is "showing /
+  hidden" gets a checkbox — a tick before "Emulation optimizations"
+  said clearing it turns them off.
+- **Layouts.** A layout row that can be empty beside a list says
+  `Layout.fillHeight: false` — a nested layout whose children are all
+  hidden has no maximum and takes a share of the spare height (the
+  snapshots list stopped halfway, `qt-snapshots`). A grid column sized
+  by `Layout.preferredWidth` alone moves with its text: pin minimum =
+  preferred = maximum and let one column take the spare width. Name a
+  font family the platform has (Menlo / Consolas / `monospace`), or pay
+  a font-alias scan and a warning.
+- **File dialogs.** An extension filter is case-sensitive on Linux, so
+  `*.cue` hid `GAME.CUE`: `browse::extensions` gives each extension in
+  both cases (not `[cC]`, which Windows and macOS dialogs do not take)
+  and `PathField` hides the doubled list with `HideNameFilterDetails`; a
+  mixed-case `.Cue` is still missed. A dialog's URL is not `file://` +
+  a path: stripping the prefix left `[` `]` percent-encoded ("Game
+  [1996]" went on the shelf as `Game %5B1996%5D.iso`); every dialog
+  converts through `Browse.localPath` (`QUrl::toLocalFile`). `qt-shelf`
+  asks the real dialog for `*.CUE` and picks `Game [1996].iso`.
+
+## Platform packaging
+
+### The names
+
+The product is **2ksbox** (`2ksbox.com`, ADR-011) and the application ID
+**`com._2ksbox.Launcher`** — the desktop entry's filename, the icon's
+name, the Wayland `app_id`, the Flatpak and AppStream ID. The underscore
+is required: no segment may start with a digit (`flatpak build-init`
+rejects `com.2ksbox.…`). The user's data directory
+`~/.local/share/2ksbox` was moved once from `win98-xp-virt`
+(`launcher-core/src/paths.rs::data_dir`).
+
+### The install layout
+
+The launcher decides whether it is installed by looking at its own
+executable (`launcher-core/src/paths.rs`): `<exe dir>/..` containing
+`share/2ksbox` means installed; otherwise it finds everything in the
+checkout it was built from (`target/`, `build/qemu`, `qemu/pc-bios`,
+`guest-tools/out`, `third_party/`).
+
+```
+<prefix>/bin/2ksbox                            the launcher
+<prefix>/bin/2ksbox-player                     the player
+<prefix>/lib/2ksbox/libqemu-embed-i386.so
+<prefix>/lib/2ksbox/…                          Glide wrapper, D3D executor + DXVK, wine/
+<prefix>/libexec/2ksbox/qemu-img               ours, patched — kept off PATH
+<prefix>/share/2ksbox/pc-bios/                 QEMU firmware (the player's -L)
+<prefix>/share/2ksbox/guest-tools/             the guest-tools ISO
+<prefix>/share/2ksbox/shaders/                 presets, when a package ships them
+<prefix>/share/2ksbox/desktop/                 .desktop + metainfo, for install.sh
+<prefix>/share/icons/hicolor/<n>x<n>/apps/     the application icon, every size
+<prefix>/share/doc/2ksbox/                     COPYING, notices, README
+```
+
+Three rules hold it together:
+
+- **Everything is relative to the executable**, so an extracted tarball
+  works where it lands. The player finds `libqemu-embed` through an
+  `$ORIGIN/../lib/2ksbox` rpath (`@loader_path` on macOS) ordered
+  *before* the build-directory one, so a packaged binary never quietly
+  loads a developer's library. The packaged player names the dlopened
+  companions to QEMU itself (`player/src/companions.rs`,
+  `player --companions`).
+- **One layout or the other, never a mixture.** An installed launcher
+  answers only with its own prefix, even for a file the package left
+  out; a checkout fallback would let a broken package pass on the
+  machine that built it. `LAUNCHER_*` overrides win over both.
+- `qemu-img` is ours (patch 50's `cdimage` driver), so it lives in
+  `libexec/`, where it neither shadows nor is shadowed by the system's.
+
+On macOS the `.app`'s `Contents` is the prefix, with `MacOS/` doing
+`bin/`'s job (`paths::bin_dir()`); Windows is flat. The launcher's
+window carries the same identity: `app_id` = `com._2ksbox.Launcher`
+through `QGuiApplication::setDesktopFileName`, and the icon through
+`setWindowIcon` in `launcher-qt/src/window_icon.cpp` (cxx-qt-lib binds
+`QImage` but not `QIcon`).
+
+**The icon is one master and one generator.** `packaging/icon/
+2ksbox.png` (a beige CRT showing a green hill under a teal sky) is
+padded to 512×512 and every size is a downscale of that — 16–512 PNGs
+and a four-size `.ico`, by `scripts/gen-icons.sh`, all checked in
+because nothing that needs one can draw it: `launcher-qt` embeds the 256
+with `include_bytes!`, the Flatpak build is offline, the Windows package
+is cross-built without ImageMagick, and a tarball's `install.sh` has no
+tools. `gen-icons.sh --check` is the `icons` check. Linux installs the
+set under `share/icons/hicolor/` and writes one absolute path into the
+desktop entry's `Icon=` (a prefix outside `XDG_DATA_DIRS` cannot resolve
+a theme name). macOS builds its `.icns` from the same PNGs. On Windows
+the `.ico` goes *inside* every .exe as a resource, the only thing
+Explorer reads: `packaging/windows/win-icon.rs` is `include!`d by the
+build scripts of `launcher-qt` and `player` (a shared file rather than a
+build-dependency, which would have to be vendored into the Flatpak's
+offline sources), writes a one-line `.rc`, runs the container's
+`x86_64-w64-mingw32-windres` and links the object; a host without
+windres gets a warning and an icon-less binary. The loose `.ico` ships
+too, for shortcuts and installers.
+
+**AppStream metadata** (`com._2ksbox.Launcher.metainfo.xml`, into
+`share/metainfo`) carries a deliberately **empty** OARS rating: it rates
+2ksbox itself, which has no chat, purchasing or user-to-user content;
+the software someone runs in a guest is their own, the reading other
+emulators apply. `appstreamcli validate --no-net` runs on every package
+and fails on errors only; the one warning (no screenshots) needs
+somewhere to host them.
+
+### Per platform
+
+- **Linux.** `scripts/package-linux.sh` stages the layout, asks the
+  staged launcher and player with a scrubbed environment where
+  everything resolves (`--paths`, `--companions`, a machine created and
+  translated to a command line), and rolls a tarball; `install.sh`
+  inside it copies the tree into a prefix. **The Flatpak**
+  (`packaging/flatpak/`, `scripts/package-flatpak.sh`) is the primary
+  Linux target (user decision 2026-09-05: Flatpak first, then an
+  AppImage) — for bundling and distribution, not sandboxing: our QEMU
+  is a patch queue so no distro `qemu` can be linked, the tarball ships
+  none of the embed library's system libraries, and Flathub is where a
+  stranger finds a Linux app. The sandbox is mostly nominal (`/dev/kvm`,
+  the GPU, the network, and `--filesystem=host`, because bundles store
+  absolute paths to discs and disks wherever a person keeps them). It
+  builds from source (host binaries need a newer glibc than the
+  runtime's), offline, reusing the layout through `package-linux.sh
+  --prefix /app`, plus libslirp (absent from the runtime; `-netdev
+  user` needs it) and a build-only `distlib`.
+- **macOS.** A signed .app, JIT entitlement, notarized; Apple Silicon
+  native, carrying its whole non-system dylib closure (the Mac
+  that runs it has no Homebrew and no Vulkan). **Two builds (ADR-019)**:
+  the App Store build (macOS 26+, DXVK + KosmicKrisp, no Wine) and the
+  community build (Homebrew's floor — 15.0 since 2026-09-10,
+  `scripts/macos-floor.sh` — the M15 Wine executor, a Developer ID DMG
+  from `package-macos.sh --community`, Intel permitted but untested).
+  Recipe and reasoning: `docs/build-macos.md` ("The app", "The floor").
+- **Windows.** A portable zip, cross-built from Linux
+  (`scripts/package-windows.sh`, `docs/build-windows.md`). Hardware
+  acceleration is WHPX, stated beside the picker, with TCG as the
+  fallback.
+
+**Open:** Flathub (hosted screenshots on 2ksbox.com, and the manifest's
+sources as git rather than a local directory), the AppImage (asked for,
+not started), and a Windows installer.
 
 ## Out of scope for v1
 
-Shared folders/drag-drop, clipboard sync, USB passthrough, multi-monitor
-guests, recording/streaming helpers (recording pairs naturally with the
-shader pipeline — first post-v1 candidate).
+Shared folders and drag-and-drop, clipboard sync, USB passthrough,
+multi-monitor guests, recording/streaming helpers (recording pairs
+naturally with the shader pipeline — the first post-v1 candidate).

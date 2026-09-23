@@ -3,7 +3,7 @@
 #
 #   tools/win98-reboot-test.sh ~/vms/win98.qcow2 [qmp|guest|both]
 #
-# The bug this guards (patch 22, docs/tracks/win98-reboot.md): Win98 turns
+# The bug this guards (patch 22, patches/qemu/README.md): Win98 turns
 # its local APIC off through IA32_APIC_BASE, which in QEMU also clears
 # CPUID.01H:EDX.APIC; RESET puts the enable bit back but not the feature
 # bit, so the next POST is told the CPU has no local APIC, SeaBIOS skips

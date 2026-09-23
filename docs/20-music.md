@@ -1,30 +1,28 @@
 # 20. Music: FM, General MIDI and the MT-32 (M12)
 
-A guest here has had *sound* since M0 — SB16 or AC'97 digital audio into
-the player's ring (patch 20) — and no **music**. The two are not the same
-thing on a machine of this era and the difference is not a detail:
+A machine of this era has two kinds of audio. Sound effects are digitised
+samples through the sound card's DMA channel, which QEMU's `sb16` and
+AC'97 have always given a guest (into the player through the `embed`
+audiodev, patch 20). *Music* is a score played on a synthesizer: FM
+registers on the AdLib/SB16's OPL chip, MIDI bytes out of an MPU-401 to
+whatever module is behind it, or GF1 voices on a Gravis Ultrasound.
+Upstream QEMU has almost none of the second: its `sb16` carries no OPL
+(a real SB16 has a YMF262 at 0x388), its separate `adlib` is an OPL**2**
+on the old MAME core, and it has **no MPU-401 at all**. A game that asks
+a Sound Blaster for music, or offers "Roland MT-32" in its setup, plays
+to nobody.
 
-- A DOS game's sound effects are digitised samples through the Sound
-  Blaster's DMA channel. Its *music* is a score the game plays on a
-  synthesizer: FM registers on the AdLib/SB16's OPL chip, or MIDI
-  messages out of an MPU-401 port to whatever module is plugged into it,
-  or GF1 voices on a Gravis Ultrasound.
-- QEMU gives us the first and none of the second. `sb16.c` has no OPL at
-  all (a real SB16 carries a YMF262 at 0x388 — QEMU's card does not), the
-  separate `adlib` device is an OPL**2** on the 1990s MAME core, and
-  **there is no MPU-401 device in QEMU**. So a game that finds a Sound
-  Blaster and asks it for music gets silence, and a game offering
-  "Roland MT-32" in its setup has nothing to talk to.
-
-This track gives a machine the music hardware to go with its sound card,
-and the synthesizers behind it:
+This doc covers the music hardware and synthesizers we add, and the
+fixes to QEMU's SB16 that the same work turned up. What each family's
+audio hardware is: doc 06. Track state: `docs/tracks/m12-music.md`.
+Every test tool: `docs/testing.md`.
 
 | The guest sees | Played by | Needs |
 |---|---|---|
 | an OPL3 at 0x388 (and at the SB base) | Nuked-OPL3, the cycle-accurate YMF262 | nothing |
 | an MPU-401 UART at 0x330 | a SoundFont General MIDI synthesizer | a `.sf2` bank (one ships) |
 | the same MPU-401 | a Roland CM-32L (the MT-32 family) | the user's own Roland ROMs |
-| a Gravis Ultrasound at 0x240 | QEMU's own `gus`, which was always there | the guest's GUS drivers |
+| a Gravis Ultrasound at 0x240 | QEMU's own `gus` | the guest's GUS drivers |
 
 ## 1. Shape
 
@@ -35,169 +33,146 @@ guest MIDI bytes ─► hw/audio/mpu401.c ─┘                                
                                                                      sb16 / AC97 / gus ────┘
 ```
 
-**The engines live inside QEMU, not in the player.** That is the one
-structural decision in this doc and it follows the `libdisc` precedent
-(doc 17 §5.2, patch 50): a Rust staticlib with a C API, linked into
-`qemu-system-i386` and `libqemu-embed-i386` alike, driven by a device
-model. The alternative — MIDI bytes out through the embed API and a
-synthesizer in the player beside the audio output — was rejected for
-three reasons:
+**The engines live inside QEMU, not in the player.** `libsynth/` is a
+Rust staticlib with a C API, linked into `qemu-system-i386` and
+`libqemu-embed-i386` alike and driven by two device models — the
+`libdisc` precedent (doc 17 §5.2, patch 50). A synthesizer in the player,
+fed MIDI bytes through the embed API, was rejected for three reasons:
 
-1. **One clock.** Music and sound effects have to stay in step with each
-   other and with the guest. Rendered in a device, they go through
-   QEMU's own mixer against the same virtual clock as the SB16's DMA,
-   and the cushion the `embed` audiodev keeps (patch 20) covers all of
-   it at once. Rendered in the player, music would have a second clock
-   and a second buffer, and every stall would slide one against the
-   other.
-2. **It is testable headless.** `-audiodev wav` captures what the guest
-   plays, so a scripted run can *hear* a DOS program's music without a
-   host audio device — the same way `tools/cdaudio-guest-test.sh`
-   already checks CD-DA by looking at the wav. A player-side synthesizer
-   would be invisible to every test we have.
-3. **It costs the packages nothing.** All three engines are pure Rust
-   (`nuked-opl3`, `rustysynth`, `moont`) with no system library behind
-   them, so linking them adds no `.so` to the closure the macOS app and
-   the Flatpak have to carry — which a FluidSynth (glib) or a munt (C++,
-   CMake) would have.
+1. **One clock.** Rendered in a device, music goes through QEMU's mixer
+   on the same virtual clock as the SB16's DMA, and the `embed`
+   audiodev's cushion covers both. In the player it would have a second
+   clock and a second buffer, and every stall would slide one against
+   the other.
+2. **Testable headless.** `-audiodev wav` captures what the guest plays,
+   so a scripted run can hear a DOS program's music with no host audio
+   device, as `tools/cdaudio-guest-test.sh` already does for CD-DA.
+3. **No new libraries.** All three engines are pure Rust (`nuked-opl3`,
+   `rustysynth`, `moont`), so nothing joins the closure the macOS app and
+   the Flatpak carry — which FluidSynth (glib) or Munt (C++, CMake)
+   would add.
 
-A **host MIDI port** — sending the stream to a real MT-32, an SC-55 or
-the operating system's own synth — is deliberately *not* here. It is a
-host device, so it belongs on the player's side of the embed API next to
-the audio output, and it is the one thing on this list that a headless
-test cannot check. §8 has the plan.
+A **host MIDI port** (to a real MT-32, an SC-55 or the OS's own synth) is
+deliberately not here: it is a host device, so it belongs on the
+player's side of the embed API, and no headless test can check it (§8).
 
 ## 2. The engines, and why these
 
 | Engine | Crate | Licence | Why |
 |---|---|---|---|
-| OPL3 | `nuked-opl3` | LGPL-2.1+ | The Nuked core is a register-level model of the YMF262 taken from a die scan; it is what every serious DOS emulator moved to. Its `Opl3Device` layer carries the two timers and the status register, which is the half QEMU's `adlib` lacks and every AdLib *detection* routine reads. |
-| General MIDI | `rustysynth` | MIT | A SoundFont 2 synthesizer in pure Rust: renders at any rate, allocates nothing on the render path after the first block. |
-| MT-32 / CM-32L | `moont` | LGPL-2.1+ | A Rust port of Munt that states, and tests, sample accuracy against it. The alternative was Munt itself as a C++ submodule with a build stage per platform. |
+| OPL3 | `nuked-opl3` | LGPL-2.1+ | The Nuked core is a register-level model of the YMF262 from a die scan, what every serious DOS emulator moved to. Its `Opl3Device` layer carries the two timers and the status register — what QEMU's `adlib` lacks and every AdLib *detection* routine reads. |
+| General MIDI | `rustysynth` | MIT | A SoundFont 2 synthesizer in pure Rust; renders at any rate and allocates nothing on the render path after the first block. |
+| MT-32 / CM-32L | `moont` | LGPL-2.1+ | A Rust port of Munt that states, and tests, sample accuracy against it. The alternative was Munt as a C++ submodule with a build stage per platform. |
 
-All three are GPL-2.0 compatible, which the workspace licence
-(`GPL-2.0-only`, ADR-009) requires.
+All three are compatible with the workspace's `GPL-2.0-only` (ADR-009).
 
 ## 3. The C API
 
 `libsynth/libsynth.h` is the one header, shared by the crate
-(`libsynth/src/capi.rs`) and the two devices, exactly as `libdisc.h` is
-shared by the block driver and `atapi.c`. `LIBSYNTH_API_VERSION` is
-checked at realize time by both devices — a stale staticlib is otherwise
-a guest that plays nothing and says nothing.
+(`libsynth/src/capi.rs`) and both devices, as `libdisc.h` is by the
+block driver and `atapi.c`. Both devices check `LIBSYNTH_API_VERSION` at
+realize — a stale staticlib is otherwise a guest that plays nothing and
+says nothing.
 
-Two handle types, both **unlocked by design**: QEMU drives them with the
-BQL held from both sides (port writes on the vCPU thread, render from the
-audio timer in the main loop), and that is the serialization. Nothing in
-the API blocks or allocates on the render path, and every entry point
+The two handle types are **unlocked by design**: QEMU drives them with
+the BQL held from both sides (port writes on the vCPU thread, rendering
+from the audio timer in the main loop), and that is the serialization.
+Nothing blocks or allocates on the render path, and every entry point
 catches a panic — a synthesizer that falls over costs the guest its
 music, never QEMU its process.
 
-The MIDI half takes the **byte stream, one byte at a time, exactly as the
-guest wrote it**: running status, System Exclusive split across as many
-writes as the game likes, and real-time bytes dropped in the middle of
-either. `libsynth/src/midi.rs` is that state machine, and it is shared by
-both synthesizers — the MPU-401 device knows nothing about MIDI beyond
-"a byte arrived".
+The MIDI half takes **the byte stream, one byte at a time, as the guest
+wrote it**: running status, System Exclusive split across any number of
+writes, real-time bytes in the middle of either.
+`libsynth/src/midi.rs` is that state machine, shared by both
+synthesizers; the MPU-401 device knows nothing of MIDI beyond "a byte
+arrived".
 
 ## 4. The bank, and the ROMs
 
 **A General MIDI synthesizer is a bank of recorded instruments**, and
-which bank it is decides how the music sounds far more than the engine
-does. One ships: `soundfonts/TimGM6mb.sf2`, 5.7 MB, GPL-2, the bank
-MuseScore 1.x shipped and Debian packages. `soundfonts/README.md` has
-the provenance, the hash and why this one rather than the larger and
-better-sounding GeneralUser GS (whose author does not vouch for where
-every sample came from — a fine thing to point a user at, a poor thing
-to put inside a GPL package). Any `.sf2` can be picked instead, and the
-machine form says so.
+the bank decides the sound far more than the engine. One ships:
+`soundfonts/TimGM6mb.sf2` (5.7 MB, GPL-2, the bank MuseScore 1.x shipped
+and Debian packages). `soundfonts/README.md` has its provenance, hash,
+and why not the better-sounding GeneralUser GS (its author does not
+vouch for every sample's origin — fine to point a user at, not to put in
+a GPL package). Any `.sf2` can be picked instead; the machine form says
+so.
 
 **Where the bank comes from is not the bundle's business.** A machine
-that simply says `synth=gm` is the normal case, and the device finds the
-file the way QEMU finds every other companion of ours (the Glide
-wrapper's search, patch 33): the `soundfont=` property, then
-`LIBSYNTH_SF2` — which a packaged player sets to its own copy
-(`player/src/companions.rs`) — then `soundfonts/TimGM6mb.sf2` in a
-checkout. So the same machine file works in a checkout, in a package and
-on someone else's install, and a bundle only ever names a bank the user
-chose themselves.
+saying `synth=gm` is the normal case, and the device finds the file by
+the rule every companion of ours uses (the Glide wrapper's, patch 33):
+the `soundfont=` property, then `LIBSYNTH_SF2` — which a packaged player
+sets to its own copy (`player/src/companions.rs`) — then
+`soundfonts/TimGM6mb.sf2` in a checkout. The same machine file works in
+a checkout, a package and another install; a bundle names a bank only
+when the user chose one.
 
-**The MT-32 ROMs are the user's own.** An MT-32 is a sampler: the LA
-synthesis engine is emulated, but the *sounds* are two Roland ROM chips
-— a 64 KiB control ROM (the firmware, the timbre and parameter tables)
-and a 1 MiB PCM ROM (the waveforms) — and neither is redistributable.
-Nothing here carries them. The device is pointed at a *directory* and
-the two images are found **by size rather than by name**, because every
-dump in circulation names them differently (`CM32L_CONTROL.ROM`,
-`cm32l_ctrl.rom`, `ctrl_cm32l_1_02.rom`…). Without them the option is
-offered but refuses to start the machine, with a sentence saying what is
-missing — never a machine that boots and is silent.
+**The MT-32 ROMs are the user's own**, and nothing of Roland's is ever
+added here. An MT-32 is a sampler: the LA synthesis is emulated, but the
+sounds are a 64 KiB control ROM and a 1 MiB PCM ROM, neither
+redistributable. The device takes a *directory* (`romdir=`) and finds
+the two images **by size, not name**, because every dump names them
+differently (`CM32L_CONTROL.ROM`, `cm32l_ctrl.rom`,
+`ctrl_cm32l_1_02.rom`…). Without them the option refuses to start the
+machine with a sentence saying what is missing — never a machine that
+boots silent.
 
-**It is a CM-32L, and that decides which dump works.** `moont` emulates
-the CM-32L: the MT-32's superset, with the 33 extra PCM samples the
-later machines added, and what a CM-64 or an LAPC-I has inside it. A
-game written for an MT-32 plays on it — that is what the hardware was
-for — but the ROMs are not interchangeable: an *original* MT-32's PCM
-ROM is 512 KiB, half the size, and is refused with a sentence that says
-so rather than "nothing found". Someone who has only MT-32 dumps needs
-CM-32L ones, or the engine would have to become Munt itself (doc 20 §2
-took that trade deliberately).
+**It is a CM-32L, which decides which dump works.** `moont` emulates the
+CM-32L: the MT-32's superset with the 33 extra PCM samples (what a CM-64
+or LAPC-I has inside). An MT-32 game plays on it, but an *original*
+MT-32's PCM ROM is 512 KiB and is refused with a sentence saying so.
+Supporting those would mean Munt itself (the trade §2 declined).
+
+The engine is unverified here by decision (2026-09-09): nobody has
+CM-32L ROMs. Someone with a dump runs `synthx selftest --roms <dir>`.
 
 ## 5. The devices
 
 Both are ours, overlaid from `libsynth/qemu/` into `hw/audio/` by
-`scripts/prepare-qemu.sh`, and instantiated by patch 25 like every other
-device we add.
+`scripts/prepare-qemu.sh` and wired into meson/Kconfig by patch 60.
 
 ### `-device opl3`
 
-An ISA device with the YMF262's register pair at **0x388–0x38B** and, when
-`sbbase=` says so, the mirror a Sound Blaster puts at **2x0–2x3** — which
-is where an SB-aware game looks, and the reason this is not simply
-QEMU's `adlib` with a better core. Address and data are the chip's two
-register files (bank 0 is the OPL2-compatible one). Reads return the
-status register, which is where the two timers show up: the detection
-sequence every AdLib driver runs is *write timer 1, wait, read the flag
-back*, and a chip whose timers do not tick is a chip no game finds. The
-voice is opened at the chip's own 49716 Hz and QEMU's mixer does the one
-conversion there is.
+An ISA device with the YMF262's register pair at **0x388–0x38B** and,
+with `sbbase=`, the mirror a Sound Blaster has at **2x0–2x3** — where an
+SB-aware game looks, and why this is not simply QEMU's `adlib` with a
+better core. Address and data are the chip's two register banks (bank 0
+the OPL2-compatible one). Reads return the status register, where the
+two timers show: every AdLib driver's detection is *write timer 1, wait,
+read the flag back*, and a chip whose timers do not tick is one no game
+finds. The voice opens at the chip's own 49716 Hz (`freq=`) and QEMU's
+mixer does the one conversion.
 
-Since patch 61 (2026-09-11) the chip's voice is also **scaled by the
-SB16's mixer**, the way its output ran into the card's on a real
-board: the card's master × FM volume (0x30/0x31 × 0x34/0x35, or the SB
-Pro's 0x22 × 0x26) reaches it through the audio core's mixer-input
-registry, which the chip attaches to at realize. So Windows' Volume
-Control "MIDI" slider works on FM music, and a bare AdLib — no card,
-no mixer — plays at unity. The CD drive's audio is the other input,
-under the card's CD volume and output switch.
+**The SB16's mixer scales it** (patch 61), as the chip's output ran into
+the card's on a real board: master × FM volume (0x30/0x31 × 0x34/0x35,
+or the SB Pro's 0x22 × 0x26) reaches the voice through the audio core's
+mixer-input registry, which the chip attaches to at realize. Windows'
+Volume Control "MIDI" slider therefore works on FM music, and a bare
+AdLib (no card, no mixer) plays at unity. CD audio is the other input,
+under the card's CD volume and output switch. Upstream QEMU stored these
+registers and applied none.
 
 ### `-device mpu401`
 
-An ISA device at **0x330–0x331**: data port, and a status/command port
-whose two flags are "ready to take a byte" and "a byte is waiting".
-UART mode (command `0x3F`) is what everything of the era uses — DOS
-games, and Windows 9x's own MPU-401 driver — and the reset command
-(`0xFF`) answers `0xFE` the way the hardware does, which is how a game
-decides the port is there at all. There is no MIDI *in*: the only thing
-this port ever gives the guest to read is that ACK, so the status
-register says a byte is waiting only while one is outstanding. Its
-`synth=` property picks the engine, `soundfont=` / `romdir=` feeds it,
-and `gain=` trims it against the sound card in the same mixer.
+An ISA device at **0x330–0x331**: a data port and a status/command port
+whose two flags are "ready for a byte" and "a byte is waiting". UART mode
+(command `0x3F`) is what everything of the era uses, DOS games and
+Windows 9x's MPU-401 driver alike; reset (`0xFF`) answers `0xFE` as the
+hardware does, which is how a game decides the port exists. There is no
+MIDI *in*: the only byte the guest ever reads is that ACK. Properties:
+`synth=gm|mt32` picks the engine, `soundfont=` / `romdir=` feed it,
+`gain=` (percent, 100) trims it against the sound card, `irq=` (§5.1).
 
 ### 5.1 And no interrupt, by measurement
 
-The device has **no interrupt line unless `irq=<0-15>` asks for one**,
-and that default is the fix for a guest that rebooted in front of the
-user (2026-09-09).
-
-A real MPU-401's line is IRQ 2/9, which is what the device shipped with
-first. QEMU's PIIX4 puts the **ACPI SCI on IRQ 9** (`hw/acpi/piix4.c`),
-and every Windows 98 this launcher installs is an ACPI install (doc 06's
-BIOS-date stamp), so IRQ 9 is the operating system's own line and
-nothing on it has ever heard of this port. The ACK a driver's reset
-queues is then an interrupt no handler acknowledges — and because the
-line is held until someone reads the data port, exactly as the hardware
-holds it, the guest's handler is re-entered on every `IRET`:
+The device has **no interrupt line unless `irq=<0-15>` asks for one**.
+A real MPU-401 uses IRQ 2/9, but QEMU's PIIX4 puts the **ACPI SCI on IRQ
+9** (`hw/acpi/piix4.c`), and every Win98 the launcher installs is an
+ACPI install (doc 06). An ACK queued by a driver's reset was then an
+interrupt no handler acknowledged, and since the line stays high until
+the data port is read — as on the hardware — the guest's handler was
+re-entered on every `IRET` until the ring-0 stack ran out:
 
     234 × Servicing hardware INT=0x59      (slave PIC base 0x58 + 1 = IRQ 9)
     SP=0030:d444c248 … d444c040 … d444c000  (0x68 of ring-0 stack per entry)
@@ -205,139 +180,94 @@ holds it, the guest's handler is re-entered on every `IRET`:
     check_exception old: 0xe new 0xe         #DF
     check_exception old: 0x8 new 0xe         Triple fault
 
-which QEMU answers with a machine reset: to the user, Windows 98
-spontaneously reboots. The reproduction is Duke Nukem 3D's own
-`SETUP.EXE` in a DOS box — Choose Music Card → General Midi → 0x330 →
-**Test Music Card** — and the game never gets to read the ACK it asked
-for, because the storm starts between the `out` and the `in`.
+To the user: **Windows 98 spontaneously reboots**. The reproduction was
+Duke Nukem 3D's `SETUP.EXE` in a DOS box — Choose Music Card → General
+Midi → 0x330 → Test Music Card.
 
-Nothing is lost by leaving the line off. The interrupt is for MIDI *in*,
-which this device has none of, so the only thing that can raise it is an
-ACK, and every driver of the period reads that by polling the status
-register — which is why a real card's IRQ jumper was one most people
-left alone. The `music` check writes the reset the way a driver does and
-requires the slave PIC to have nothing pending afterwards (§7); a DOS
-machine could never have caught this, because DOS leaves IRQ 9 masked.
+Nothing is lost without the line. It exists for MIDI in, which this
+device lacks, and every driver of the period reads the ACK by polling
+the status register. The `music` check writes the reset as a driver does
+and requires the slave PIC to have nothing pending afterwards (a DOS
+machine could never catch this: DOS leaves IRQ 9 masked).
 
 ### 5.2 And the Sound Blaster's, which has to be acknowledgeable
 
-The same lesson from the other side of the card, and it was found the
-same way (2026-09-09): the machine's *sound* card is QEMU's `sb16`, and
-it asserted IRQ 5 in three places where nothing a driver reads could
-lower it again. Patch 25.
+QEMU's `sb16` asserted IRQ 5 where nothing a driver reads could lower it
+again (patch 25). A Sound Blaster holds its line until the DSP status
+port is read, and QEMU models that by clearing bit 0 or 1 of mixer
+register 0x82 on a read of 0x2xE / 0x2xF. An assertion with **no bit
+set** therefore holds the line for good, and on the edge-triggered ISA
+PIC every later completion is a level 1 into an already-high line: the
+card is deaf until the next DSP reset, silently. Two sites did it:
 
-A Sound Blaster holds its interrupt line until the DSP status port is
-read — that part is the hardware, and QEMU models it, clearing bit 0 or
-1 of mixer register 0x82 on a read of 0x2xE or 0x2xF. So an assertion
-made with **no bit set** holds the line for good, and the ISA PIC is
-edge-triggered: every block completion after it is a level 1 into an
-already-high line, which the i8259 does not see at all. The card is deaf
-from that moment until the next DSP reset, and neither the guest nor the
-log says anything.
+- **`reset()` pulsed the line while auto-init DMA ran** — an interrupt
+  no hardware makes. A guest resetting the DSP has finished with IRQ 5
+  masked, so the edge sat in the master PIC's IRR unowned, and Windows'
+  VPICD will not unmask a physical IRQ in that state.
+- **The end of a silence block** (DSP 0x80, timer and short-block paths)
+  raised without the status bit. A reset now also cancels a pending
+  silence block, which would otherwise fire behind the guest's back.
 
-What asserted it:
-
-- **`reset()` pulsed the line whenever auto-init DMA was running** — a
-  raise and an immediate lower, an interrupt no hardware makes. The
-  guest resetting the DSP is one that has *finished*, with IRQ 5 already
-  masked, so the edge lands in the master PIC's IRR unowned and stays
-  there; Windows' VPICD will not unmask a physical IRQ in that state,
-  and the next program to want the card never sees an interrupt at all.
-- **the end of a silence block** (DSP command 0x80, both the timer and
-  the short-block path) raised without setting the status bit, so the
-  ISR's read of the status port could not lower the line. A reset now
-  also cancels a silence block that has not expired, which would
-  otherwise fire afterwards and assert the line behind the guest's back.
-
-The reproduction is Duke Nukem 3D's `SETUP.EXE` again, on a Windows 98
-guest, one menu row up from §5.1's: **Test Sound FX Card** plays once and
-every press after it fails with
+The symptom, from Duke Nukem 3D's `SETUP.EXE` on Win98 (Test Sound FX
+Card): the test plays once, then every press says
 
     Playback failed, possibly due to an invalid or conflicting IRQ.
 
-`info pic` says `pic0 irr=20 imr=b8` — IRQ 5 latched and masked — while
-the card itself holds nothing across it: mixer 0x82 reads 0x00 and so
-does the status port. That is what says the pending interrupt was never
-the card's. With the pulse gone the same guest plays the test three
-times over, and IRQ 5 keeps counting through every one of them.
-
-The `sb16-irq` check (§7) asks the card and the PIC directly, with no
-guest: `info irq` counts only *rising* edges of IRQ 5, so a DSP reset
-must add none and each silence block must add exactly one.
+with `info pic` showing `pic0 irr=20 imr=b8` (IRQ 5 latched and masked)
+while mixer 0x82 and the status port read 0x00. The `sb16-irq` check
+asks the card and the PIC directly: `info irq` counts rising edges of
+IRQ 5, so a DSP reset must add none and each silence block exactly one.
 
 ### 5.3 And its name, which DirectX 9 cannot take in Portuguese
 
-Reported as "SB16 DirectSound crashes on Linux and works on the Mac"
-(2026-09-12): on the user's `claude98` machine `dxdiag` dies with an
-illegal operation, the next start of it asks whether to skip
-DirectSound, and a game that uses DirectSound does not run. **Not the
-host, not the card, and not QEMU**: the same fault, byte for byte, on
-the player's `embed` audiodev, on `none`, and on a bare
-`qemu-system-i386`. It is the guest's language.
+Symptom: on a Portuguese Win98 (`claude98`) `dxdiag` dies with an
+illegal operation, the next start asks whether to skip DirectSound, and
+DirectSound games do not run. First reported as "SB16 DirectSound
+crashes on Linux and works on the Mac"; it is **the guest's language**,
+not the host, the card or QEMU (the same fault on `embed`, on `none` and
+on a bare `qemu-system-i386`).
 
-The details box says `DXDIAG causou uma exceção c0000409H no módulo
-DSOUND.DLL em 0167:beb14fef`. `c0000409` is `STATUS_STACK_BUFFER_OVERRUN`
-— not a CPU exception but the `/GS` cookie check of DirectX 9.0c's
-DSOUND.DLL (4.09.0000.0904, based at `beaf0000`); `beb14fef` is the
-return address of the `call __security_check_cookie` at `beb14fea`. The
-function copies a device's `szPname` with a byte loop into a 32-byte
-buffer at `-0x24(%ebp)`, the cookie right behind it, once for
-`waveOutGetDevCapsA` and once for `waveInGetDevCapsA`. A caps name is a
-fixed 32 bytes and nothing makes a driver end it in a NUL.
-
-`TESTS\WAVECAPS.EXE` (guest-tools ISO) prints every device's name with
-where its NUL is:
+The fault is `exceção c0000409H no módulo DSOUND.DLL`:
+`STATUS_STACK_BUFFER_OVERRUN`, the `/GS` cookie check of DirectX 9.0c's
+DSOUND.DLL (4.09.0000.0904). The function copies a device's `szPname`
+with a byte loop into a 32-byte buffer with the cookie behind it, for
+`waveOutGetDevCapsA` and `waveInGetDevCapsA`. A caps name is a fixed 32
+bytes and nothing requires a NUL. `TESTS\WAVECAPS.EXE` shows it:
 
     waveOut 0: "Saída de som wave da SB16 [220]"  nul_at=31
     waveIn  0: "Entrada de som wave da SB16 [220"  nul_at=-1
 
-Windows 98's `SB16.VXD` builds each name as `"%s [%x]"`, its own string
-and the card's port, and the Portuguese wave-in string is 27 characters:
-33 with the port, cut to 32 with no terminator. The copy runs through the
-name into the caps' `dwFormats` and stops at its first zero byte, three
-bytes past the buffer — on the cookie. An English Windows says
-`SB16 Wave In [220]`, which is why the same machine works elsewhere; a
-real Portuguese Win98 with a real SB16 and DirectX 9 fails the same way.
+`SB16.VXD` builds each name as `"%s [%x]"`; the Portuguese wave-in
+string is 33 characters with the port, cut to 32 with no terminator, and
+the copy runs on into the caps' `dwFormats` and the cookie. English
+Windows says `SB16 Wave In [220]`; a real Portuguese Win98 with a real
+SB16 and DirectX 9 fails the same way.
 
-Nothing on the host can change the string, and editing Microsoft's
-driver is not ours to do (it works: the same 28 bytes of `SB16.VXD`
-rewritten as "Entrada de som da SB16" and dxdiag opens). **The VxD has
-a door for it**: at start it reads `WaveInDevName`, `WaveOutDevName`
-(and the MIDI, mixer, aux and DirectSound names) from
-`HKLM\SOFTWARE\Creative Tech\DeviceInfo\<enumerator>\<hardware ID>` and
-uses what it finds instead of its own strings, the port still appended.
-The key is named from the devnode: the device ID's first component, then
-`HardwareID` without its `*` and cut at the first `,`. The card QEMU's
-`sb16` is detected as is `ROOT\*PNPB003\0000`, so its key is
-`DeviceInfo\ROOT\PNPB003` — found in the VxD's code (its literals, a
-`CONFIGMG` device-ID call, `_RegOpenKey` / `_RegQueryValueEx` and a
-0x30-byte copy into each name) and confirmed by writing a marker name
-there: after a restart the driver reports `K1 wave in [220]`.
+**The VxD has a door for it**: at start it reads `WaveInDevName`,
+`WaveOutDevName` (and the MIDI, mixer, aux and DirectSound names) from
+`HKLM\SOFTWARE\Creative Tech\DeviceInfo\<enumerator>\<hardware ID>`
+(the device ID's first component, then `HardwareID` without its `*`, cut
+at the first `,`) and uses them in place of its own strings, port still
+appended. QEMU's `sb16` is detected as `ROOT\*PNPB003\0000`, so the key
+is `DeviceInfo\ROOT\PNPB003`.
 
-So the fix is the guest tools': **SETUP's "Sound Blaster 16 device
-names"** component (9x only, last in the list so no `/I` number moved)
-asks winmm for each Creative wave device, and only for a name that does
-not end within its 32 bytes writes a shorter one to the key of every
-devnode whose driver is `sb16.vxd` — the word "wave" dropped
-("Entrada de som da SB16", 28 with the port), else cut at a word to 25
-characters — and asks for the restart the VxD needs to read it. A
-machine whose names fit is told "nothing to do".
-
-Verified on a copy of `claude98` with the ISO's own `SETUP.EXE` and
-`WAVECAPS.EXE`: `SETUP /I 5` logged `wave in: "Entrada de som wave da
-SB16 [220" does not fit; …\DeviceInfo\Root\PNPB003 WaveInDevName =
-"Entrada de som da SB16"`; after the restart, in the player on its
-`embed` audiodev as the launcher runs it, `SETUP /I 5` said "every name
-fits; nothing to do", WAVECAPS read `"Entrada de som da SB16 [220]"
-nul_at=28`, and dxdiag opened and stayed up. `tools/setup-guest-test.sh`
-requires the component's line on Win98 and refuses its one failure.
+The fix is **SETUP's "Sound Blaster 16 device names"** component (`SETUP
+/I 5`, 9x only; `guest-tools/README.md`): for each Creative wave device
+whose name does not end within 32 bytes it writes a shorter one to the
+key of every devnode driven by `sb16.vxd` — "wave" dropped ("Entrada de
+som da SB16", 28 with the port), else cut at a word to 25 characters —
+and asks for the restart the VxD needs. A machine whose names fit is
+told "nothing to do". Verified on a copy of `claude98`: after the
+restart WAVECAPS read `"Entrada de som da SB16 [220]" nul_at=28` and
+dxdiag stayed up. `tools/setup-guest-test.sh` requires the component's
+line on Win98.
 
 ## 6. What a machine offers
 
 Two pickers in the machine form (doc 07), both `launcher-core`'s
-(ADR-014), both following the display-adapter picker's rule: a family
-offers what it has a real question about, and the **first entry is its
-default**.
+(ADR-014) and following the display-adapter picker's rule: a family
+offers what it has a real question about, and **the first entry is its
+default** (`bundle::sound_choices` / `music_choices`).
 
 **Sound card** — the digital audio device, `bundle::Sound`:
 
@@ -345,155 +275,126 @@ default**.
 |---|---|---|
 | Win98 | SB16 (with the OPL3), AC'97, Gravis Ultrasound, none | SB16 — Windows has the driver in the box, and a DOS box inside 98 finds the card it expects |
 | DOS | SB16, Gravis Ultrasound, AdLib only, none | SB16 |
-| XP | AC'97, SB16, none | AC'97 — unchanged from what every XP machine already has |
-| Other | ES1370, AC'97, none | ES1370 — unchanged (doc 06: the card BeOS and a period Linux both drive in the box) |
+| XP | AC'97, SB16, none | AC'97 |
+| Other | ES1370, AC'97, none | ES1370 — BeOS and a period Linux both drive it in the box (doc 06) |
 
-**Music** — what is behind the MPU-401 port, `bundle::Music`:
+**Music** — what is behind the MPU-401, `bundle::Music`:
 
 | Entry | What it is |
 |---|---|
 | General MIDI (SoundFont) | the shipped bank, or the user's own |
 | Roland MT-32 / CM-32L | the user's ROMs |
-| None | no MPU-401 device at all — not a port that swallows notes, which is worse than no port: a game would pick it and play to nobody |
+| None | no MPU-401 at all — not a port that swallows notes, which a game would pick and play to nobody |
 
-**Win98 and DOS start on General MIDI; XP and `Other` start on None.**
-The first two have no synthesizer of their own — 98's MIDI output is the
-FM chip and a DOS machine has nothing else at all — so the port is what
-makes their music sound like music. XP ships a wavetable synthesizer
-with the operating system, and `Other` is the family we add no drivers
-to, so a port neither would use by default is hardware for nothing; both
-offer it one pick away, which is how an old game gets a real MT-32 under
-XP.
+**Win98 and DOS start on General MIDI; XP and Other on None.** The first
+two have no synthesizer of their own — 98's MIDI output is the FM chip,
+and DOS has nothing else — so the port is what makes their music sound
+like music. XP ships a wavetable synthesizer and Other is the family we
+add no drivers to; both have the port one pick away (a real MT-32 for an
+old game under XP).
 
-**Tried and dropped, 2026-09-12: an Ensoniq AudioPCI *beside* the SB16
-on 98.** The idea was a second card for Windows (a PCI bus-master
-device, with the ISA card left for the DOS box and FM), on the belief
-that Windows 98 has the ES1370 driver in its box. It does not: the user
-booted a 98 machine with `-device ES1370` beside the SB16 and Windows
-found no driver, and the AudioPCI driver packages tried by hand all
-failed to make the card work. The checkbox, the bundle field and the
-check were removed the same day (commit f46b049 and its revert). Don't
-re-add it; if a second card for Windows is ever wanted again, it has to
-start from a driver known to bind under our QEMU, not from a list.
-
-The FM chip is **not** in that picker: it comes with the card that had
-one, exactly as the hardware did. Picking SB16 or AdLib puts an OPL3 on
-the machine; picking AC'97 or the ES1370 does not. A game therefore
-finds both an FM chip and a MIDI port on a period DOS machine and picks
-whichever its setup program offers, which is the point.
+**The FM chip is in neither picker**: it comes with the card that had
+one. SB16 or AdLib puts an OPL3 on the machine; AC'97 or the ES1370 does
+not. A period DOS machine thus has both an FM chip and a MIDI port, and
+a game picks whichever its setup offers.
 
 **Changing either is a hardware change** to an installed guest, and the
-form says so in the same orange as the display adapter: a Windows guest
-re-detects a sound card that moved or changed, and a DOS game's setup
-has to be run again.
+form says so in the display adapter's orange: Windows re-detects the
+card, and a DOS game's setup must be run again.
 
-The guest side is the user's, and doc 06 says what it needs: a DOS box
-wants `BLASTER=A220 I5 D1 H5 P330 T6` for the MPU-401 to be found, and
-an `ULTRASND` line matching what the machine gives the card (QEMU's `gus`
-defaults are port 0x240, IRQ 7, DMA 3) plus Gravis's own drivers; Windows 98
-finds the SB16 and the AC'97 itself but wants "MPU-401 Compatible" added
-by hand from Add New Hardware before its MIDI output goes anywhere.
+**Not offered: an Ensoniq AudioPCI beside the SB16 on 98** (tried and
+removed 2026-09-12). Windows 98 has no ES1370 driver in its box, and the
+AudioPCI packages tried by hand did not make the card work. A second
+card for Windows would have to start from a driver known to bind under
+our QEMU.
+
+The guest side is the user's (doc 06): a DOS box wants
+`BLASTER=A220 I5 D1 H5 P330 T6` for the MPU-401 to be found, and an
+`ULTRASND` line matching QEMU's `gus` (port 0x240, IRQ 7, DMA 3) plus
+Gravis's drivers. **Windows 98 finds the SB16 and the AC'97 itself but
+plays MIDI to the port only once "MPU-401 Compatible" is added by hand
+from Add New Hardware**; with it, Win98 MIDI plays through the port.
 
 ## 7. Tests
 
-Integration and end-to-end only, as the policy requires.
+Integration and end-to-end only; each is described in
+`docs/testing.md`.
 
 | Check | What it proves |
 |---|---|
-| `libsynth` (`synthx selftest`) | the three engines through the **C API the devices use**: the AdLib detection sequence (status 0x00 → 0xC0 → 0x00 across a timer), a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** (so a truncated or unreadable bank in a package fails here), a running-status note-off with a real-time byte wedged inside the note-on, and the CM-32L when ROMs are given |
-| `music` (`scripts/test.sh`) | the two pickers from a checkbox to a real QEMU: each family offers what doc 06 says, the first entry is what a new machine gets, an entry a family does not offer is refused rather than written, the FM chip follows the card, and our own `qemu-system-i386` accepts every combination. Then the devices *sounding* (the monitor writes the ports, the note has to be in the wav) — and the interrupt the MIDI port must **not** raise: the reset is written the way a driver writes it and the slave PIC must have nothing pending afterwards (§5.1) |
-| `sb16-irq` (`scripts/test.sh`) | the sound card's interrupt line, asked of the card and the PIC and nothing else (§5.2, patch 25): `info irq` counts rising edges of IRQ 5, so a DSP reset over a running auto-init DMA must add **none** — it clears the pending interrupt, it does not make one — and a silence block must add exactly one each time, which it can only do if the driver's read of the status port lowered the line after the one before. No guest, ~1 s |
-| `duke-guest` (`tools/duke-guest-test.py`) | **a real game of 1996**, which is what all of it is for: Duke Nukem 3D's own Apogee Sound System finds our MPU-401 where a period driver looks for it and plays the game's score on it — ~1000 bytes and 300-450 note-ons per 5 s across 5 to 8 MIDI channels, 70 s of audible recording. It runs from nothing: the DOS build is copied off the user's own disc (read-only), a FAT disk is made, the game's own SETUP.EXE is driven once for a config, and the disc goes back in the drive because the game checks for it. Local only, and never in `scripts/test.sh` — it needs a game |
-| `midi-guest` (`tools/midi-guest-test.py`) | the whole chain with a guest in it: a DOS program runs the AdLib detection sequence at the ports, plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART mode and plays A4 through it — and the **wav QEMU recorded** is what is checked, not the program's own opinion. Two boots, one per device: both are asked the same question and one file with two notes in it cannot answer it twice. ~11 s in the guest stage |
+| `libsynth` (`synthx selftest`) | the three engines through the C API the devices use: AdLib detection, a 440 Hz FM note, the same note through the **shipped bank**, a running-status note-off with a real-time byte inside the note-on; the CM-32L with `--roms` |
+| `music` | the pickers from a combo box to a real QEMU, the devices sounding into QEMU's wav, and the MPU-401 reset raising **no** interrupt (§5.1) |
+| `sb-mixer` | the FM note 12 dB down at each of three mixer volumes (patch 61) |
+| `sb16-irq` | a DSP reset adds no IRQ 5 edge; a silence block exactly one (§5.2, patch 25) |
+| `midi-guest` | a DOS guest detects the AdLib and plays on both devices; QEMU's wav is the evidence, one boot per device |
+| `tools/duke-guest-test.py` | a real 1996 game: Duke Nukem 3D's Apogee Sound System plays its score on our MPU-401 (~300–450 note-ons per 5 s on 5–8 channels). Local only: it needs the user's disc |
 
-## 7.1 What the devices say about themselves
+### 7.1 What the devices say about themselves
 
-Both print one line every 5 s while the guest is driving them, in the
-habit of `d3dpt-vga: N page flips in 5.0 s`, and nothing at all when it
-is not:
+Both print a line every 5 s while the guest drives them, and nothing
+when it does not:
 
     opl3: 2466 register writes, 516 key-ons in 5.0 s
     mpu401: 1245 bytes, 415 note-ons on 6 channels in 5.0 s
 
-This is the first question to ask of a game that is silent, and it
-separates the two cases that look identical from the outside: a game
-that never wrote to the port (its setup names another device, or found
-nothing where it looked) and one that is writing to a port that is not
-playing. Duke Nukem 3D's *Sound Blaster* music entry is the first case —
-it refuses to initialize and writes nothing — while its *AdLib* entry,
-which probes 0x388, fills the log.
+The first question to ask of a silent game: it separates a game that
+never wrote to the port (its setup names another device, or it found
+nothing) from one writing to a port that does not play. Duke Nukem 3D's
+*Sound Blaster* music entry refuses to initialise and writes nothing;
+its *AdLib* entry, which probes 0x388, fills the log.
 
-## 7.2 When the music plays and then goes wrong
+### 7.2 When the music plays and then goes wrong
 
-The line in §7.1 answers "is the guest writing to the port at all". It
-does not answer the next question, which is the one a user actually
-arrives with: *the music started correctly and then some instruments
-stopped*. That has two entirely different causes and they sound the
-same — either the guest stopped sending those notes, or it kept sending
-them and we stopped playing them — so both devices keep a capture that
-can be taken away and played again with no guest in it:
+"The music started correctly and then some instruments stopped" has two
+causes that sound the same: the guest stopped sending those notes, or we
+stopped playing them. Both devices keep a capture that can be replayed
+with no guest:
 
     LIBSYNTH_MIDI_LOG=/tmp/win98-midi.log   # the MIDI port's byte stream
     LIBSYNTH_OPL_LOG=/tmp/win98-fm.log      # the FM chip's register writes
 
-Both go in the **player's** own environment — QEMU is in the same
-process — and both can be on at once, which is the point when a guest
-offers a synthesizer on each and both misbehave. Every write with a
-microsecond stamp: a byte and an `R` where the port was reset for the
-MIDI port, `<file>:<address>:<value>` for the chip. The clock is the
-host's, deliberately — the engines render on the host's audio callback,
-so that is the timeline the music was heard on rather than the one the
-guest believes in. Then, with no machine running:
+Both go in the **player's** environment (QEMU is in its process) and can
+be on together. Every write carries a microsecond stamp on the host's
+clock — the engines render on the host's audio callback, so that is the
+timeline the music was heard on. A MIDI capture holds the bytes and an
+`R` for each port reset; an OPL one `<file>:<address>:<value>`. Then:
 
     target/release/synthx midilog /tmp/win98-midi.log     # what the guest sent
     target/release/synthx opllog  /tmp/win98-fm.log       # ... to the chip
     target/release/synthx play    /tmp/win98-midi.log x.wav   # what we make of it
 
-`play` and the two report verbs each read either capture — the file's
-first line says which device it came from.
+Each verb reads either capture; the file's first line names the device.
 
-`midilog` prints a row per channel and a column per second of note-ons,
-which is the whole diagnosis in one glance: a row that stops while the
-others keep going was stopped by the guest, and a row that keeps going
-while the sound does not is ours. Under it, the things that silence a
-channel from the outside — channel volume or expression driven to zero,
-all-notes-off, all-sound-off — with the second each happened at; notes
-left held at the end (a note-off that never came holds one of the
-engine's `gm::POLYPHONY` voices for ever); the **most notes down at
-once** anywhere in the capture, which is the measurement behind the
-commonest way for music to start right and then thin out — past the
-voice count every new note takes one from a note still sounding, and
-what survives is whatever was started last; and any byte the parser
-could attach to nothing, which is the stream and the parser disagreeing
-about where a message starts.
+- **`midilog`** prints a row per channel and a column per second of
+  note-ons: a row that stops while the others go on was stopped by the
+  guest; a row that goes on while the sound does not is ours. Below it:
+  what silenced a channel from outside (volume or expression to zero,
+  all-notes-off, all-sound-off) and when; notes left held at the end (a
+  missing note-off holds one of the engine's `gm::POLYPHONY` = 64 voices
+  for ever); the **most notes down at once**, the measurement behind the
+  commonest thinning — past the voice count each new note steals one
+  still sounding; and bytes the parser could attach to nothing.
+- **`opllog`** asks the same in the chip's units: no instruments or
+  note-offs, so a muted instrument is a row that stops keying on, and
+  running out of voices is channels left keyed on against the chip's 18.
+- **`play`** renders the capture through the same engine at its original
+  timing. If the music breaks there, it is ours and the capture is the
+  reproduction; if not, look at the guest.
 
-`opllog` answers the same question in the units the FM chip has. It has
-no instruments and no note-offs — a note stops when the guest clears the
-key bit of the register it started it with — so an instrument going mute
-is a row that stops keying on, and the guest running out of voices is
-channels left keyed on against the eighteen the chip has. Which is the
-whole reason both devices are captured the same way: **when a guest's
+Capturing both devices the same way is the point: **when a guest's two
 hardware synthesizers misbehave together and its software one does not,
-the two engines are not the suspect** — they share no synthesis code —
-and the grids are what let the two streams be held against each other.
-
-`play` renders the same capture through the same engine at the timing it
-was written with. If the music breaks there it is ours and the capture is
-the reproduction — no guest, no boot, a second a run. If it does not
-break there, the guest is the thing to look at.
+the engines are not the suspect** — they share no synthesis code.
 
 ## 8. Not here (and the order to add it)
 
 1. **A host MIDI port** — the stream out to real hardware or the host's
-   own synth (CoreMIDI / ALSA / WinMM through `midir`). Player-side, an
+   synth (CoreMIDI / ALSA / WinMM through `midir`). Player-side, an
    embed API bump for the byte sink, and a port list in the machine
-   form. This is the "real MIDI" case for someone who owns a module.
-2. **MIDI in.** Nothing of the era needs it and it is what the IRQ and
-   the status register's second flag exist for; the device is written so
-   that adding it is a queue and a `qemu_irq`.
+   form. The "real MIDI" case for someone who owns a module.
+2. **MIDI in.** Nothing of the era needs it; it is what the IRQ and the
+   status register's second flag exist for, and adding it is a queue
+   and a `qemu_irq`.
 3. **A wavetable header on the sound card** (the SB16's daughterboard
-   connector) rather than a separate MPU-401. Same engines, different
-   port — worth it only if a game turns up that insists.
+   connector) instead of a separate MPU-401 — only if a game insists.
 4. **The MT-32 through moont's GM mapping** (`GmDevice`), for General
-   MIDI music played on MT-32 timbres, which is what a few 1994 titles
-   assume.
+   MIDI music on MT-32 timbres, which a few 1994 titles assume.

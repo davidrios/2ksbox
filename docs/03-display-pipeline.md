@@ -1,176 +1,143 @@
-# 3. Display pipeline: pixel accuracy, CRT shaders, latency
+# 3. Display pipeline: pixel accuracy, CRT shaders, latency, input
 
-The core promise: what the guest's video card outputs is what gets shaded and
-shown — at native guest resolution, correct geometry, and with a CRT look good
-enough that a 1998 game screenshot is hard to tell from a photo of a Trinitron.
-We own this pipeline end to end (ADR-005): winit window, wgpu, librashader.
+What the guest's video card outputs is what gets shaded and shown — at
+native guest resolution, correct geometry, and with a CRT look good enough
+that a 1998 screenshot is hard to tell from a photo of the tube. We own
+this pipeline end to end (ADR-005): winit window, wgpu, librashader. This
+doc covers the stages, the pixel rules, mode analysis and geometry, latency
+and input. How 3D frames reach the player is doc 12; the reference CRT and
+its photo protocol are doc 09; the player's flags and env knobs are in
+`docs/development.md`; shader profiles are doc 07.
 
 ## Stages
 
 ```
-guest VGA/SVGA device
+guest VGA/SVGA device (or a 3D frame: doc 12, doc 14)
   → QEMU DisplaySurface (raw framebuffer + dirty rects, in-process)
   → [render thread] texture upload (dirty-rect aware)
-  → mode analysis (resolution, pixel aspect, scanline count)
-  → librashader filter chain (slang preset: CRT shader of choice)
-  → geometry stage (aspect correction, integer/sharp scaling, overscan)
+  → mode analysis (display aspect, scanline count)       player/src/mode.rs
+  → librashader filter chain (slang preset)              shader-chain/src/lib.rs
+  → geometry stage (aspect, integer scaling)
   → wgpu present (Metal / Vulkan / D3D12)
 ```
 
-The librashader chain follows RetroArch shader semantics (original-resolution
-input, final viewport params, per-pass scaling), so the existing slang
-presets — `crt-royale`, `crt-guest-advanced`, `crt-lottes` — work unmodified.
-We ship a curated pack with 3–4 defaults and accept any `.slangp`. The one
-calibrated against the reference CRT is a **shadow-mask** preset, not a
-Trinitron: the rig's monitor is a Samsung SyncMaster 753DFX, a 17" DynaFlat
-with a delta dot trio at ≈0.20 mm (doc 09), so it has no grille to imitate.
-`shaders/syncmaster-753dfx.slangp` is that preset, derived from the tube's
-geometry and awaiting doc 09's photo pass. A Trinitron preset is still worth
-having in the pack as a *style*, alongside "clean sharp" and "off" — it just
-is not what this rig's tube looked like.
+The chain follows RetroArch shader semantics (original-resolution input,
+final viewport params, per-pass scaling), so the libretro slang presets
+(`third_party/slang-shaders`: `crt-guest-advanced`, `crt-lottes`,
+`crt-royale`, …) work unmodified and any `.slangp` is accepted. Our own
+presets live in `shaders/`. The one calibrated against the reference CRT
+is a **shadow-mask** preset, `shaders/syncmaster-753dfx.slangp`: the rig's
+monitor is a Samsung SyncMaster 753DFX with a delta dot trio at ≈0.20 mm
+(doc 09), so it has no aperture grille to imitate. It is derived from the
+tube's geometry and waits on doc 09's photo pass; a Trinitron preset is
+still worth having as a *style*.
 
-Implementation status (2026-09-07): the chain runs in `player/src/shader.rs`
-— guest texture in, viewport-sized output texture out, then the blit pass;
-`PLAYER_DUMP_OUT` reads the shaded texture back for tests. Mode analysis
-(rules 2 and 3 below) landed in `player/src/mode.rs`, and the geometry stage
-is event-driven since 2026-09-07 ("The geometry stage's one moment" below);
-the rest of M2 — overscan crop, the curated preset pack, and the mode table
-the M7 device is fed from the player — is still open.
+Open (M2): overscan crop, the curated preset pack calibrated against the
+rig's photographs, and an answer for presets with no scanline-count
+parameter (below).
 
 ## Pixel accuracy rules (all testable)
 
 1. **Never scale before the shader.** The shader input is the exact guest
-   framebuffer (640×480, 800×600, 320×200…), never a pre-stretched surface.
-2. **Non-square pixels.** Mode 13h and friends: 320×200 is a 4:3 picture with
-   1:1.2 pixel aspect. The geometry stage applies pixel aspect from a mode
-   table, never width/height ratio. Same for 640×400, 720×400 text mode
-   (9-dot characters), 360×240, etc.
-3. **Double-scan awareness.** Real VGA double-scans low-res modes (320×200 is
-   scanned as 400 lines). Scanline shaders need the *scanline count*, not the
-   framebuffer height — set as shader parameters by mode analysis so presets
-   draw the right number of scanlines automatically.
-4. **Integer scaling by default** for "clean sharp"; CRT presets use free
-   scaling at exact 4:3 (5:4 for 1280×1024). Optional overscan crop, off by
-   default. (M0 player already does centered integer 4:3 via viewport.)
-5. **Mode-change fidelity.** Games and boot flows switch modes constantly;
-   mode analysis re-runs on every QEMU surface change; no garbage frames or
-   stretched leftovers during the transition.
-6. **Color fidelity.** Palettized modes are expanded by guest device
-   emulation; the surface is treated as sRGB end-to-end (XRGB8888 uploads as
-   BGRA8 with no swizzle); wide-gamut host displays get correct sRGB mapping.
+   framebuffer (640×480, 800×600, 320×200…), never a pre-stretched
+   surface. (QEMU's VGA breaks this upstream for mode 13h; see below.)
+2. **Non-square pixels.** 320×200 is a 4:3 picture with 1:1.2 pixels. The
+   geometry stage applies the mode's display aspect, never
+   width/height. Same for 640×400, 720×400 text (9-dot characters),
+   360×240 and friends.
+3. **Double-scan awareness.** Real VGA double-scans low-res modes (320×200
+   is scanned as 400 lines). Scanline shaders need the *scanline count*,
+   not the framebuffer height, and mode analysis states it through the
+   preset's parameters.
+4. **Integer scaling.** The picture's height is a whole multiple of its
+   scanlines; the width follows from the aspect. Optional overscan crop,
+   off by default.
+5. **Mode-change fidelity.** Mode analysis re-runs on every surface
+   change; no garbage frames or stretched leftovers during a transition.
+6. **Colour fidelity.** Palettized modes are expanded by the guest device;
+   the surface is sRGB end to end (XRGB8888 uploads as BGRA8, no swizzle).
 
-## Mode analysis (rules 2 and 3, landed 2026-09-05)
+## Mode analysis
 
-`player/src/mode.rs` turns a guest framebuffer size into what it meant on a
-monitor of the era: the display aspect the picture was meant to fill, the
-number of lines the CRT actually scanned, and whether the CRTC double-scanned
-to get there. The player re-runs it whenever the surface size changes
-(`Gpu::guest_surface_changed`) and prints one line per mode change:
+`player/src/mode.rs` turns a framebuffer size into what it meant on a
+monitor of the era: the display aspect, the number of lines the CRT
+scanned, and whether the CRTC double-scanned. It prints one line per mode
+change:
 
 ```
 [display] mode 320x200 VGA 320x200 (mode 13h) — 4:3 picture, pixel aspect 0.833, 400 scanlines (double-scanned)
 [shader] mode parameters vga_mode=1 inter=800
 ```
 
-The table is an exception list, not a lookup. An unlisted size is taken to
-have square pixels — right for every SVGA mode and for anything modern a guest
-might set, where forcing 4:3 would distort a widescreen one, and identical to
-4:3 for every 4:3 mode that has square pixels anyway. What the table must carry
-is the modes where the two disagree: the VGA's 200-, 240-, 350- and 400-line
-modes, whose pixels are not square. The rest of the entries are there for their
-names and to be swept, and are where a correction goes when one is measured
-against the reference CRT (doc 09).
+The table is an exception list, not a lookup. An unlisted size has square
+pixels — right for every SVGA mode and for a modern widescreen one, and
+identical to 4:3 for every square-pixel 4:3 mode. The table carries the
+VGA's 200-, 240-, 350- and 400-line modes, whose pixels are not square;
+the other entries are there for their names, for the sweep, and as the
+place a correction measured against the rig goes.
 
-Two things are rules rather than entries, because a list of exact sizes cannot
-state them. **Double-scanning** — the CRTC sets its bit below ~300 lines. And
-the **VGA raster** itself (`vga_raster`, 2026-09-07): a size at one of the four
-VGA widths (320, 360, 640, 720 — the 8- and 9-dot character clocks and the
-halved low-resolution ones) and at most 480 lines is a 4:3 picture whether or
-not its line count is one of the round ones. A guest can scan any number of
-lines onto that one raster, and QEMU's text path does not even report the
-number it scanned: `vga_get_text_resolution` gives back `rows × cheight` with
-the last partial row dropped, so a 400-line raster with a 12-line character
-cell — XP's text-mode setup — arrives as **720×396**. Before the rule that
-missed the table and was drawn as an unlisted 1.818:1 picture, i.e. the XP
-install stretched across the window, with the log line
-`720x396 unlisted mode — 1.818:1 picture` naming it. 720×396 is in the sweep.
+Two things are rules, not entries:
 
-**Geometry (rules 2 and 4).** The viewport is the largest rect of the *mode's*
-display aspect that fits, with the width following from the aspect and the
-height an integer multiple of the mode's **scanlines** — not of its rows. On a
-double-scanned mode the two differ, and it is the scanline pitch that has to
-come out whole: 320×200 in a 2400-line surface is 6 pixels per scanline
-quantised on scanlines and 5.5 quantised on rows. Every whole scale of the
-scanlines is a whole scale of the rows too, so this only refines the older
-rule. Square-pixel 4:3 modes are unchanged; 320×200 goes from the old 1.6:1
-stretch to 4:3, and so do 640×350, 640×400, 720×400 text and the mode X sizes.
+- **Double-scanning**: the CRTC sets its bit below ~300 lines.
+- **The VGA raster** (`vga_raster`): a size at one of the four VGA widths
+  (320, 360, 640, 720) and at most 480 lines is a 4:3 picture whatever its
+  line count. QEMU's text path reports `rows × cheight` with the last
+  partial row dropped, so a 400-line raster with a 12-line cell — XP's
+  text-mode setup — arrives as **720×396**. Before the rule it was drawn
+  as an unlisted 1.818:1 picture (the log said `720x396 unlisted mode —
+  1.818:1 picture`), the XP installer stretched across the window.
 
-The rect is then rounded to **whole pixels** — size and origin both. The
-aspect correction makes the width fractional (320×200 at 1x is 533.33 wide),
-and a fractional viewport samples the picture on a grid that moves with the
-window: every odd pixel of width shifts the centred origin by half a texel, so
-the image crawls while the window is dragged out, and the blit stretches the
-chain's own (integer) output texture by a fraction on top. Rounding costs at
-most half a pixel of aspect — far inside the 0.5 % the sweep checks — and the
-picture stands still.
+### Geometry
 
-Below the 1x picture the geometry stage has no whole scale left and falls back
-to a free fit, which is the one case where the guest's pixels are *shrunk*. The
-player therefore does not let the window go there: its minimum inner size is
-the 1x picture in physical pixels — the displayed size, so an aspect-corrected
-mode counts its corrected width (320×200 → 534×400), not its framebuffer's —
-re-applied on every mode change and clamped to the monitor, since a mode larger
-than the screen would otherwise ask for a window that cannot be placed.
+The viewport is the largest rect of the mode's display aspect that fits,
+with its height an integer multiple of the mode's **scanlines**, not its
+rows: 320×200 in a 2400-line surface is 6 pixels per scanline, and would
+be 5.5 per row. Every whole scale of the scanlines is a whole scale of the
+rows too.
 
-**The geometry stage's one moment (2026-09-07).** Everything above is decided
-once, when something that decides it changes, and only read while a frame is
-drawn. The deciders are two: the picture's own size and the host surface's.
-`Gpu::guest_surface_changed` answers the first — it re-runs mode analysis,
-re-applies the window's minimum size, hands the preset this mode's scanline
-count and re-fits the rect; `Gpu::resize` answers the second, where the mode
-stands and only the fit is redone. Both write one held rect (`Gpu::geom`), and
-`viewport()` is the read of it. The draw derives nothing: before this, `render`
-re-ran the analysis and the fit two or three times a frame — once to size the
-chain's output texture, once for the blit's viewport — and pushed shader
-parameters and asked the window to resize itself from inside the draw.
+The rect is rounded to **whole pixels**, size and origin. The aspect
+correction makes widths fractional (320×200 at 1x is 533.33 wide), and a
+fractional viewport samples on a grid that moves with the window: the
+picture crawls while the window is dragged. Rounding costs at most half a
+pixel of aspect, far inside the sweep's 0.5 %.
 
-The trigger is the QEMU surface change, taken where it can be acted on. QEMU
-announces the switch on its own thread (`on_switch`) up to one refresh tick
-before the first frame of the new mode exists; re-fitting *there* would draw
-the old mode's pixels into the new mode's box for that tick, which is exactly
-the stretched leftover rule 5 forbids. The surface's own texture is the trigger
-instead, and it is (re)created by precisely the three things that can change
-what is on screen: the guest framebuffer's upload (`ensure_texture`), a 3D slot
-taken or dropped (`use_slot` — a 3D frame and the VGA surface need not be the
-same size), and a slot re-imported at another size (`import_slot`). So a mode
-change reaches the screen as one step: the analysis, the fit, the chain's
-output size and the preset's parameters all move together, with the pixels they
-belong to.
+Below 1x there is no whole scale left and the fit would shrink the
+guest's pixels, so the window's minimum inner size is the 1x picture in
+physical pixels — the displayed size (320×200 → 534×400) — re-applied on
+every mode change and clamped to the monitor.
 
-**Screenshots (Ctrl+Alt+S).** The shot is of the *guest's* frame — the texture
-QEMU published, read back at the mode's own size, before the geometry stage
-scaled it and before the chain drew on it — because that is the picture that
-can be compared with anything else: a golden BMP, a native run, another
-emulator. The window's own content is the shaded one and is already what
-`PLAYER_DUMP_OUT` writes. An imported 3D slot is shot the same way when one is
-on show, so the zero-copy path is covered too. Files land in `PLAYER_SHOT_DIR`
-(default: the working directory) as `2ksbox-NNNN.png`, the next free number.
+### The geometry stage's one moment
 
-**Scanline count (rule 3).** A preset derives its scanline count from the input
-texture's height, or guesses from a resolution threshold. Both are wrong here,
-so mode analysis states the answer through the preset's own parameters:
-`vga_mode` ("VGA Single/Double Scan mode") switches crt-guest-advanced from its
-console-oriented interlace guess to the two VGA cases, and `inter` then picks
-between them — the preset takes the double-scan branch when `inter` is above
-the source height and the single-scan branch when it is at or below. Its
-default of 375 is a guess about which side of that line a source falls on;
-mode analysis knows, so it says so.
+Everything above is decided when a decider changes and only read while a
+frame is drawn. `Gpu::guest_surface_changed` answers a new picture size:
+it re-runs mode analysis, re-applies the minimum size, hands the preset
+its scanline count and re-fits the rect. `Gpu::resize` answers a new host
+surface and redoes only the fit. Both write one held rect (`Gpu::geom`);
+`viewport()` reads it and the draw derives nothing.
 
-Measured through the real chain, `crt-guest-advanced.slangp`, counting the
-scanlines in the frame the preset actually drew (`--mode-sweep`, and
-`PLAYER_MODE_PARAMS=0` for the control):
+The trigger is the surface's own texture, not QEMU's `on_switch`: QEMU
+announces a switch up to one refresh tick before the first frame of the
+new mode exists, and re-fitting there draws the old pixels in the new box
+for a tick — the stretched leftover rule 5 forbids. The texture is
+(re)created by exactly the three things that change what is on screen:
+the framebuffer's upload (`ensure_texture`), a 3D slot taken or dropped
+(`use_slot`), and a slot re-imported at another size (`import_slot`). So
+analysis, fit, the chain's output size and the preset's parameters move
+together with the pixels they belong to.
 
-| Mode | Tube | Drawn, mode analysis | Drawn, control |
+### Scanline count
+
+A preset derives its scanline count from the input height or guesses
+from a threshold; both are wrong here. Mode analysis sets
+crt-guest-advanced's own parameters: `vga_mode` ("VGA Single/Double Scan
+mode") switches it from its console interlace guess to the two VGA cases,
+and `inter` picks between them (double-scan when `inter` is above the
+source height). Its default of 375 is a guess; mode analysis knows.
+
+Measured through the real chain (`--mode-sweep`, scanlines counted in the
+drawn frame; `PLAYER_MODE_PARAMS=0` is the control):
+
+| Mode | Tube | Mode analysis | Control |
 |---|---|---|---|
 | 320×200 | 400 | **400** | 200 |
 | 320×240 | 480 | **480** | 240 |
@@ -182,205 +149,193 @@ scanlines in the frame the preset actually drew (`--mode-sweep`, and
 | 800×600 | 600 | **600** | 300 |
 | 1024×768 | 768 | **768** | 384 |
 
-The control is wrong in two different ways at once, which is why both halves of
-the fix are needed. Below the 375-line trigger it draws one scanline per guest
-row — the double-scan bug, 200 lines where the tube scanned 400. At or above
-it, it decides the source is interlaced and draws half the lines of one field:
-640×480 at 240, 1024×768 at 384. Only 640×350 (short enough not to be called
-interlaced, and genuinely single-scanned) is right by accident.
+The control is wrong two ways: below 375 lines it draws one scanline per
+guest row (200 where the tube scanned 400); above, it decides the source
+is interlaced and draws one field's worth (640×480 at 240). Only 640×350
+is right, by accident.
 
-**QEMU has usually double-scanned the mode before we see it.** Measured with a
-DOS guest (`TEXTCAL.COM`, doc 09) through the player on `-vga cirrus`: a mode
-13h screen arrives as a **640×400 surface**, not 320×200 — QEMU's VGA doubles
-both axes in its `DisplaySurface`. The consequences are worth being exact
-about, because the obvious reading ("the double-scan code never runs, so it is
-broken") is wrong:
+**QEMU has usually double-scanned the mode before we see it.** On
+`-vga cirrus` a mode 13h screen arrives as a **640×400 surface** (QEMU's
+VGA doubles both axes; measured with `TEXTCAL.COM`, doc 09). Vertically
+and in aspect the answer is the same — 400 scanlines, pixel aspect 0.833
+— but the shader sees 640 columns where the tube had 320, so `h_sharp`
+and the mask act on half-width pixels. Undoing that means detecting the
+doubling or patching QEMU's VGA; neither is done, and neither should be
+without a photograph of the real tube to say it matters. The double-scan
+branch still earns its place for a genuinely short surface (`d3dpt-vga`
+at a 200- or 240-line mode, a 3D path) and the sweep exercises it.
+**720×400 text is not doubled.**
 
-* *Vertically the answer is the same either way.* 640×400 analyses to 400
-  scanlines, not double-scanned; 320×200 would analyse to 400, double-scanned.
-  The preset is told 400 in both cases, which is what the tube draws.
-* *The aspect is the same too.* Doubling both axes preserves the ratio, so
-  640×400 and 320×200 both come out at pixel aspect 0.833 in a 4:3 picture.
-* *What is lost is horizontal fidelity.* The shader sees 640 columns where the
-  tube had 320 distinct ones, so `h_sharp` and the mask act on pixels half the
-  true width. Rule 1 ("never scale before the shader") is already broken
-  upstream of the player, inside QEMU, and nothing in `player/` can put it
-  back — undoing it means detecting the doubling and halving the surface, or
-  patching QEMU's VGA not to double. Neither is done, and neither should be
-  attempted without a photograph of the real tube to say it matters.
-
-So the double-scan branch is right, and on today's VGA path it is redundant.
-It earns its place for any source that delivers a genuinely short surface —
-our own `d3dpt-vga` driver at a 200- or 240-line mode, or a 3D path — and the
-mode sweep exercises it synthetically either way. **720×400 text is not
-doubled** and arrives intact, which the same DOS run confirms.
-
-**The limitation, stated plainly.** This works for presets that expose a
-resolution override. crt-lottes and crt-royale derive their scanline period
-from `OriginalSize` and have no such parameter, and rule 1 forbids the obvious
-workaround of handing them a pre-doubled surface. The player says so once and
-leaves those presets at their defaults:
+**Presets without the parameters.** crt-lottes and crt-royale derive
+their scanline period from `OriginalSize` and expose no override, and
+rule 1 forbids handing them a pre-doubled surface. The player says so
+once and leaves them at their defaults:
 
 ```
 [shader] this preset exposes no scanline-count parameter (vga_mode, inter): a double-scanned
 mode will be drawn with one scanline per guest row instead of the two per row the tube drew
 ```
 
-Which way that gets closed — per-mode `.slangp` variants in the curated pack,
-or restricting the pack to presets that can be told — is open, and belongs with
-the pack itself (M2).
+Per-mode `.slangp` variants or a pack limited to presets that can be told
+— open, with the pack.
 
-## The mode sweep
+### Screenshots
 
-`player --mode-sweep <dir>` runs the display path over every mode in the table
-plus one unlisted size, with no guest and no QEMU: the geometry test image (a
-circle drawn in display space, round on screen only when the pixel aspect is
-applied; a block of one-pixel lines; SMPTE bars) is uploaded at each size and
-put through the real chain. Each mode is checked for the on-screen aspect, for
-fitting the surface, for a whole-pixel scanline pitch, for the parameters
-reaching the preset, and — by counting the bright bands down one column of the
-frame it just read back — for the scanline count. A PNG per mode lands in
-`<dir>`. It is the `mode-sweep` check in `scripts/test.sh`, about 2 s.
-
-Two details that had to be got right for the check to mean anything:
-
-* It renders to a **fixed 3200×2400 surface**, not the window's, and never
-  presents or even acquires a swapchain image. What it checks must not depend
-  on what the compositor handed us, and an occluded window — a test run behind
-  a terminal, which is the normal case — blocks the second acquire forever
-  under FIFO.
-* The scanline count is taken from the **pitch between the first and last
-  band**, not from a repeat period or a band count over the sampled strip:
-  the pitch need not be a whole number of pixels, and where it is not, the
-  frame's *period* is two scanlines. Below three output pixels per scanline
-  the preset has no room for a gap and draws a flat field (one LSB of
-  modulation, measured at 1152×864 and above), so the count is not checked
-  there — which costs nothing, since those are square-pixel modes whose
-  scanline count is their height.
-
-## Latency budget
-
-Target: **≤ 1 host frame added** between guest frame completion and photons at
-60 Hz host — measured, not felt.
-
-- In-process handoff: display listener publishes surface + dirty rects;
-  render thread uploads immediately. No encode, no copy chains.
-- **Present mode:** mailbox where available (newest frame wins), otherwise
-  vsync FIFO; `desired_maximum_frame_latency = 1`.
-- **Refresh mismatch:** guests run 70 Hz (VGA text/DOS) and 60/75/85 Hz SVGA
-  on 60/120/144/ProMotion hosts. We present the newest complete guest frame
-  at host vsync, never resample. 120 Hz+ hosts pace 60 Hz content perfectly;
-  VRR passthrough is a later nicety.
-- **Occlusion:** an occluded/minimized window may get no presents (Wayland
-  frame callbacks, macOS occlusion) — the render loop skips frames on
-  `Occluded`/`Timeout` and must never let QEMU stall behind it.
-- **Publish-driven rendering, acquire before sampling:** the QEMU refresh
-  tick wakes the event loop (`EventLoopProxy`); the redraw first acquires
-  the swapchain image (blocks until one is free under FIFO), *then* samples
-  the newest guest frame, uploads and presents. Sampling before the acquire
-  aged every frame by a host vblank whenever the queue was saturated — the
-  16 ms tick is slightly faster than 60 Hz, so on Metal it always was
-  (≈32 ms publish→present on the M1 Air, 2.5 ms with a 30 ms tick that
-  never saturated). Newest frame wins, mailbox semantics on top of FIFO.
-- Instrumentation from day one: dirty→upload→present timestamps in a debug
-  HUD, so latency regressions are measured. `PLAYER_LATENCY=1` reports
-  publish→present-return; with a vsync-throttled present its floor at 60 Hz
-  is uniform 0–16.7 ms (p50 ≈ 8, max ≈ 17). Photons follow at the next
-  scan-out. Guest-draw→publish (0–`PLAYER_REFRESH_MS`) is before the
-  measured window and does not show up in this number.
-- **The player is quiet unless something is off** (2026-09-07,
-  user-asked): the display path's own frame counter
-  (`[display] refresh #N`, every 100 guest frames) was on
-  unconditionally, which is bring-up scaffolding — on a machine left
-  running it is a line or two a second for as long as the guest is up,
-  and it buries the lines that mean something (a mode switch, a
-  transitional frame blanked, the input queue's own complaints). It is
-  `PLAYER_REFRESH_LOG=1` now, beside `PLAYER_LATENCY` and
-  `PLAYER_CURSOR_LOG`. What still prints unasked is what a normal run
-  should never say twice: the mode analysis for each mode the guest sets,
-  and anything that went wrong.
-
-## Input path (same budget)
-
-- winit event → QEMU input injection directly on the event thread.
-- Pointer: absolute (USB tablet) for desktop use; **relative capture mode**
-  (PS/2 semantics + host cursor grab) for mouselook — the Win98/XP FPS case is
-  the whole point. Hotkey toggles grab. Which of the two a machine has is
-  the bundle's `seamless_mouse` (doc 07's "Seamless mouse" checkbox): with
-  the tablet the player never grabs at all and the guest's hardware cursor
-  can be the host cursor, without it a click takes the pointer and
-  Ctrl+Alt+G gives it back. The player follows the guest either way
-  (`mouse_is_absolute`), so a machine can be switched without touching it.
-- Keyboard: full scancode set (Pause/PrtSc correctness); host shortcuts
-  go to the guest **while the window has focus**, grabbed or not
-  (2026-09-13, `player/src/kbcapture.rs`) — a Windows machine is on the
-  tablet and never grabs, and its Start menu is the Windows key. winit has
-  no keyboard grab, so it is one piece per windowing system: Wayland's
-  `zwp_keyboard_shortcuts_inhibit_manager_v1` (one inhibitor for the
-  window's life; the compositor applies it only while the surface has
-  focus, and its own `--inhibited` bindings are the user's way out), an
-  active `XGrabKeyboard` on X11, a `WH_KEYBOARD_LL` hook on Windows that
-  takes the keys of every shortcut Windows acts on itself — the two
-  Windows keys, Tab/Esc/F4/Space under Alt (Alt+F4 and Alt+Space are
-  `DefWindowProc`'s: they closed the player and opened its system menu),
-  Esc under Ctrl — and injects them itself, nothing on macOS
-  (Cmd reaches the app already). **Ctrl+Alt+K** toggles it for the rest
-  of the run — off drops the capture outright (inhibitor destroyed, grab
-  or hook let go) and on builds a new one, and the window title says
-  when the host has its shortcuts; `PLAYER_KEYBOARD_CAPTURE=0` starts a
-  run off.
-  Ctrl+Alt+Del is the host's everywhere, so **Ctrl+Alt+Shift+D** is the
-  guest's: Shift let go, Delete pressed, and Delete released with D.
-  **Ctrl+Alt+Shift+F** is windowed full screen (borderless, on the
-  window's own monitor) and back — on a host whose own full-screen
-  binding the capture now hands to the guest, the player's is the one
-  left. **A close with Alt held asks first** (Alt+F4 reaches the player
-  whenever the host has its shortcuts, and the window close stops the
-  machine outright): the player draws the question itself
-  (`player/src/prompt.rs`, the VGA 8x16 font, blended over the finished
-  picture after the CRT chain), since Linux has no message box to borrow
-  that works in the Flatpak and over a full-screen window. Enter, Close
-  or a second Alt+F4 closes, Esc or Back returns, and no key or click
-  reaches the guest while it is up. The title bar's button does not ask.
-  A key goes to the guest by **where it sits** (winit's physical key) —
-  the guest has a layout of its own — except the ones a host keymap
-  option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,
-  `altwin:swap_alt_win`): Control, Shift, Alt, AltGr, Super, Caps Lock
-  and Escape go as what the host reads them as (the logical key), so a
-  Caps Lock the host made Control is Control in the guest, and the real
-  Control no longer toggles the host's Caps Lock to reach it
-  (2026-09-13, `keymap::as_host_reads`). The press's answer is kept for
-  the release.
+**Ctrl+Alt+S** shoots the *guest's* frame: the texture QEMU published,
+read back at the mode's own size before the geometry stage and the chain
+— the picture that compares with a golden BMP, a native run or another
+emulator. An imported 3D slot is shot the same way. Files land in
+`PLAYER_SHOT_DIR` (default: the working directory) as `2ksbox-NNNN.png`.
+The shaded window content is what `PLAYER_DUMP_OUT` writes.
 
 ### Sampling outside the picture
 
-A preset that curves the picture samples the guest's frame outside its own
-edges at the corners and along the sides. What comes back there must be
-**transparent black**, not the nearest pixel: the slang default wrap mode
-is `clamp_to_border` and presets are written against it. librashader's
-wgpu runtime downgrades every such sampler to `clamp_to_edge`, without a
-word, on a device opened without `ADDRESS_MODE_CLAMP_TO_BORDER` — so the
-device the chain runs on is opened with it
-(`shader_chain::required_features`, used by the player and the
-launcher preview's headless device). Without it the outermost row
-and column are smeared over everything outside the tube. The player says
-which it got at startup (`[shader] clamp-to-border sampling: …`).
+A curved preset samples outside the frame's edges; what comes back must
+be **transparent black**, the slang default `clamp_to_border`.
+librashader's wgpu runtime silently downgrades such samplers to
+`clamp_to_edge` on a device opened without
+`ADDRESS_MODE_CLAMP_TO_BORDER`, smearing the outermost row and column
+over everything outside the tube — so the chain's device is opened with
+it (`shader_chain::required_features`, used by the player and the
+launcher preview). The player logs `[shader] clamp-to-border sampling: …`
+at startup.
+
+## The mode sweep
+
+`player --mode-sweep <dir>` runs the display path over every mode in the
+table plus one unlisted size, with no guest and no QEMU: a geometry test
+image (a circle drawn in display space, round only when the aspect is
+applied; one-pixel lines; SMPTE bars) is put through the real chain at
+each size and checked for on-screen aspect, fit, whole-pixel scanline
+pitch, the parameters reaching the preset, and the scanline count; a PNG
+per mode lands in `<dir>`. It is the `mode-sweep` check (~2 s). Two
+details make it mean something:
+
+- It renders to a **fixed 3200×2400 surface** and never acquires a
+  swapchain image: the result must not depend on the compositor, and an
+  occluded window (a test behind a terminal) blocks the second acquire
+  forever under FIFO.
+- The scanline count comes from the **pitch between the first and last
+  band**, since the pitch need not be a whole number of pixels. Below
+  three output pixels per scanline the preset draws a flat field, so the
+  count is not checked there (1152×864 and up, square-pixel modes whose
+  count is their height).
+
+## Latency budget
+
+Target: **≤ 1 host frame added** between guest frame completion and
+photons at 60 Hz — measured, not felt.
+
+- **In-process handoff.** The display listener publishes surface + dirty
+  rects; the render thread uploads immediately. No encode, no copy chain.
+- **Present mode:** mailbox where available, else FIFO;
+  `desired_maximum_frame_latency = 1`.
+- **Refresh mismatch.** Guests run 70 Hz (VGA text/DOS) and 60/75/85 Hz
+  SVGA on 60/120/144 Hz/ProMotion hosts. The newest complete guest frame is
+  presented at host vsync, never resampled. VRR passthrough is a later
+  nicety.
+- **Acquire before sampling.** The QEMU refresh tick wakes the event loop
+  (`EventLoopProxy`); the redraw first acquires the swapchain image, *then*
+  samples the newest guest frame, uploads and presents. Sampling first
+  aged every frame by a vblank whenever the queue was saturated — the
+  16 ms tick is slightly faster than 60 Hz, so on Metal it always was
+  (≈32 ms publish→present on the M1 Air, 2.5 ms after).
+- **Occlusion.** An occluded or minimized window may get no presents
+  (Wayland frame callbacks, macOS occlusion); the loop skips on
+  `Occluded`/`Timeout` and never lets QEMU stall behind it. Per-frame work
+  that must not stall (importing zero-copy slots) runs on the wake event.
+- **Measurement.** `PLAYER_LATENCY=1` reports publish→present-return; with
+  vsync its floor at 60 Hz is uniform 0–16.7 ms (p50 ≈ 8). Guest
+  draw→publish (0–`PLAYER_REFRESH_MS`) is before that window.
+- **Quiet unless something is off** (user request): the per-100-frames
+  counter is `PLAYER_REFRESH_LOG=1`, beside `PLAYER_LATENCY` and
+  `PLAYER_CURSOR_LOG`. What prints unasked is each mode change and
+  anything that went wrong.
+
+## Input path
+
+winit events go to QEMU's input injection directly on the event thread.
+
+**Pointer.** Absolute (USB tablet) for the desktop, relative (PS/2 plus a
+host cursor grab) for mouselook. Which one is the bundle's
+`seamless_mouse` (doc 07's "Seamless mouse" checkbox): with the tablet the
+player never grabs and the guest's hardware cursor is the host cursor;
+without it a click takes the pointer and Ctrl+Alt+G gives it back. The
+player follows the guest (`mouse_is_absolute`), so a machine can be
+switched without touching it.
+
+**Keyboard.** A key goes to the guest by **where it sits** (winit's
+physical key), since the guest has a layout of its own — except the keys
+a host keymap option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`,
+`caps:escape`, `altwin:swap_alt_win`): Control, Shift, Alt, AltGr, Super,
+Caps Lock and Escape go as the host reads them (`keymap::as_host_reads`),
+so a Caps Lock the host made Control is Control in the guest. The press's
+answer is kept for the release. When the window loses focus the player
+releases every key the guest still holds (`lift_all_keys`,
+`player/src/main.rs`); without it Cmd+Tab sent the Windows-key press to
+the guest and its release to the next app, and the guest kept Win down.
+
+**Host shortcuts go to the guest while the window has focus**, grabbed or
+not (`player/src/kbcapture.rs`): a Windows machine is on the tablet and
+never grabs, and its Start menu is the Windows key. winit has no keyboard
+grab, so it is one piece per windowing system:
+
+- **Wayland:** `zwp_keyboard_shortcuts_inhibit_manager_v1`, one inhibitor
+  for the window's life; the compositor applies it only while the surface
+  has focus, and its own `--inhibited` bindings are the user's way out.
+- **X11:** an active `XGrabKeyboard` while focused, which beats the window
+  manager's passive grabs on Super.
+- **Windows:** the keyboard registered for raw input with
+  `RIDEV_NOHOTKEYS`. While a window of this process is in front the shell
+  does not act on its keyboard hotkeys — both Windows keys, every Win+
+  shortcut, Ctrl+Esc — and the key still arrives as an ordinary
+  `WM_KEYDOWN`, reaching the guest down the same path as every other key.
+  *System* hotkeys (Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Alt+Del,
+  Win+L) no program gets, so they stay the host's. It was a
+  `WH_KEYBOARD_LL` hook first, and the hook was called for every key on
+  the machine *except* while the player's own window was focused — zero
+  calls, not late ones; a hook in a third process went blind too while
+  the player's was installed. Ruled out by measurement:
+  `LowLevelHooksTimeout`, re-arming, the hook thread's timer, the window
+  itself, a Windows rule (a 60-line program's hook sees its own window's
+  keys), integrity levels, exploit-protection mitigations; the cause was
+  never found. Confirmed on a real keyboard by the user, 2026-09-19.
+  `PLAYER_KEYBOARD_LOG=1` prints the registration and every focus change.
+- **macOS:** nothing; Cmd reaches the app already (Cmd+Tab would need an
+  event tap and the Accessibility permission).
+
+**Ctrl+Alt+K** toggles the capture for the rest of the run (off drops it
+outright, on builds a new one; the title bar says when the host has its
+shortcuts); `PLAYER_KEYBOARD_CAPTURE=0` starts a run off.
+
+**The player's own chords.** Ctrl+Alt+Del is the host's everywhere, so
+**Ctrl+Alt+Shift+D** is the guest's (Shift let go, Delete pressed, and
+released with D). **Ctrl+Alt+Shift+F** is windowed full screen
+(borderless, on the window's monitor) and back. **A close with Alt held
+asks first**, since Alt+F4 reaches the player whenever the host has its
+shortcuts and a window close stops the machine: the player draws the
+question itself (`player/src/prompt.rs`, the VGA 8×16 font blended over
+the finished picture), because Linux has no message box that works in the
+Flatpak and over a full-screen window. Enter, Close or a second Alt+F4
+closes; Esc or Back returns; nothing reaches the guest while it is up.
+The title bar's button does not ask.
 
 ## 3D and the pipeline
 
-qemu-3dfx renders guest 3D via host OpenGL on QEMU threads. Its output must
-reach the wgpu render thread as a texture so it flows through the same
-librashader chain (a Voodoo-era game on a CRT shader is the money shot).
-Interop per platform: IOSurface (macOS GL↔Metal), dma-buf/external memory
-(Linux GL↔Vulkan), shared handles (Windows GL↔D3D12). A texture *copy* is
-acceptable; a CPU readback is the failure line. This is Spike A
-(docs/spikes/spike-a-macos.md). 2D correctness never depends on the answer.
+Guest 3D (qemu-3dfx's GL and Glide, the Direct3D executor, the Voodoo 2's
+VGA-surface frames) must flow through the same librashader chain — a
+Voodoo-era game on a CRT shader is the money shot. The design target is
+zero-copy: IOSurface on macOS, dma-buf into Vulkan on Linux (doc 12 §4).
+Windows and a Linux host without the Vulkan extensions read frames back
+instead, which works but is the path to leave. 2D correctness never
+depends on it.
 
 ## Testing
 
-- Golden-image tests: scripted guest boots to known screens; player output
-  captured offscreen (wgpu readback in test mode) and compared pixel-exact
-  with shaders off; geometry checked with shaders on.
-- A test floppy image cycling VGA modes for mode-table coverage.
-- **Real-CRT calibration:** default presets and geometry values tuned against
-  photographs of the reference rig's CRT showing the same content (doc 09).
+- `--mode-sweep` (above) and `PLAYER_DUMP_OUT` (the shaded frame,
+  headless, works while occluded).
+- Real-CRT calibration: `build/crtcal-render` writes doc 09's patterns as
+  BMPs, `player --shader <preset> --calib <dir>` shades them for holding
+  against photographs of the rig's tube (doc 09 has the protocol).
+- Not built yet: golden-image boots to known screens compared pixel-exact
+  with shaders off, and a mode-cycling test floppy.

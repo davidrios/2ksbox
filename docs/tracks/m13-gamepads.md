@@ -115,9 +115,10 @@ over a 0–100 kΩ pot, so an axis byte of 0x00 is 24 µs and 0xff 1124 µs.
 
 **Pacing is what makes the counts mean anything.** A game counts loop
 iterations until a bit clears, so the count depends on the guest's
-speed. On the DOS family's `-icount shift=7,align=on` a stick's ends and
-centre count 12 / 265 / 571 against true pulse ratios of 1 : 23.8 : 46.4,
-steady to ~6 %. Unpaced, the counts are ten times higher and an axis
+speed. On the DOS family's `-icount shift=7,align=on` (doc 06, "Why a
+rate control, and what it costs") a stick's ends and centre count
+12 / 265 / 571 against true pulse ratios of 1 : 23.8 : 46.4, steady to
+~6 %. Unpaced, the counts are ten times higher and an axis
 nobody touches spans 2.25x — a game with a fixed timeout sees a stick
 jammed at one end.
 

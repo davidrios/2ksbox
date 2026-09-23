@@ -70,8 +70,9 @@ host`:
   `LAUNCHER_QT_ARG=<its argument>`. Without `LAUNCHER_QT_SHOT` the screen
   runs its script, prints what the window *shows* and quits — no GPU, no
   session. With `LAUNCHER_QT_SHOT=<png>` (and `LAUNCHER_QT_DELAY=<ms>`) it
-  also grabs a picture, which needs a real session and a GPU nothing
-  else is holding (a running player makes the grab hang). Checks:
+  also grabs a picture; offscreen works (the `package` check depends on
+  it), and a grab that never completes means a GPU something else
+  holds, such as a running player. Checks:
   `qt-wizard` (every family's fields as shown vs. the model, every page
   fits the window), `qt-close`, `qt-esc`, `qt-snapshots`, `qt-profile`,
   `qt-shelf`, `qt-firstrun`, `qt-clone`.

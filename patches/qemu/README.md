@@ -1,127 +1,836 @@
 # QEMU patch queue
 
-Applied by `scripts/prepare-qemu.sh` on top of the pinned QEMU submodule
-(v9.2.4 — the newest release qemu-3dfx's `00-qemu92x` patch supports) after
-the qemu-3dfx overlay (`third_party/qemu-3dfx` → `hw/3dfx`, `hw/mesa`) and
-the `embed/` overlay (→ `qemu/embed`). Order = filename order. The script is
-deterministic: it restores every tracked file any patch touches to pristine
-and re-applies everything on each run, then runs qemu-3dfx's `sign_commit`
-(stamps the qemu-3dfx commit; guest wrappers must be built from the same
-commit — `guest-tools/build-wrappers.sh` does that).
+Every change 2ksbox makes to QEMU. The tree is the pinned submodule
+`qemu/` at v9.2.4 — the newest release qemu-3dfx's `00-qemu92x` patch
+supports — plus qemu-3dfx (`third_party/qemu-3dfx`), plus the patches in
+this directory. The design behind the larger patches lives in the design
+docs (x87 doc 13, SSE doc 16, pinned registers doc 18, CD-ROM doc 17,
+music doc 20, Voodoo 2 doc 21); the measured effect of the TCG patches as
+a whole is doc 22. Test tools named here are described in
+`docs/testing.md`.
 
-Eight of these carry an off switch, and **the launcher exposes all eight
-as checkboxes** ("Emulation optimizations" in the machine form, doc 07):
-`x87-fast`, `sse-fast`, `simd-fast` and `rep-fast` are guest-CPU
-properties, `smc-same-value`, `soft-imm` and `inline-lookup` belong to
-the TCG accelerator (patch 21's `pinned-regs` does too, and is the one
-the launcher no longer offers, 2026-09-16), so a bundle's command line spells the accelerator
-`-accel tcg,<prop>=off` rather than `-machine accel=`. The switch is the
-oracle: a guest that computes the wrong number is diagnosed with one run,
-not a bisect. A machine that has changed nothing emits no property, so the
-default command line is unchanged and still runs on a stock QEMU.
+## How prepare builds the tree
 
-One change prepare makes is not a patch, because its target is a binary
-blob: it **stamps the legacy BIOS date** in every `pc-bios/bios*.bin` from
-SeaBIOS's 06/23/99 to `12/31/99`. Windows 98 setup installs ACPI — and so
-enumerates the PCI bus at all — only if that date is at least the
-`ACPICheckDate` its own `machine.inf` carries, 12/01/99; otherwise the
-machine has to be one of the four in `BIOSINFO.INF`'s `[GoodACPIBios]`, and
-we are none of them (doc 06 has the whole decision). The stamp restores the
-blob from git first, so it is deterministic like the rest of the queue, and
-the `bios-date` check in `scripts/test.sh` asks a running QEMU what a guest
-reads at F000:FFF5.
+`scripts/prepare-qemu.sh` is deterministic and re-does everything on each
+run (`scripts/build.sh` skips it while its inputs hash the same, and `-f`
+forces it):
 
-The other blob change: prepare copies `firmware/vgabios-stdvga.bin` and
-`firmware/vgabios-cirrus.bin` over QEMU's prebuilt ones. They are the same
-SeaBIOS VGA BIOS built with `patches/seabios/` (VBE 4F09h, the palette
-function a VESA game calls) by `scripts/build-vgabios.sh`; that directory's
-README has why they are checked in.
+1. **Overlays** are rsynced in: qemu-3dfx's `hw/3dfx` and `hw/mesa`;
+   `embed/` → `qemu/embed/`; `d3dpt/hw/` → `hw/d3dpt/` with the protocol
+   headers; `voodoo/` → `hw/voodoo/`; `libsynth/qemu/` → `hw/audio/`
+   (`opl3.c`, `mpu401.c`); `libdisc/qemu/` → `block/cdimage.c` and
+   `include/block/`; `gamepad/qemu/` → `hw/usb/dev-gamepad.c` and
+   `hw/input/gameport.c`. Our own device code is these overlays, edited
+   in the repo; a patch only wires it into QEMU's build and machines.
+2. **Restore**: every tracked file any patch touches is checked out
+   pristine, and every file a patch creates is deleted.
+3. **Apply** qemu-3dfx's `00-qemu92x-mesa-glide.patch`, then this queue in
+   filename order with `git apply` (a patch that does not apply stops the
+   run and prints why). Text before a patch's first diff header is
+   ignored, and most patches use it for a paragraph on what they do and
+   why — read it alongside the entry below.
+4. **Blobs**, which a patch cannot carry: the legacy BIOS date in every
+   `pc-bios/bios*.bin` is restored from git and stamped from SeaBIOS's
+   06/23/99 to `12/31/99`, because Windows 98 setup installs ACPI (and so
+   enumerates the PCI bus at all) only when that date is at least its
+   `ACPICheckDate`, 12/01/99 (doc 06; the `bios-date` check). Then
+   `firmware/vgabios-{stdvga,cirrus}.bin` are copied over QEMU's own —
+   the VGA BIOS built from `patches/seabios/` (VBE 4F09h).
+5. qemu-3dfx's `sign_commit` stamps its commit into `hw/3dfx` and
+   `hw/mesa`; the guest wrappers must be built from the same commit
+   (`guest-tools/build-wrappers.sh` does that).
 
-**Never `git checkout` files inside `qemu/` by hand between prepare runs** and
-never rely on "already applied" heuristics — a partial tree once silently
-lost the 3dfx meson hunk (symptom: `unknown type 'glidept'`).
+**Never `git checkout` files inside `qemu/` by hand between prepare runs**,
+and never rely on "already applied" heuristics: a partial tree once
+silently lost the 3dfx meson hunk (symptom: `unknown type 'glidept'`).
 
-| Patch | What / why | Drop when |
-|---|---|---|
-| `00-3dfx-darwin-contextalpha` | qemu-3dfx Darwin build regression: `GL_CONTEXTALPHA` only defined under `CONFIG_LINUX` but used in shared code | upstream qemu-3dfx fixes it |
-| `01-upstream-i386-lss-tb-exit-fix` | backport of QEMU `0f1d6606c28d` (issue 2987): 9.2.4 carries the LSS/IRQ-shadow regression but not the fix → Win98 SE `exception 0D` on first boot after setup under TCG | QEMU ≥ 10.1 |
-| `02-3dfx-sdl-optional` | qemu-3dfx makes SDL2 a hard requirement of the whole build (`error('Featuring qemu-3dfx required SDL2')`) because upstream's only 3D UI provider is in `ui/sdl2.c`. Patch 30 gave that seam a vtable and the player registers the embed library's window-less provider, so `scripts/configure-qemu.sh` passes `--disable-sdl --disable-sdl-image` and this error is the one thing in the way (2026-09-07). The pass-through devices are unaffected: `hw/3dfx` and `hw/mesa` are not gated on SDL and their native backend is GLX | upstream qemu-3dfx stops requiring SDL |
-| `04-3dfx-graceful-no-display` | with no 3D provider registered, GL activation refuses the context cleanly (`MGLCreateContext`/`MGLMakeCurrent` see a NULL window) instead of taking the VM with it. Upstream reaches that state through `ui/sdl2.c`'s `exit(1)`; patch 30 replaces that path and `ui/sdl2.c` is no longer compiled at all, but these two guards are the backend's own half of the contract and `qemu-system-i386` links the native GLX backend with nothing registering a provider for it (on Linux; on macOS patch 70's backend refuses without asking GLX at all) | — |
-| `05-x87-fast` | x87 on the host FPU when the guest runs at 53/24-bit precision with round-to-nearest (Windows default / Direct3D): bit-exact vs. softfloat, falls back for everything else; `-cpu …,x87-fast=off` disables. Tests: `tools/x87-fast-test.c` (host oracle vs. real x87), `tools/x87-guest-test.py` (on/off identical under TCG). Super PI 1M on the M1 Air 9:49 → 6:33 | upstream QEMU grows a floatx80 hardfloat path |
-| `06-x87-inline-tcg` | **doc 13**: eight scalar binary64 TCG opcodes (x86-64 VEX+FMA3, aarch64 scalar FP) and a translator mode that keeps the x87 stack as host doubles across instructions at PC=53 or PC=24 (Direct3D) with RC=nearest/PE masked (2-bit TB flag), converting to x80 only at TB exits, before helpers and on faults (unwind repair via a third insn_start word). At PC=24 the shadows hold 24-bit values and every result is rounded through a binary32 conversion (correct for 24-bit operands). Same checks as x87-fast.h; anything else runs the helper sequence out of line and exits the TB, so bit-exact vs softfloat except empty registers after a pop. DOS loop 21.6 (softfloat) / 10.6 (patch 05) / 2.9 ns per op on x86-64; aarch64 bring-up done 2026-09-03 (doc 13 §Bring-up): UMOV element size and constant-into-V-register paths fixed; XP Super PI 1M on the M1 Air 9:49 → 1:57 (rig P4 1.7: 2:02), `x87-fast=off` control at softfloat pace, Win98 boots. Tests: `tools/x87-guest-test.py` (382k lines identical on/off, 7 control words incl. PC=24; bench at both precisions) | upstream float ops in TCG, or a rewrite of the x87 translator upstream |
-| `07-upstream-x87-helper-fixes` | backports cf10af6c703d (pseudo-NaN in FPATAN/FYL2X/FYL2XP1 is Invalid + default NaN, not silenced) and 0924d9d3db36 (fcomi/fucomi clear OF/SF/AF); the latter applied to patch 06's inline compare too so fast and slow paths agree. DE / flush-to-zero fixes skipped (need the 10.0 softfloat rework) | base ≥ 11.1 |
-| `08-upstream-i386-decoder-fixes` | backports the 2025–26 fixes era code trips: F6/F7 /1 TEST alias, RCL/RCR count modulo for 8/16-bit (immediates too), V86 entry only at CPL 0, real-mode interrupt stack size, TSS T bit, mov to CS / segment 6–7 is #UD, invalid 0F C7 forms | base ≥ 11.1 |
-| `09-upstream-i386-rep-string` | backports the 10.0 repeated-string series (14 commits, Paolo Bonzini): REP/REPZ run several iterations per TB with explicit cc_op and RF handling. `tools/string-bench.py`: rep movs/stos 12–16 % faster per element under TCG, scasb unchanged; translate.c closer to 10.x | base ≥ 10.0 |
-| `10-embed-api` | meson: `shared_library('qemu-embed-<target>')` per softmmu target from the existing static lib + `embed/libqemu_embed.c`, `embedaudio.c`, `embedfx.c`, `mglcntx_embed.c` (+ epoxy and gbm when found); ld64 export list (`embed/libqemu_embed.symbols`) because QEMU's plugin `-exported_symbols_list` hides everything else on macOS | upstreamed embed API (aspirational) |
-| `11-sse-inline-tcg` | **doc 16**: SSE/SSE2 float inline on the host FPU when MXCSR is RC-nearest / no FTZ-DAZ / all masked and PE is already sticky (TB flag bit 31, property `sse-fast`, `-cpu …,sse-fast=off` disables): packed ops on the vector unit (new TCG `fadd/fsub/fmul/fdiv/fsqrt_vec`, vector checks, one lane-mask branch), scalar ops in general registers (new `add..sqrt_f32`, int32↔float conversions). add/sub/mul/div/min/max/sqrt/rcp/rsqrt/cmp/comis/ucomis/cvt(t)ss2si/cvtsi2ss/cvtss2sd and the sd/pd forms; NaN/inf/overflow/underflow/zero-divide take the helper out of line (slow blocks shared with patch 06), `ldmxcsr`/`fxrstor`/`xrstor` end the TB. Tests: `tools/sse-guest-test.py` (333,875 result lines identical on/off, M1 Air 2026-09-04); bench packed 12×, scalar 3.6×. x86-64 backend run 2026-09-04: bit-identical, packed 7.5×, scalar 3.4-3.9×. **2026-09-04, clamp+cmp fix:** `min`/`max`/`cmp` (packed `minps`/`maxps`/`cmpps`, doc 16's "clamp+cmp" kernel, 34 % of the rig on aarch64) had no native TCG vector op, so patch 07 synthesized them from a 16-18-op "total-order key" bit-transform (fold −0/+0, flip sign-dependent bits, then an integer `cmp_vec`) just to feed `cmp_vec`'s integer-only compare a monotonic float ordering. On x86-64 that's unnecessary: the host *is* the guest's ISA, so two new generic TCG vector opcodes (`fmin_vec`/`fmax_vec`, `fcmp_vec` — the latter's third argument is the guest's own CMPPS/CMPPD predicate immediate 0–7, passed straight through) map directly to native `VMINPS`/`VMAXPS`/`VCMPPS` (`TCG_TARGET_HAS_fp_minmax_vec`/`_fp_cmp_vec`, `have_avx1`-gated like `fadd_vec`; aarch64 macros `0`, unvalidated SWAR/key fallback kept). Native min/max/cmp already implement the guest's own −0/+0 tie-break and NaN-operand-selection rules exactly (same ISA), so the fast path only needs a NaN-presence check (6 ops) to decide the guard branch, not the 16-18-op key computation. `tools/sse-guest-test.py`'s packed chain (includes `minps`/`maxps`) 8.1× → 10.0×; new isolated `SSEBENCHC` kernel (`minps`/`maxps`/`mulps`×2/`cmpltps`/`movmskps`, mirrors `ssebench.c`'s `k_clamp`) added to the same tool: 6.5× over the helper. 546,425 guest test lines still bit-identical | upstream float ops in TCG |
-| `12-simd-inline-tcg` | **doc 16**: MMX / SSE integer and permutation instructions inline instead of helper calls (`shufps`/`shufpd`, `unpck*ps/pd`, `punpck*`, `pack*`, `pmulhw`/`pmulhuw`, `pmaddwd`, `pavgb/w`, `psadbw`, shifts by a register count, `pshufw`) and the per-instruction MMX entry as three stores; the permutes through a new TCG vector opcode `tbl_vec` (byte table lookup: `tbl` / `vpshufb`) with per-immediate index vectors in `env->simd_tbl`; property `simd-fast` (`=off` keeps the helpers). Legacy encodings only. Test: `tools/sse-guest-test.py` (546,425 lines identical on/off incl. the integer battery); register-only MMX chain 4.0× (aarch64). x86-64 backend run 2026-09-04: bit-identical, but MMX chain only 1.4× — `simd_psadbw` was using the memory-based `tcg_gen_gvec_umax/umin/sub` (cost more than the helper it replaced) instead of the register-only vector ops the rest of the file uses, fixed; `pmulhw`/`packsswb`/`packuswb`/`packssdw` were scalar SWAR (no cheap bitfield-insert on x86-64 unlike aarch64), given real x86-64 vector ops — two new generic TCG opcodes, `mulsh_vec`/`muluh_vec` (multiply-high, gated `TCG_TARGET_HAS_mulh_vec`, native `PMULHW`/`PMULHUW`) and `ssnarrow_vec`/`usnarrow_vec` (saturating narrow, gated `TCG_TARGET_HAS_pack_vec`, native `PACKSSWB`/`PACKUSWB`/`PACKSSDW`), x86-64-only (aarch64 macros defined `0`, keeps the SWAR fallback, unvalidated there). The MMX-width pack needed care: a 128-bit `PACKSSWB`'s low 64 bits come from *all 8* words of its first operand, not a 4+4 split like the real 64-bit MMX form, so the MMX path builds one combined 128-bit register (both operands concatenated) and narrows it against itself, keeping only the low half (`tcg_gen_stl_vec`). x86-64 MMX chain 1.4× → 1.7×. **2026-09-04, continued:** the combine went through `env->sses_scratch` (two GP stores immediately reloaded as one differently-sized vector load — a store-to-load-forwarding stall, the same anti-pattern doc 16 already names for the aarch64 shuffle path); replaced with `dup_i64_vec` broadcasting each 64-bit half across a whole register and `bitsel_vec` blending them against a constant lane mask (`SIMD_TBL_MASK64LO` in `env->simd_tbl`, one memory read shared by every pack instead of two round-tripped stores plus a reload) — both are stock TCG vector ops with portable fallbacks, no new opcodes. x86-64 MMX chain 1.7× → 2.1×, guest test still 546,425 lines bit-identical. Regenerated 2026-09-04 (no payload change) to rebase past patch 11's clamp+cmp fix, which lands `tbl_vec`/`mulsh_vec`/`muluh_vec`/`ssnarrow_vec`/`usnarrow_vec` at new positions in the shared TCG files | upstream gvec permutes / narrowing ops |
-| `13-perfmap-darwin` | **M9 track** (`docs/tracks/m9-tcg-aarch64.md`): `-perfmap` / `-jitdump` and `tcg/perf.c` on every host instead of Linux only (the map writer is plain stdio: `/tmp/perf-<pid>.map`, one line per translated guest instruction with its host code range). `tools/tcg-profile.sh` samples QEMU with macOS `sample` and `tools/tcg-profile.py` maps the hits in the code buffer to guest addresses through it. **2026-09-06 (M11):** the jitdump half is Linux-only again — `perf inject` finds the dump through an executable mapping of it, so writing one needs `mmap`, and Windows has neither that nor `flockfile`; the perfmap half (the one the profiler reads) still builds on every host and `-jitdump` on Windows says it is unavailable | upstream drops the `CONFIG_LINUX` gate |
-| `14-jit-wx-state` | **M9 track**: macOS flips the MAP_JIT code buffer between writable and executable per thread (`pthread_jit_write_protect_np`); QEMU asked for execute before every TB run from the main loop and for write around every jump patch / translation / invalidation without remembering the state — 12 % of Super PI's vCPU thread on the M1 (the x87 helper exits return to the main loop constantly). A per-thread state (unknown at first) makes the call only when it changes: Super PI 1M on the Air 1:36.2 → 1:25.3 | upstream tracks the state |
-| `15-tb-invalidate-fast` | **M9 track**: TB invalidation on guest writes, four cuts found on Moto Racer 1997's software renderer (`docs/tracks/m9-tcg-aarch64.md`): (1) the DMA-side `tb_invalidate_phys_range` rounded the first page's range down to the page start — the vAPIC option ROM's TPR stubs (every IRQL change of a Windows guest) sit below the VAPICState the APIC writes at each interrupt, so every XP guest retranslated them thousands of times a second, idle included (upstream master still has it); (2) a per-page byte range of the TBs on it (a 64-chunk map since patch 35) lets a write outside it skip the page collection (two g_tree lookups) and the list walk — Windows data pages with one stale TB are written 45k times a second; (3) a write that cannot hit a TB shared with a neighbouring page is handled under the page's own spinlock (no page collection), and the current TB's g_tree lookup for precise SMC happens only when a TB is hit; (4) no whole jump-cache flush (64 KiB memset) per invalidated CF_PCREL TB — `CF_INVALID` already makes a stale slot miss. On the intro (real SMC: the rasterizer's immediates patched per span) TB maintenance went from 25 % of the vCPU to the list walk alone (~9 %) | upstream clamps the first page's range; per-page code ranges upstream |
-| `16-tlb-floor` | **M9 track**: `CPU_TLB_DYN_MIN_BITS` / `DEFAULT_BITS` 6 / 8 → 12: the dynamic softmmu TLB is direct-mapped and resized at every flush from the entries used since the previous one; XP flushes at every context switch (450/s), so the measured working set was a few hundred pages and the table sat at 64–256 entries, where two live pages share an index all the time and every access to either is a victim-TLB swap (Moto Racer intro: 6 million swaps a second, 48 % of the vCPU in the slow path; 1.6 billion in a 4-minute run). A 4096-entry floor: slow path 1.3 %, generated code 13 % → 57 % of the vCPU, victim hits down 1000×. 128 KiB of entries per mmu index, memset per flush (~0.5 % at XP's flush rate) | upstream's resize policy counts conflicts (victim hits), or a set-associative TLB |
-| `17-rep-fast` | **M9 track**: REP MOVS / STOS as a host `memcpy`/`memset` per page run. Moto Racer's profile (after the epoch fix) put 80–90 % of its generated code on one `rep movsd` — its blit, 37 host instructions per dword with ESI/EDI/ECX through `env` at every iteration; Windows' own `memcpy`/`memset` (`RtlCopyMemory`/`RtlFillMemory`) are the same instructions. `do_gen_rep` now calls `helper_rep_movs_fast`/`helper_rep_stos_fast` (`mem_helper.c`) before its per-element loop when at least 8 elements are left: the helper takes the run that stays inside the current page of the source and of the destination (direction from `env->df`), probes each once (`probe_access_flags`, non-faulting: fills the TLB, marks the destination dirty and invalidates the TBs under it exactly as the stores would, refuses MMIO / watchpoint / unmapped pages), copies with `memcpy`/`memmove` or fills with `memset` (element loops for the overlaps that replicate a pattern and for fill values whose bytes differ), and returns the elements done; the translator advances the registers by that and re-enters the instruction for the next page with RF set as between iterations. 0 falls into the per-element loop, capped at 15 iterations per entry so the next page gets its try (an element straddling a page, fewer than 8 left, a fault — raised by the loop at the right element, with the right state). Nothing is written to `env` by the helper, so a longjmp out of the probe (the write invalidating the current TB) resumes at the instruction's start. Not emitted with TF / single-step / icount (one element per step there). Property `rep-fast` (`=off` keeps the loop). Test: `tools/rep-guest-test.py` (536 DOS cases — widths, a16/a32, DF both ways, page crossings, straddling elements, every overlap, fill values — on/off identical and equal to a Python model). `tools/string-bench.py`: MOVSD/STOSD 2.15 / 2.08 → 0.07 ns per element (30×), MOVSB/STOSB below the bench's one-tick resolution. Moto Racer's race: 7.3 → 7.5 fps at the standing start — the blit dominates the *demo's* profile, the race is translation-bound (patch 18) | upstream has no rep fast path (10.x still loops per element) |
-| `18-smc-same-value` | **M9 track**: a store that leaves a code page's bytes unchanged invalidates no TB. The store slow path (`do_st{1,2,4,8}_mmu` → `mmu_lookup` → `mmu_watch_or_dirty`) carries the bytes about to be written in address order and compares them with memory before `notdirty_write`; equal bytes skip `tb_invalidate_phys_range_fast` (the dirty bits are still set), a crossing store checks each page's part, 16-byte stores and the probe / atomic paths still invalidate. Exact by construction: a TB translated from bytes B stays valid while memory holds B. Found on Moto Racer 1997's race (`tools/xp-moto-race.sh` with `RACE_SAMPLE=`): the vCPU was 53 % translation (17 % the invalidation walk), 5 % generated code; its texture-mapping span loop (`0x436000`, `tools/smc-diff.py` on two `RACE_MEMSAVE=` captures) has its u/v steps, carry immediates and texture base patched per span, and a stats build counted ~700,000 code-page stores a second of which 94 % rewrote the value already there, each walking ~80 TBs (55 million TB visits a second) and invalidating ~62,000 TBs a second. `-accel tcg,smc-same-value=off` is the oracle. Test: `tools/smc-guest-test.py` (patched immediates from another block and inside the executing one, same-value rewrites, an opcode flip, 16/8-bit partial patches, `rep movsd` over a routine, an imm32 straddling a page written by one crossing store; on/off both architecturally right). **Moto Racer's race: 7.3 → 21.7 fps at the standing start (the 25-dumps/s probe nearly saturated: 39.2 fps at 60 dumps/s, still near that probe's ceiling), mid-race 12.1 → 19.0 fps (perf map on both times); the race's vCPU: translation 53 % → 29 %, generated code 4.8 % → 25.6 %, TB invalidations 58 k → 24 k a second** | upstream invalidates on every write; a compare is cheap and exact, worth sending |
-| `19-tls-hot-paths` | **M9 track**: thread-local reads off the TCG hot paths. On macOS every `__thread` access is a call into dyld's TLS thunk (`_tlv_get_addr`), and Moto Racer 1997's race after patch 18 spent 8.8 % of its vCPU thread there: 63 % of it the five nested `rcu_read_lock()`/`unlock()` pairs the store slow path took per store into a page holding code (the dirty-bitmap helpers each take the lock; `cpu_exec` already holds it for the whole run — ~2 M such stores a second in this game), the rest the translator reading `tcg_ctx` per operand in the optimizer (`temp_idx`) and two to three times per emitted op / temp / constant. `notdirty_write` now uses `_rcu_locked` variants of the dirty-bitmap helpers (`cpu_exec_step_atomic` gets the RCU read section it lacked, so every caller holds one) and the `tcg.c` allocators read `tcg_ctx` once and pass it down. No behaviour change; the DOS batteries and the XP guest stage are the regression guard. **The race: `_tlv_get_addr` 8.8 % → 2.5 % of the vCPU, generated code 25.6 → 28.3 %, standing start 37.9 → 40.4 fps (60 dumps/s, no perf map, both binaries the same afternoon; the probe delivered fewer dumps on the faster run, so a lower bound). Mid-race fps is not an A/B number: three 15 s samples of the race landed on three track sections (19.0, 20.3, 21.5 fps, the patch-18 binary on both ends), while the thunk's share was 8.8–9.7 % before and 2.5 % after in every one** | the RCU part is worth sending upstream (the lock is redundant on the vCPU thread on every host; the atomic-step guard is a latent hole); the `tcg_ctx` part only matters where TLS is a call |
-| `24-soft-immediates` | **M9 track**: a block whose own code the guest keeps patching reads those operands from the code bytes at run time. The era's software renderers write an inner loop as a template and patch the operands into the instruction stream per span (`mov eax, 12345678h` with the placeholder still visible in a capture); patch 18 takes the 94 % of those rewrites that land on the value already there, and what is left really changes and pays an invalidation and a retranslation each — 31,000–36,500 a second in Moto Racer's race, 30–36 MiB/s of host code, a third of the vCPU in translation. Found on the user's report that braking "almost hangs the game": the tyre smoke is a *second* self-patching rasterizer (a translucent RGB565 span loop at `0x4357f0`, 14 immediate fields per use), and every brake onset doubles the host code generated (`tools/moto-watch.py`, the track doc's "tyre smoke" section). **How it works**: `accel/tcg/tb-softimm.c` counts the guest writes that throw a block away at each physical address; past four, the next translation of it emits its immediates and displacements as host loads of the guest's own code bytes (`gen_soft_field` in `target/i386/tcg/translate.c`, `gen_load`'s `X86_OP_IMM` and `gen_lea_modrm_1`) instead of constants — so the guest's store *is* the update, there is nothing to keep in step — and the block carries the list of byte ranges it reads that way, so a write landing entirely inside them invalidates nothing (`soft_imm_absorbs__locked` in `tb-maint.c`). Emitting the load is correct on its own and a field is registered only where the load is emitted, so a use that kept its constant can never be left stale; a block thrown away four times *anyway* gives up and goes back to constants. **The invalidation counters are hashed multiplicatively since 2026-09-10**: under `pc >> 2`, two blocks whose starts are two bytes apart — a loop entered at its top that jumps back past its first instruction, Blood's span loop (`mov [edi], ebx` then `rol eax, 7`) — shared a slot; one patch threw both away, each reset the slot to its own pc, neither reached four, and the loop retranslated on every patch while every case of the battery still computed the right answer. Only the instructions whose emitter takes the immediate through `gen_load` and nowhere else (ADD, OR, ADC, SBB, AND, SUB, XOR, MOV — which is CMP and TEST too, the group-1 table spells them that way — and IMUL3), **and since 2026-09-10 the imm8 count of every shift and rotate** (`gen_shift_count_1`: the byte loaded and masked at run time the way the `CL` form reads ECX, so the emitter takes its count-may-be-zero path; not RCL/RCR on 8/16-bit operands, whose count is reduced modulo 9/17 at translation, and not SHLD/SHRD, whose count the decoder reads without recording where it is) — Blood's column loop patches `shr`/`rol` counts per wall texture next to the pointers and steps, and without them the block failed soft four times and gave up (the M9 track doc's Blood section); jump targets, port numbers and the SSE lane selectors stay constants. Little-endian hosts that allow unaligned loads, single-vCPU contexts (`CF_PARALLEL` untouched), the block's first page. `-accel tcg,soft-imm=off` is the oracle. Test: `tools/smc-guest-test.py`, whose 18 DOS cases (now including a memory operand's disp32 patched per call, a sign-extended imm8, one instruction whose modrm *and* immediate are patched, a store covering an immediate's tail *and* the opcode bytes after it, a `shr` and a `rol` count patched per call over every byte value with the zero counts that must leave the carry alone, IMUL's imm32, a 16-bit `rcr` whose count keeps its constant, and one imm32 inside two blocks two bytes apart) run in all four combinations of `soft-imm` and `smc-same-value` and assert the path is reached, so the battery cannot pass by not testing it — and, since a right answer does not prove the block survived its patches, the program prints the address of four cases' fields (N, O, P, R) and the soft-imm runs require each to have been absorbed at least N/2 times: on the old `pc >> 2` hash case R computes right and is absorbed 0 times, and the battery fails. **Moto Racer's race, on the display driver's own frame counter (`d3dpt-vga: N page flips in 5.0 s`, which the fps probe's 52-dumps/s ceiling hides): 41 → 58 fps, the worst 5 s window 32.4 → 44.8, the game now at the 60 Hz flip cap for most of the race; TB invalidations 36,500/s → 1/s, host code generated 30–36 MiB/s → 0.03**. **Blood's starting room (DOS, a Win98 DOS box, 640×480 VESA, its own page flips) with the shift counts and the hash: 9.4 → 131 fps facing the corridor, 154 → 556 facing a wall, TB invalidations ~46,000/s → ~2/s** | upstream invalidates and retranslates; this is a translator feature worth proposing once a second guest has confirmed it |
-| `20-inline-lookup` | **M9 track**: the jump-cache probe of indirect branches as TCG ops. Every `ret` / `call *` / `jmp *` (and every jump leaving its page) ended its TB with `helper_lookup_tb_ptr()` — a register sync, `cpu_get_tb_cpu_state`, `curr_cflags`, the breakpoint check and the jump-cache compare, ~70 host instructions plus the call: 13.9 % of the vCPU's self time on 7-Zip, 5.8 % on Moto Racer's race. `translator_lookup_and_goto_ptr(pc, cs_base, flags)` (generic, `accel/tcg/translator.c`) takes the three inputs the target computes as TCG ops exactly like its `cpu_get_tb_cpu_state()` (i386 `gen_eob`: hflags, the eflags bits, the x87 / SSE fast-mode bits of patches 06 / 11, CS base + eip — from the state already stored, so far jumps are covered), hashes the pc, folds the entry's pc, the TB's `cs_base`, `flags`, `cflags` (against `cpu->tcg_cflags`), the breakpoint list and gdb single-step into one mismatch word **branch-free** (a brcond is a TCG block end, where every live temp is spilled and reloaded; a null entry is replaced by the current TB for load safety and its nullness joins the word), and one `goto_ptr` takes the TB's code or the epilogue — the main loop's `tb_lookup` is the miss path (it fills the cache), exactly what the helper did when it found nothing. ~44 TCG ops, ~55 host instructions, no branch but the final one. Kept on the helper: `-accel tcg,inline-lookup=off` (the oracle), `CF_NO_GOTO_PTR`, exec / nochain logging (the helper logs every TB), `one-insn-per-tb`, 32-bit hosts, the x86-64 target (its CS64 case is not built here). Like a `goto_tb` chain, a chain of inline hits keeps its cflags until the next return to the main loop, so `-d nochain` / `one-insn-per-tb` toggled at runtime apply from the next main-loop lookup. Tests: the DOS batteries and the XP guest stage, unchanged. **7-Zip (fixed work, same session back to back): compress rating 1181 → 1325 MIPS at dict 22 (+12 %), 1071 → 1201 at dict 23; decompress 1651 → 1765 (+7 %), 1534 → 1638; the helper's 13.9 % → 0, generated code 79 → 92 %. The race: the helper's 5.8 % → 0, the miss path (`cpu_exec_loop`) 1.3 → 1.5 %; the 60-dumps/s probe is saturated at 39 fps on both, no fps signal** | upstream has the helper; a generic inline probe with a per-target state hook is worth proposing |
-| `21-pinned-regs` | **M9 track, doc 18, parked (off by default; not offered by the launcher since 2026-09-16 — user decision, too unstable for too little gain)**: the i386 register file (`eip` + the eight GPRs) pinned in aarch64's callee-saved x20–x28 for the life of a chain of TBs. The register is authoritative: the prologue loads, the epilogue stores, a helper that may read globals gets them stored first (once per TB unless modified again), one that may write them has them reloaded after, the `qemu_ld/st` slow path stores them before its helper through a shared thunk. `tcg_global_pin_i32/i64` (the target asks, the backend lists its registers; x86-64 lists none yet), the allocator keeps pinned temps in their registers (outputs in place, a scratch + `mov` when a constraint forbids), the liveness pass keeps them live at block ends and may-fault ops, `op T; mov G, T` is coalesced into `op G` (`la_coalesce_pinned_mov`), the optimizer prefers a pinned copy, and the aarch64 slow path saves the live caller-saved registers itself (`TCG_TARGET_LDST_SAVES_LIVE`) so temps are not spilled around memory accesses. The system-mode prologue moves to `tcg_exec_realizefn` (after the target's globals exist). `-accel tcg,pinned-regs=on` enables it (`QEMU_TCG_OPTS=pinned-regs=on` for the DOS batteries, `QEMU_TCG_PIN_MAX=n` caps the count). 7-Zip on: compress +3 %, decompress +15 % over off; the 41 % of samples on register loads turned out to be sampler skid off the TLB chain. Open before it goes on by default: a boot crash seen once with 8 pinned, a 3 % stall at the flags-helper call boundary (track doc) | never (a backend feature); the coalescing and the slow-path save are worth proposing upstream on their own |
-| `22-upstream-apic-reset-cpuid` | **a Win98 guest that restarts freezes on its first frame, and the local APIC is why** (2026-09-06; the "warm reboot of Win98 freezes" thread in doc 00 was untriaged since the Air first showed it — it is not a Mac problem, it reproduces on Linux every time and on a **stock QEMU 11.1.0** too). Win98 switches its local APIC off through `IA32_APIC_BASE` (traced: one `cpu_set_apic_base 0xfee00100`, BSP set and enable clear), and `apic_set_base()` correctly clears `CPUID.01H:EDX.APIC` with the enable bit — that is what the hardware does, and the CPU is meant to get both back at RESET. `apic_reset_common()` restores the enable bit and *not* the feature bit, and nothing else ever sets it: so the next POST reads CPUID and finds no local APIC. SeaBIOS says `No apic - only the main cpu is present` (its own debugcon log, `-device isa-debugcon,iobase=0x402`), skips `smp_setup()` and so never writes `LINT0 = 0x8700` (ExtINT) — while `pic_irq_request()` sees `cpu_is_apic_enabled()` true and routes the i8259's output into the APIC, where `apic_accept_pic_intr()` refuses it because LINT0 is masked. Every PIC interrupt is dropped on the floor. The guest boots as far as IO.SYS's first wait on the BIOS tick counter (`movw %es:0x46c, %dx; cmpw %ax, %dx; je .-7` at 0040:006C) and spins there for ever at 100 % of one host core, with `pic0: irr=11 imr=b8 isr=00`, IF set and `info lapic` showing `LVT0 masked`. It looks like a hang of the whole machine and is not one: the text cursor keeps blinking because `vga_draw_text` blinks it on the host side, needing no guest at all, which is exactly what the user saw on an install CD's boot menu whose countdown had stopped. The fix records `CPUID.01H:EDX.APIC` as the CPU model configures it (`APICCommonState::cpuid_apic`, set in `apic_common_realize`) and restores it in `apic_reset_common()` next to the enable bit; recording it rather than setting it unconditionally leaves `-cpu …,-apic` alone. Test: `tools/win98-reboot-test.sh` (a real Win98 guest, restarted both ways — a QMP `system_reset` and the Start menu's Shut Down → Restart; the verdict is a second SeaBIOS banner on the debugcon plus a whole boot's worth of disk reads after it, because a screendump cannot tell a frozen splash from a slow one) | upstream takes it (still broken in 11.1.0 — worth sending) |
-| `20-embed-audio` | register the `embed` audiodev: QAPI enum/union entry, `audio_template.h` per-direction case, **and `audio/audio.c` `audio_create_pdos` CASE** (missing → NULL pdo segfault) | with 10 |
-| `23-upstream-dsound-option` | `--disable-dsound` was a no-op: QEMU 9.2's guard is `if not get_option('dsound').auto() or …`, and `not auto()` is true for *disabled* too, so the block ran anyway and declared the dependency as soon as `dsound.h` was present (its neighbour `coreaudio` passes `required:` to `dependency()` and behaves). CONFIG_AUDIO_DSOUND therefore stayed set on every Windows build and `dsoundaudio.c` went into `libqemu-embed-i386.dll` with `-lole32 -ldxguid`, for a backend nothing can reach — our audio is patch 20's `embed` audiodev. Guarded by the `no-frontend` check | upstream fixes the guard |
-| `25-upstream-sb16-reset-irq` | QEMU's `sb16` asserts IRQ 5 in three places where nothing a driver reads can lower it again. The card holds its line until the DSP status port is read -- that part is the hardware -- so an assertion with no bit set in mixer register 0x82 holds it *for good*, and on the edge-triggered ISA PIC every block completion after it is a level 1 into an already-high line: no edge, no interrupt, the card deaf until the next DSP reset. `reset()` **pulsed** the line whenever auto-init DMA was running (a raise and an immediate lower, an interrupt no hardware makes); the guest resetting the DSP is one that has *finished* and has IRQ 5 masked, so the edge is latched in the PIC unowned, and Windows' VPICD will not unmask a physical IRQ in that state. `aux_timer()` -- the end of a silence block, DSP command 0x80 -- and that command's short-block path raised without setting the status bit, so the driver's `in 0x2xE` could not lower the line; a reset now also cancels a silence block that has not expired, which otherwise fires afterwards and asserts the line behind the guest's back. Found as Duke Nukem 3D's `SETUP.EXE` on the reporter's Win98 machine: **Test Sound FX Card** plays once and every press after it says *"Playback failed, possibly due to an invalid or conflicting IRQ"*, with `pic0 irr=20 imr=b8` and the card itself holding nothing across it (mixer 0x82 reads 0x00, which is what says the interrupt was never the card's). Test: the `sb16-irq` check in `scripts/test.sh` counts rising edges of IRQ 5 through `info irq` -- a reset must add none and each silence block must add one | upstream fixes it |
-| `26-usb-gamepad` | **M13 path A**: builds `hw/usb/dev-gamepad.c` (overlaid from `gamepad/qemu/` by `prepare-qemu.sh`), a USB HID gamepad — two analog sticks as X/Y and Z/Rz, an 8-way hat with a null state and twelve buttons, in a six-byte report. QEMU has no gamepad of any kind: `hw/input/hid.h` defines `HID_MOUSE`, `HID_TABLET` and `HID_KEYBOARD` and nothing else, and the input core has no axis event a joystick could ride (`InputEventKind` is key/btn/rel/abs/mtt), so this is a whole device rather than a switch. Its own file and not a fourth kind in `dev-hid.c`, because every machine this project makes already has a `usb-tablet` on that code. Wired under `CONFIG_USB_HID`, which is `bool / default y / depends on USB` and so means exactly "this machine has USB". The host drives it through `usb_gamepad_set_state()` (`gamepad/qemu/usb-gamepad.h`) from the embed shim's input bottom half under the BQL — **absolute state, not events**, so a dropped update is corrected by the next one instead of leaving a button held; the device compares against what it holds and NAKs the interrupt endpoint while nothing has changed. A second `-device usb-gamepad` is refused at realize rather than silently ignored. Guest side needs no driver of ours: XP, 98 SE and Me bind their in-box HID stack to a Generic Desktop / Gamepad collection and show it to DirectInput and `joy.cpl`. **User-confirmed with a real controller on XP and 98 SE, 2026-09-09** — and 98 SE is not quite "nothing installed": it asks for the Windows 98 source files (the CD, or the CAB folder) the first time, which the wizard now says. DOS has no USB stack, which is what path B's gameport is for. Embed API v8 (`qemu_embed_pad_state`). Tests: the `pad` check in `scripts/test.sh` (the device attaches to the bus in a real `qemu-system-i386`, a second one is refused, and the report packing through `player --pad-sweep`) plus `tools/hid-descriptor-check.py`, which parses the shipped descriptor bytes. A real controller has been used on it in XP and 98 SE (2026-09-10), and since the same day the guest side is under a test: `pad-guest-xp` boots XP with the pad and asks DirectInput what a game would ask (`guest-tools/src/padwin.c`) | never; it is ours |
-| `27-gameport` | **M13 path B**: builds `hw/input/gameport.c` (overlaid from `gamepad/qemu/`), the analog joystick port at 0x200-0x207. QEMU has never answered 0x201 — `sb16.c` is the DSP and mixer only, and the port a real Sound Blaster carried is not in it — so DOS, which reads the port itself and has no USB stack for path A, had no way to a controller at all. Four RC one-shots and four buttons: a write arms all four, a read has bits 0-3 *set* while each axis charges and bits 4-7 *clear* while each button is held, and `t = 24.2 us + 0.011 x R us` over a 0-100 kohm pot makes an axis byte of 0x00 a 24 us pulse and 0xff an 1124 us one. **No timer**: the write records deadlines on `QEMU_CLOCK_VIRTUAL` and a read compares against them, which is exact and costs nothing on a port nobody polls. Its own `CONFIG_GAMEPORT` (`default y / depends on ISA_BUS`) and a standalone ISA device rather than a member of one sound card, because the family's card is a separate choice (`bundle::Sound`) and a joystick should not appear and vanish with it. Driven from the *same* `qemu_embed_pad_state` as the usb-gamepad — no API bump, one more consumer of the same bytes, and a machine has one device or the other. The **d-pad drives the first stick's axes to their ends** inside the device: a Gravis GamePad has no pots at all, so a DOS game cannot tell a d-pad from a stick and has no other way to read one. Guest side: DOS needs nothing — a DOS box under Windows 98 included — Win9x wants "Standard Game Port" through Add New Hardware and then calibration (the port never was PnP), and XP is not offered it. **Nobody has installed that driver and nobody needs to**: on 98 a *Windows* game gets its joystick from the `usb-gamepad` through DirectInput and winmm alike (patch 26, the `pad-guest-98` check), so M13 dropped the 9x driver half rather than building it and this device keeps the DOS job it was written for. Tests: the `pad` check in `scripts/test.sh` (the device attaches, and the port reads f0 idle / ff armed with the VM stopped / f0 once the guest has run) and **`tools/pad-guest-test.py`, where a real FreeDOS guest counts the one-shots down**, plus a hand run with a **PlayStation 5 DualSense in a Windows 98 DOS box** (2026-09-10: sticks, d-pad and buttons all read, the only test of the d-pad fold with real hardware): 12 / 265 / 571 counts for the stick's two ends and its centre against true pulse ratios of 1 : 23.8 : 46.4 | never; it is ours |
-| `28-upstream-vga-chain4-dirty` | **The VGA chain-4 write marks the wrong byte dirty**, so a game's screen stops updating below the first quarter of it. `vga_mem_writeb`'s chain-4 branch stores at `(addr << 2) | plane` and marks `addr` -- but `addr` has already been right-shifted by two for doubleword mode (`VGA_CR14_DW`) and had its plane split off, so the byte written is the original CPU offset and the byte *marked* is that offset over four. Every write in video memory therefore marks something in the first quarter of it, and `vga_draw_graphic` redraws only the scanlines whose own pages came out dirty: in mode 13h (64000 bytes) the whole frame buffer marks bytes 0..16000, which is pages 0-3, which is **scanlines 0-51**, and nothing below line 51 is ever drawn again however many times the guest rewrites it. It takes an adapter that routes chain-4 writes through this function to see it: the standard VGA installs the `vga.chain4` RAM alias instead (`vga_update_memory_access`) so its stores are plain RAM and the softmmu's `TLB_NOTDIRTY` path marks them, while the Cirrus keeps its own MMIO ops and hands everything that is not a Cirrus extended mode to `vga_mem_writeb`. Which is why Duke Nukem 3D is clean at 320x200 on `-vga std` and wrong on `-vga cirrus` (user report, 2026-09-09). Not ours -- `hw/display` carries no other patch and this is 9.2.4's own code. Test: `tools/vga-dirty-guest-test.py`, a DOS program that fills video memory a page at a time with its own page number, twice, and reads the answer back off a screendump; the guest's own read-back proves the bytes are in memory and only the display is behind | upstream fixes it |
-| `29-optimization-switches` | **Every patch of the queue answerable to its own switch.** Eight of them could be turned off and A/B'd; patches 15 (`tb-invalidate-fast`), 16 (`tlb-floor`) and 19 (`tls-hot-paths`) could not, having no property at all -- so "every optimization off" cleared eight of eleven, and the three left in are the ones sitting on TB invalidation, the softmmu TLB and `notdirty_write`, which is exactly where a display or a self-modifying guest goes wrong. That cost a wrong conclusion on 2026-09-09 (a user turned every switch off, the fault stayed, and the M9 patches were written off as innocent when three had never left the picture). Three accelerator properties, all defaulting on: `tb-invalidate-fast` gates all four of patch 15's cuts, `tlb-floor` chooses between our 4096-entry floor and upstream's 64/256 at run time (`tlb_dyn_min_bits`, read per resize rather than baked in by the preprocessor, so it takes effect at the next flush), and `tls-hot-paths` chooses in `notdirty_write` between the dirty-bitmap helpers that assume the vCPU's RCU read section and the guarded ones that take the lock themselves -- both branches must set exactly the same bits, which is the whole claim patch 19 makes, so the off branch is its oracle. Patch 19's other half, the translator reading `tcg_ctx` once per operand, is parameter passing with no reachable behaviour and has no switch. Test: the `optimizations` check in `scripts/test.sh` puts all eleven on the command line and has our own `qemu-system-i386` accept it (and a name that does not exist is still refused, so acceptance means something) | never; it is ours, and it is what makes the queue bisectable |
-| `30-3dfx-ui-vtable` | the 11 qemu-3dfx UI entry points (`mesa_*`, `glide_*`) dispatch through a `QemuFxUiOps` table (`ui/fxui.c`), which any frontend can register; the embed library registers its window-less provider (`embed/embedfx.c`); no provider = contexts refused / no Glide window, VM keeps running (supersedes the spirit of 04). Upstream also registered SDL's implementations here; since 2026-09-07 QEMU is built `--disable-sdl` and `ui/sdl2.c` is not compiled, so that half is gone | upstream qemu-3dfx grows a provider seam |
-| `31-mesa-ctx-weak` | `hw/mesa/mglcntx_linux.c` (GLX — the one file Linux and macOS share now that patch 02 no longer swaps in `mglcntx_sdlgl.c`, macOS's `dllname` included) exports weak so `embed/mglcntx_embed.c` overrides them inside libqemu-embed while qemu-system keeps the native backend. Embed backend: Linux = EGL surfaceless + pbuffer as FBO 0; macOS = CGL context without a drawable + an FBO standing in for the default framebuffer; both read FBO 0 back on swap (bring-up); **2026-09-06 (M11):** on Windows the same job is done by *splitting* `mglcntx_mingw.c` instead — a COFF weak external is not an ELF weak definition and leaves qemu-system-i386.exe with undefined references — so its WGL backend sits behind `MESAGL_WGL_BACKEND` and its platform-independent helpers behind the negation, and patch 10 compiles the backend half a second time into the emulators alone; **2026-09-17:** on macOS the file's GLX half is replaced by patch 70's refusing backend, which is weak the same way | a per-consumer backend selection in meson |
-| `32-mesa-setfunc` | `MesaGLSetFunc(fenum, fn)`: swap one guest-dispatch entry. The macOS embed backend redirects `glBindFramebuffer(…, 0)` to its stand-in FBO | upstream exposes the table |
-| `33-glide-host-ops` | **doc 12 §5**: Glide renders into the frontend's context instead of a window of its own. `hw/3dfx` is a dispatcher -- at `grGlideInit` it `dlopen`s a host-side `libglide2x` and looks up 183 entry points in it -- and upstream then hands that wrapper a window handle to make a GL context on, which the player has no way to give. A new `QemuFxUiOps::glide_host_ops` returns the `GlideHostOps` table in `glidept/glide_host.h` (`begin`/`present`/`end`/`get_proc`) and `init_glide2x` passes it to the wrapper's optional `setHostOps` export right after loading it, before anything can open a window with it. A wrapper without the symbol, or a frontend that registers no `glide_host_ops`, is upstream unchanged. Same patch, same load path: the library is searched for the way `d3dpt_exec_load.c` searches for the executor -- `QEMU_GLIDE_LIB`, then `build/glide/libglide2x.so`, then the loader's own path, then `/usr/local/lib` -- so a build tree needs no environment at all. The build tree deliberately comes before the loader: a distribution's `libglide2x` is an OpenGLide *without* `setHostOps` and would try to open a window of its own. `hDll`'s NULL check also moves above the `setConfig`/`setConfigRes` lookups, which `dlsym`'ed on a NULL handle -- glibc's `RTLD_DEFAULT`, i.e. the whole process -- when no wrapper was found. Test: the `glide-host` check (`tools/glide-host-test.cpp`) | upstream qemu-3dfx grows a window-less provider |
-| `34-pit-overdue-irq` | **A DOS game's clock ran at twice real time.** `pit_get_count()` computes counter 0 from the clock at every access, but the IRQ 0 edge at the counter's wrap is raised by `irq_timer`, which the main loop runs a wakeup late — and a guest reading the PIT in a tight loop holds the BQL for most of that. A read in the gap sees the counter wrapped and the tick not yet counted, which a real 8254 shows for about one clock. DOS Quake's `Sys_FloatTime` builds its time from the BIOS tick word plus that counter, counts a backward step as zero *and* takes it as its new reference, and so counts the whole period again when the tick lands: measured with `QCLOCK.COM` in pure DOS, one full 55 ms backward step on every tick (540 of 540) and Quake's clock at 200 % in every window (2026-09-10, the "quake.exe speeds up" report). Every PIT port access now first delivers the transitions whose time has passed and `irq_timer` has not run yet, in order; an `IN`/`OUT` ends its TB (`translator_io_start`), so the interrupt is taken before the guest's next instruction and Quake's own "the tick moved during the read" check does what it does on the real part. After it: 0 backward steps, 100 % in every window. `-global isa-pit.overdue-irq=off` is upstream's behaviour, the A/B. Test: the `pit-guest` check (`tools/pit-guest-test.py`) | upstream delivers the edge on access |
-| `35-tb-code-map` | **3DMark 99 on Win98 spent 57 % of QEMU walking TB lists and invalidated nothing** (2026-09-11, user report "3D performance a bit underwhelming"). Patch 15's per-page byte range `[code_lo, code_hi]` of the TBs on a page is right for a data page with one stale TB and wrong for what a Win9x module is: code at both ends and data between, so every data write lands inside the range and walks the page's whole list — twice since patch 24, whose `soft_imm_absorbs__locked` is asked first (29 %, and `tb_invalidate_phys_page_range__locked` 28 %, during the CPU and fill-rate tests). The range becomes a `uint64_t` `code_map`, one bit per 1/64 of the page (64 bytes of 4 KiB) set in `tb_page_add` for every chunk a TB touches and restarted with the page's first TB — the range's own lifetime, and a superset of the list at every moment — so a write to a chunk with no bit returns from `tb_invalidate_phys_range_fast` before either walk. A self-modifying loop writes inside its own chunks and is handled exactly as before. Behind patch 15's switch (`tb-invalidate-fast=off` restores the upstream walk, and patch 24 is then asked exactly as it was). **3DMark 99 Max, 800×600×16 on claude98: 3334 → 5894 3DMarks** (CPU 10969 → 11648), the walks 57 % → 0.1–0.4 %, the race test 25 fps → the 60 Hz flip cap, the first-person test 4.5 → 13.6 fps. Tests: `tools/smc-guest-test.py` and the DOS batteries (`scripts/test.sh all`) | upstream keeps a per-page code map (it dropped its byte bitmap in 8.x) |
-| `36-sse-load-vector` | **An SSE memory operand stalled the instruction that read it** (2026-09-11, 3DMark 99's first-person test at 13.6 fps, its time 78 % in guest code and half of that in the MAX-FX engine's SSE transform DLL). `gen_ldo_env_A0` loads a 16-byte operand with `qemu_ld_i128` and writes it into `env` with `st_i128`; on a guest without AVX (every era CPU model) the load is `MO_ATOM_IFALIGN_PAIR`, which the x86-64 backend emits as two 8-byte loads into a register pair, and `st_i128` is two 8-byte stores. The next reader is a 16-byte vector load — the inline op of patch 11/12 the operand is for, or the instruction after a `movaps` — and a load spanning two narrower stores cannot be store-forwarded, so it waits for both (`-d out_asm` of `subps (%eax),%xmm0` shows exactly that; register-only `addps` cost 2.7 samples per instruction, the memory form 10.1, a `movaps` load 6.1). The pair is now assembled in the vector unit (each half dup'ed, merged with patch 12's `SIMD_TBL_MASK64LO`) and written with one `st_vec`; same guest access, alignment check and fault. Behind the `sse-fast` property (not the per-TB MXCSR state), `TCG_TARGET_HAS_v128`, a 16-byte-aligned destination. **CPU 3DMarks 11642 → 13549 (+16 %), the first-person test 13.6 → 15.4 fps.** Tests: `tools/sse-guest-test.py` (memory-operand forms, on/off identical) and the x87, SMC and rep batteries | upstream assembles an i128 into a vector (or grows a vector-typed guest load) |
-| `37-x87-pe-sticky` | **x87 at PC=24 paid for an inexact flag that was already set** (2026-09-11, 3DMark 99's first-person test: its x87 memory forms ~400 host bytes each, a quarter of the frame, in 3DMARK.EXE's lighting code and MAX-FX's Pentium III DLL). Patch 06 is exact, PE included: a `fmuls m32` computed a fused residual, rounded to 24 bits and back, xor'ed the two and did a read-modify-write of `fpus` — per instruction; add/sub ran a five-op TwoSum for the same bit. PE is sticky and masked in inline mode, so once it is set none of that is observable. `TB_FLAG_X87_PE` (TB-flag bit 2, no hflags bit) marks a TB translated with PE already set: no residuals, no `x87s_set_pe`; the guard re-checks `fpus.PE` at run time (a chained TB is not looked up again), and `fclex`/`fninit`/`fldenv`/`frstor`/`fnsave` turn the sticky mode off for the rest of their TB. A float32 operand is converted by the host's `cvtss2sd` after the existing check (exact). `info registers` counts the guard's exits. **Patch 20's inline lookup builds the TB flags as TCG ops and must carry the new bit too**: a version without it lost a quarter of the first-person test's frame rate to epilogue exits while every x87 op got cheaper (dispatch 5.6 → 14.7 %). **CPU 3DMarks 13549 → 14690, first person 15.4 → 16.2 fps**; x87 battery identical on/off, its PC=24 bench 0.49 → 0.38 s. Behind `x87-fast` | upstream has no x87 shadow path |
-| `38-lookup-known-flags` | **Every indirect jump rebuilt the TB flags' mode bits from env** (2026-09-11). Patch 20's `gen_lookup_and_goto_ptr` computes pc / cs_base / flags as TCG ops so `ret`, `call *` and `jmp reg` find the next TB without leaving generated code; the flags half was ~22 of ~70 host instructions — hflags, eflags, then the x87 mode byte, the SSE mode and its sticky inexact flag, and patch 37's x87 PE bit. A C++ engine's virtual calls and small methods are mostly that (MAX-FX's core DLL in 3DMark 99: its hottest instructions were `ret` and `call *0x84(%eax)`, ~100 host instructions each). The x87 mode (every control-word change ends the TB, `gen_x87s_ends_tb`), the SSE bit (cleared only by `ldmxcsr`/`fxrstor`/`xrstor`, which end the TB) and the x87 PE bit (the TB's own while no `fclex` ran in it) are now the leaving TB's own flags, one constant OR; a bit that became set during the TB is emitted as 0, which picks the exact variant until the next full lookup — slower, never wrong. hflags and eflags stay loaded (RF, TF and the interrupt shadow as `gen_eob` left them; far calls reach the same lookup through helpers that change CS). **CPU 3DMarks 14690 → 15389, first person 16.2 → 17.1 fps.** Behind `inline-lookup` | goes with patch 20 |
-| `39-vec-allsign` | **Every inlined SSE op's lane check went through env** (2026-09-11). Patch 11 checks all lanes of a result before storing it, building a mask whose lanes are all ones or all zeros; TCG had no way to branch on a vector, so the mask was stored to `env->sses_scratch`, loaded back as two halves, and'ed and compared — six instructions and a store-to-load dependency in front of every SSE op's branch. A new TCG op, `vec_allsign_i32` (i32 = 0 iff every byte of a vector has its top bit set; a vector-register operand like patch 06's `cvt` ops), is `vpmovmskb` + `xor` on x86-64 and `cmlt #0` / `uminv` / `umov` / `eor` on aarch64 (`TCG_VEC_TMP0`); the check is that op and a `brcond`, the round trip stays where a backend lacks it. The aarch64 half was first compiled on the Mac. **CPU 3DMarks 15389 → 15940, first person 17.1 → 17.5 fps.** Behind `sse-fast` | upstream grows a vector-test op |
-| `41-disas-context-uninit` | **Every translation began with a 13.6 KB memset** (2026-09-11). QEMU builds with `-ftrivial-auto-var-init=zero`, and `gen_intermediate_code`'s `DisasContext` is ~13.6 KB since patch 06's 96 slow blocks: a preloaded memcpy/memset tracer counted 8.7 GB of it in one 3DMark 99 run. The variable opts out (`__attribute__((uninitialized))`, where the compiler has it); `i386_tr_init_disas_context` sets what the translator reads and `x87s_new_slow` clears each slow block it hands out. No measurable change on 3DMark (a steady-state benchmark translates little); a retranslation-heavy guest gains most. No switch: no behaviour changes, only what a hardening flag adds to one stack frame (patch 19's precedent) | upstream marks it too |
-| `40-d3dpt-device` | instantiate the paravirtual Direct3D device (`hw/d3dpt`, overlaid from `d3dpt/hw` by prepare; doc 14) on the pc machine next to the qemu-3dfx devices and add its meson subdir. The device itself is ours, not a patch: SysBus, register page at 0xdfffe000, 64 MiB RAM window at 0xd8000000, executor library dlopened on first guest attach (`d3dpt_exec_load.c`, shared). The same overlay carries `d3dpt_vga.c`, the `d3dpt-vga` PCI framebuffer adapter for the XP display driver (doc 15): stdvga core + register BAR, 128 MiB VRAM whose top 64 MiB is the Direct3D command window of the driver's DDI (M7c), `-vga none -device d3dpt-vga` | never (our device) |
-| `42-jump-cache-keep` | **Every TLB flush emptied the jump cache** (2026-09-11 evening, 3DMark 99's first-person test on Win98: 2,400 same-value CR3 writes a second, the VMM's TLB flush after each page it maps or unmaps, and after every one of them every `ret` / `call *` / `jmp *` paid the hash-table lookup — 2.3 % of the frame in `qht_lookup_custom` / `tb_htable_lookup` / `tb_lookup_cmp` plus the main-loop round trips). An entry's key carries the cache's generation in the high half of the pc word (32-bit targets); a flush bumps the generation, and `tb_lookup()` re-validates a stale entry the way the hash table would — the TB's physical page(s) against the pc's mapping now — and re-stamps it (0 of 2.3 M/s failed). The cache is 65,536 entries instead of 4,096 (the misses left were conflicts: 11.7 M → 2.5 M per 10 s). **First person 18.2 → 19.0 fps.** `-accel tcg,jump-cache-keep=off` restores the clear | upstream keys its jump cache by physical page |
-| `43-eob-chain` | **A non-jump end of block always left for the main loop** (2026-09-11 evening): after every `mov ds/es` in 32-bit code, `sti`, `mov ss`, `popf`, `iret`, `sysenter` and every x87 / MXCSR control-word change — Windows 98's ring-0 entry alone was five round trips per VxD call, 1.2 M entries a second in 3DMark. The main loop is needed only for an interrupt that was pending while IF was clear (nobody re-raises the exit request when IF is set), so the block loads `cpu->interrupt_request` and chains through the inline lookup when it is zero, exiting as before otherwise. And a block that ended on a control-word change rebuilds the lookup's mode bits from env — patch 38's constants are exactly wrong there, and MSVC's `_ftol` (fldcw / fistp / fldcw) missed the probe twice per call. Main-loop entries 12.3 M → 5.7 M per 10 s, first person 19.0 → 19.1 fps (the round trips were cheaper than their count). `-accel tcg,eob-chain=off` | upstream chains these |
-| `44-tlb-retire` | **A CR3 write cleared the softmmu TLB and the guest walked its page tables again for every page** (2026-09-11 evening): 4.2 M refills per 10 s after Win98's 2,400 flushes a second (its VMM's map/unmap of one page per page fault — 3DMark commits and frees buffers every frame), ~185 walks per flush for pages nothing had changed. `cpu_x86_update_cr3` → `tlb_flush_retiring()`: the entries filled since the last flush are copied into a persistent retired table per mmu index (accumulating: each 0.4 ms interval touches different pages) and the flush clears only those entries, not 64 KiB; a miss probes the retired table first and asks the target (`TCGCPUOps.tlb_retired_reusable`, i386: the paging key — CR3, mode, A20, SMM, PKRU/PKRS — and every page-table entry the walk read, kept by host address and value in `CPUTLBEntryFull.extra.x86`, all unchanged) before walking; any other flush drops the retired tables, an invlpg its page. `info jit` prints the refills, the reuses and the queue's switches. 95 % of the refills reused; **on/off A/B: first person 19.0 vs 18.9 fps, CPU 3DMarks 16295 vs 16080 — inside run-to-run noise on the Ryzen**, where a walk was cheap; kept for hosts and guests where it is not. **Fixed 2026-09-12: the list of filled slots was `uint16_t`**, while a table grows to `CPU_TLB_DYN_MAX_BITS` (20 bits here) and patch 16's floor never shrinks it — past 65,536 entries every index above wrapped, a CR3 flush cleared the wrong slots and left live translations standing, and Windows 98 died a few seconds into `SETUP.EXE`'s install with a different victim each time (VTDAPI's timer records, a CD driver's data, a triple fault; 7 of 9 fresh boots, on the Cirrus too). The reuse check was sound; the clear was not. `uint32_t` now (docs/00-status.md). `-accel tcg,tlb-retire=off` | upstream's TLB keeps state across CR3 writes |
-| `45-x87-prec24-f32` | **x87 at PC=24 kept as binary32: an operation is one host instruction** (2026-09-12). Patch 06's shadows were binary64 at every precision, and at PC=24 (what Direct3D sets, so a 3D game's whole frame) every result was rounded to 24 bits through two conversions and an xor on the dependent chain, after the operation and its check; the x87 forms were 24 % of 3DMark 99's first-person frame at 2.9 profile samples per instruction. The shadows at PC=24 are now binary32 in i32 globals of their own (`cpu_x87_ss[]`), and with the inexact flag already sticky (patch 37, the state a game's loop runs in) an op is the host's `addss`/`mulss`/`divss`/`sqrtss` plus one range check: correctly rounded to 24 bits is exactly the x87's PC=24 result while it has a binary32 exponent, and one that would not (overflow, underflow, and the lowest binade, where a value just under 2^-126 rounds up to it in binary32 but not with the x87's wider exponent) takes the slow path. While PE is still to be decided the operands are widened and the binary64 path runs as before, its rounding to 24 bits being the result. `fld m32` is the operand's bits after the zero-or-normal check, `fst m32` the shadow's bits with no check and no flag; `fist`/`frndint`/`fst m64` widen once and keep their binary64 code; the unwinder converts from binary32 for a mode-2 block. **The 40–56 s window 26.2 → 27.8 fps with the vertical blank off, 19.0 → 19.5 with it on — found the same day to be the CPU 3D Speed test's window, not the first-person test's, which is at the 60 Hz cap and went 90–99 → 95–105 fps uncapped (the track doc's correction); CPU 3DMarks 16295 → 16899, 3DMarks 6005.** `tools/x87-guest-test.py` identical on/off over 709,893 result lines, **now including a second sweep of every control word with PE set before each case** — `fninit` before every case had meant the sticky variant (patch 37's too) never ran in the battery — and its bench loops set PE first for the same reason; a new single-precision loop (`X87BEN2S`, the shape of Direct3D code) runs at PC=53's speed, 0.33 s for 20 M iterations of seven ops, where the m64 loop at PC=24 takes 0.44 s (it widens every store and narrows every load). Behind `x87-fast` | upstream has no x87 shadow path |
-| `46-darwin-strchrnul` | **`strchrnul` detected against the deployment target on macOS** (2026-09-12, the Mac app's floor moving to Homebrew's, `docs/build-macos.md` "The floor"). The macOS 15.4 SDK declares `strchrnul` available from 15.4, but `cc.has_function('strchrnul')` tests through meson's own stub prototype, which has no availability, so it links against libSystem and succeeds whatever `MACOSX_DEPLOYMENT_TARGET` says; `HAVE_STRCHRNUL` then makes `qemu_strchrnul()` call it directly, which on a macOS 14 build is a weak reference that is NULL on 14. On Darwin the check now goes through `<string.h>` with `-Werror=unguarded-availability-new`, so the target decides and `util/cutils.c`'s own `qemu_strchrnul` is compiled below 15.4; other hosts keep the old check. `scripts/configure-qemu.sh` adds the same error flag to every Darwin compile, so a second such API would fail the build rather than the user's Mac | upstream QEMU checks availability for it |
-| `47-x87-pc64-as-53` | **x87 at 64-bit precision run at 53 bits — the one switch that is not exact, and off by default** (2026-09-14, 3DMark2001 SE's Lobby, doc 13 "PC=64 as 53 bits"). Patches 05/06/37/45 cover PC=53 and PC=24 bit-exactly; code at PC=64 (a control word with PC=11b) got none of it, since nothing on the host holds a 64-bit mantissa, and paid a helper call into softfloat's 80-bit path for every arithmetic instruction — the Lobby's debris simulation alternates `FCW=033f` with Direct3D's `003f`, and a profile there had x87 helpers and softfloat at over half the vCPU. The CPU property `x87-pc64-as-53` (`=on`) makes `update_fp_status` treat PC=64 as PC=53: softfloat rounds at 53 bits, patch 05's helper path applies and patch 06's inline mode takes the block (mode 1); `fnstcw` still returns the guest's word. Results differ from an x87's in the last 11 bits of the mantissa, which is why it ships off and why the launcher labels it "not exact" (an exact 64-bit path on the integer mantissas was sized first and dropped: it would have saved only the softfloat share, not the helper calls). **The Lobby of 3DMark2001 SE's demo on `base98-us`, over its 23 five-second windows with no trace: 35.2 fps off, 50.3 fps on (worst window 18.8 → 35.2, best 57.6 → 60.2, the cap).** Tests: `tools/x87-guest-test.py` with the switch at its default (identical on/off), the `optimizations` check (the switch on `-cpu`) | never: an opt-in inexact mode is ours |
-| `48-x87-pc64-inline` | **x87 at 64-bit precision inline and exact: the x80 itself as the shadow** (2026-09-14, doc 13 "PC=64 inline, exact"). The fourth value of the x87 mode TB flag: at PC=64 (with RC nearest, PM masked, `x87-fast` on) the translator keeps the stack as the x80 values themselves — mantissa in i64 globals, sign \| exponent in i32 ones (`env->x87_xl[]`/`x87_xh[]`) — so the x87's full exponent range needs no fallback, reloads and materializations are copies, `fld m32/m64` exact conversions, `fild` an inline normalization and compares a 128-bit integer key. `+ - * /` are calls to pure helpers (`TCG_CALL_NO_RWG_SE`: the shadows stay in host registers) doing the 128-bit integer arithmetic of `x87f_binop_x` rounded to 64 bits nearest-even, with an "ok" bit that sends overflow, tininess, denormals and NaNs to the slow block; `fst m32/m64` and `fist` round through helpers of the same kind; `fsqrt`/`frndint` are not inlined in this mode. The ordinary helpers' PC=64 arithmetic (`x87_fast_prec`) takes the integer path too. **3DMark2001 SE's Lobby with no switch: 35.2 → 39.7 fps (worst window 18.8 → 23.8), against 50.3 with patch 47's inexact switch.** Tests: `tools/x87-guest-test.py` (its PC=64 control words 033F/833F, and operands for exact 64-bit ties, a cancellation and full mantissas added with it) | upstream has no x87 shadow path |
-| `49-x87-pc64-inline-mul` | **x87 at 64-bit precision: multiply and `fst m32` inline, no helper call** (2026-09-14, doc 13 "PC=64 inline, exact"). A profile of patch 48's mode 3 in the Lobby had the arithmetic helpers at ~15 % of the vCPU and the x87 pages that call them as the hottest generated code (argument setup, the i128 unpacking, spills around each call). `fmul`: the mantissas' 128-bit product (`mulu2_i64`), normalized by its top bit, then `x87s_pack_x80` — `x87f_pack_x` as TCG ops: the pre-rounding exponent checked to 1..0x7ffd, nearest-even on the 64 bits below, the carry out of 2^64, PE, a zero operand's signed zero. `fst m32`: the top 24 mantissa bits rounded by the 40 below, one range check after the rounding's carry. Both label-free apart from the slow branch. `+ − /`, `fst m64` and `fist` stay helper calls (an inline add would compute both the add and the subtract to stay label-free, ~100 ops, no clear win over the call). **The Lobby with no switch 39.7 → 44.2 fps (worst window 23.8 → 29.4); patch 47's inexact switch: 50.3.** Tests: `tools/x87-guest-test.py` 906,713 lines identical on/off | upstream has no x87 shadow path |
-| `50-cdimage-block-driver` | **doc 17 §5.2 (M5)**: meson option `libdisc_dir` (the directory holding `liblibdisc.a`, the Rust staticlib of the CD-ROM image model in `libdisc/`, built by `scripts/configure-qemu.sh` which passes `-Dlibdisc_dir=target/release`), the `libdisc` dependency (+ threads, dl, m, rt, util, gcc_s on Linux; iconv on macOS), `CONFIG_CDIMAGE`, a summary line, and `block/cdimage.c` in `block_ss` (the staticlib's own link libraries are per-platform — `rustc --print native-static-libs` — and since 2026-09-06 an `if/elif` rather than a ternary, because meson forbids chaining those and Windows needs a third list). The driver itself is ours, not a patch: `libdisc/qemu/cdimage.[ch]` and `libdisc/libdisc.h` are overlaid into `block/` and `include/block/` by prepare. `-cdrom x.cue` / `x.ccd` probe to `cdimage` (a plain `.iso` stays on `raw`), the block layer sees the L-EC-verified 2048-byte view, `cdimage_disc(bs)` hands the raw model to atapi.c (patch 51). Migration / snapshots with a `cdimage` medium: unsupported (no vmstate for the ATAPI disc fields) | never (our driver), or an upstream cdimage |
-| `51-atapi-disc-model` | **doc 17 §5.3–5.4 (M5)**: `hw/ide/atapi.c` asks `cdimage_disc(blk_bs(s->blk))` on every command; NULL = today's path byte for byte (plain ISO). With a model: READ(10)/(12) L-EC-verified (audio → 05/64/00, a bad sector → 03/11/05), READ CD / READ CD MSF over the full MMC-3 field table (C2, three subchannel forms), READ TOC 0/1/2, READ SUB-CHANNEL 1/2/3, READ DISC INFORMATION from libdisc; GET CONFIGURATION = a CD-ROM drive (features 001E, 0103), mode page 2A a 48× CD-DA drive, page 0E the audio ports, MODE SELECT(10) sets it (a data-out packet command: `ide_atapi_data_out_done` is registered in core.c's end-transfer table); PLAY AUDIO (10/12/MSF/TRACK-INDEX), PAUSE/RESUME, STOP PLAY/SCAN **and the stop half of START STOP UNIT** (2026-09-07: XP's `mcicda` stops the drive with `1b 00 00 00 00` and never sends 0x4e, so a drive that ends playback on 0x4e alone plays the track out after the Stop button): **CD-DA through `-device ide-cd,audiodev=<id>`** (a 44100 Hz stereo voice fed sector by sector, page 0E routing/volume applied), or a position at 75 sectors/s of virtual time without one; INQUIRY from `-device ide-cd,model=`; REQUEST SENSE with ASCQ. PIO fills each sector synchronously, DMA fills whole chunks and re-enters through a bottom half. New IDEState / IDEDevice fields (`ide-dev.h`) are **not migrated**: snapshots / migration with a cdimage medium are unsupported. `CDIMAGE_TRACE=1` logs packets, replies and sense. Tests: `tools/atapi-guest-test.py` (DOS, PIO, both BCLs, MODE SELECT, both stops), `tools/xp-cdimage-test.sh` (cdrom.sys, DMA; `CDTEST=` plays the tone into a wav and the mode after MCI's stop must not be `playing`) | never (ours), or an upstream raw-CD ATAPI |
-| `52-atapi-disc-shelf` | **doc 07's shared disc shelf, in the guest (M6)**: a vendor ATAPI opcode (0xD0, MMC's vendor range) on `ide-cd` that LISTs the host's disc shelf and LOADs/EJECTs from it, so the in-guest `CDSHELF` program can swap discs without the launcher. The CD-ROM drive is the channel because it is the one thing DOS, Win98 and XP can all send a raw command to (PIO / ASPI / SPTI) and we own its firmware — no new device, no guest driver; a drive with no `shelf=` answers ILLEGAL REQUEST. `shelf=<file>` is a flat `<label>\t<path>` line file the launcher writes beside the machine's monitor socket and rewrites when the shelf changes (not `discs.toml`: this side is C). Fixed-stride reply so the DOS build can walk it with an index register. LOAD/EJECT run the medium change from a bottom half (`qmp_blockdev_change_medium`/`qmp_eject` by qdev id) rather than inline — the change drains the drive whose command is still executing — which is also how a real drive behaves: the command returns, the tray moves after, UNIT ATTENTION on the next command. Protocol: `cdshelf/cdshelf_proto.h` (bump `CDSHELF_PROTO_VERSION` on any change). New IDEState fields not migrated, like 51's. **2026-09-05, first guests on it** (`guest-tools/src/cdshelf.c` for Win98/XP, `cdshelf.asm` for DOS): the opcode is `CONDDATA`, not a plain data command, because only LIST transfers anything and a guest sending LOAD/EJECT through SPTI or ASPI legitimately leaves the byte count limit at zero — which the generic check aborts at the ATA level (LIST validates it itself); and a LOAD of a disc the host cannot open is refused with 02/3A instead of being accepted and then failing in the bottom half, where the guest would never hear about it. Tests: `tools/atapi-guest-test.py` — 206 replies identical to `discx`, plus 19 shelf commands per byte-count limit (LIST at five allocation lengths incl. label truncation and the MISSING flag, a bad subcommand, a slot that isn't there, LOAD/EJECT with the *sectors* read before and after to prove the tray really changed) and a second boot running the real `CDSHELF.COM` on the same shelf | never (ours) |
-| `53-atapi-dvd-profile` | **doc 17 §2.1, M5g**: a cdimage medium past an 80-minute CD (`CD_MAX_SECTORS`, the line QEMU's own `media_is_dvd()` already draws) is reported as a **DVD-ROM** rather than an overlong CD — GET CONFIGURATION's current profile and its profile list (DVD-ROM current, CD-ROM still listed), the DVD Read feature `0x001f` beside CD Read and CD Audio, and mode page 2A's DVD-ROM read bit, all following the medium in the tray. A folder disc can now be bigger than a CD, and past 99:59:74 an MSF has no address to give a TOC lead-out, a subchannel position or a sector header, so claiming CD-ROM there is a lie a guest can catch. READ DVD STRUCTURE needed nothing: `cmd_read_dvd_structure` already refuses only `media_is_cd`. MMC has the drive decide its features and only the profile follow the disc; ours holds one medium and a guest re-reads both on every media change, so this costs nothing and **with a CD in the tray the bytes are unchanged**, profile list included | never (ours) |
-| `54-atapi-audio-seek-stop` | **doc 17 §5.4**: a SEEK ends audio playback and leaves the head where it was sent, because **on Win9x a seek *is* the stop**. `mcicda` there sends no STOP PLAY/SCAN, no START STOP UNIT and no PAUSE — a whole play / pause / stop session through MCI is one PLAY AUDIO MSF and two SEEKs — and then reports "stopped" on its own authority, so the drive played the rest of the disc out behind a stopped MCI (11 MB of wav for a 4-second play; the user reported it as "the stop doesn't work on Win98"). Data reads are deliberately *not* treated that way: Win98's CDFS re-reads the volume descriptors several times a second throughout a play, so a drive that stopped on a read would never play a note. Second half: the position replies fell back to the last sector *read* once no audio status was left, so XP answered "track 01, 00:00:17" — its own volume descriptor — when asked where it was after a stop. Measured and guarded by `tools/cdaudio-guest-test.sh` on both families | never (ours) |
-| `55-atapi-audio-read-error` | **An unreadable CD audio sector plays as silence instead of stopping the music for good** (2026-09-17, M11: "CD music sometimes doesn't work, especially loading the disc from a Samba share"). The audio callback turned any libdisc failure inside a play range into status 0x14 (stopped due to error), so one transient read of an image on a network share left a game's music off until the game asked for another track, which most never do; a real drive reads through a bad audio sector as a dropout. A failure libdisc reports as a host I/O error (`LIBDISC_EIO`) is now 2352 bytes of silence and the next sector is read again from the file; a data sector in the range or a medium that changed or went away still stops with 0x14, and now says so as a warning. libdisc names every failed host read on stderr since the same day (file, offset, OS error; the first 32), so the player's log says what a share did. Test: `ATAPI_READ_ERROR=1 tools/atapi-guest-test.py` (the `atapi-read-error` check) — `tools/read-error-inject.c` fails every `pread64` of sectors 2152..2155 of `lec.bin`, and the plays over them must advance and complete; without the patch the play stopped at 2152 with 0x14 (4 of 220 checks per byte-count limit) | never: a drive's behaviour, not a workaround |
+## Editing or adding a patch
 
-| `60-opl3-mpu401-devices` | **doc 20 §1 and §5 (M12)**: meson option `libsynth_dir` (the directory holding `liblibsynth.a`, the Rust staticlib of the music engines in `libsynth/`, built by `scripts/configure-qemu.sh`), the `libsynth` dependency with the same per-platform link libraries libdisc needs, `CONFIG_LIBSYNTH`, a summary line, and `opl3.c` + `mpu401.c` in `hw/audio`'s `system_ss`. The devices themselves are ours, not a patch: `libsynth/qemu/*.c` and `libsynth/libsynth.h` are overlaid into `hw/audio/` by prepare. **`opl3`** is a YMF262 (Nuked's core) at 0x388-0x38B and, with `sbbase=`, mirrored at a Sound Blaster's 2x0-2x3 — QEMU's own `adlib` is an OPL2 on the MAME core and its `sb16` has no FM at all, so an AdLib-aware game found nothing here; the two timers and the status register are what its detection sequence reads, and they run on `QEMU_CLOCK_VIRTUAL` rather than the audio callback. **`mpu401`** is the MIDI port QEMU has never had: UART mode, `0xFF`→`0xFE` reset handshake, `synth=gm\|mt32` behind it, the bank found as the property, then `LIBSYNTH_SF2`, then `soundfonts/TimGM6mb.sf2` in a checkout (the Glide wrapper's search, patch 33). It has **no interrupt line unless `irq=<0-15>` asks for one** (2026-09-09, doc 20 §5.1): the hardware's is IRQ 2/9, which is where QEMU's PIIX4 puts the ACPI SCI, so on an ACPI Win98 the ACK a driver's reset queues is an interrupt no handler can acknowledge — the line stays high, the handler is re-entered on every `IRET` and the guest triple-faults, which is Duke Nukem 3D's SETUP rebooting the machine on its General MIDI test. The interrupt is for MIDI *in*, which this device has none of, so nothing is lost. The Sound Blaster mirror is two blocks, as the hardware decodes them: 2x0-2x3 and the OPL2-compatible pair at **2x8/2x9** (QEMU's own `adlib` maps its chip at `port` and `port + 8` for the same reason). Both devices print one line every 5 s while the guest is driving them and nothing when it is not — `opl3: 2466 register writes, 516 key-ons in 5.0 s`, `mpu401: 1245 bytes, 415 note-ons on 6 channels in 5.0 s` — which is the first question to ask of a game that is silent. No vmstate on either: a snapshot resumes with the chip at power-on and nothing sounding. Tests: the `libsynth` and `music` checks (`scripts/test.sh`), the second of which writes the ports from the monitor and requires the note in the wav QEMU's own audiodev recorded | never (ours), or an upstream MPU-401 |
-| `61-sb16-mixer-volumes` | **The SB16's mixer volumes, applied** (2026-09-11): QEMU's `sb16` stored the CT1745's volume registers and applied none, so every source played at full scale — Windows' Volume Control sliders reached nothing, and a game's effects over its CD music summed past what 16 bits hold (the Carmageddon race crackle, `docs/00-status.md`). `sb16.c` now maps master × voice onto its own voice (reapplied after every `AUD_open_out`, which resets a voice's volume) and mirrors the SB Pro registers (0x04/0x22/0x26/0x28/0x2E) onto the SB16 ones both ways; the FM chip and the CD drive are other devices' voices, reached through a small registry this patch adds to the audio core (`audio_mixin_attach` / `_detach` / `_set_volume` in `audio/audio.h`): our `opl3` attaches to the FM input, `ide-cd`'s audio (patch 51) to the CD input, which also passes the output switches in 0x3C. Levels are 5 bits in 7:3, 2 dB a step, plus the output gain, clamped at unity. **Reset values are 0 dB with the CD on**, not a cold CT1745's −14 dB and muted CD: a DOS game that never programs the mixer then sounds as it did, and Windows' driver writes its own settings at boot. A machine with no SB16 plays every input at unity. Test: the `sb-mixer` check (FM through 0x34/35, master 0x30/31 and the SB Pro's 0x26, each −12 dB in QEMU's own wav) and `CDVOL=` in `tools/audio-glitch-test.py cd` (the CD half, which needs ATAPI) | upstream sb16 mixer |
-| `62-voodoo2-device` | **The 3dfx Voodoo 2 (doc 21, M14, 2026-09-12)**: `subdir('hw/voodoo')` in meson.build, and nothing else — the device is `-device voodoo2`, a PCI function nothing instantiates by default, overlaid from `voodoo/` by prepare: 86Box's Voodoo 1/2 emulation (nine files, verbatim, `voodoo/86box/UPSTREAM` names the commit) built as its own static library against a shim of 86Box's platform headers (`voodoo/shim/`: threads and events over qemu-thread, timers over QEMUTimer on the virtual clock, executable memory for the recompiler, the config table, the monitor bitmap) and a QEMU PCI device that maps the 16 MiB BAR onto 86Box's handlers, answers `initEnable` at 0x40 and puts the guest console into pass-through when `fbiInit0`'s VGA_PASS bit is set. Drop when: never, or when 86Box grows a QEMU device of its own |
-| `63-jit-buffer-near-helpers` | **TCG's code buffer is reserved next to the helpers at load time, so a helper call is a near call in every launch** (2026-09-15, doc 22 §5.0). The aarch64 backend emits a helper call as one `BL` within 128 MiB, as `ADRP+ADD+BLR` within 4 GiB, and beyond that as `MOVZ`+3×`MOVK`+`BLR` — and so for every host address a TB materialises. The buffer was `mmap(NULL, 1 GiB)` at TCG init, and on macOS/arm64 it landed at 0x3_0000_0000, 8 GiB from the text, in about a third of launches: those ran helper-heavy guest code 35–45 % slower with a byte-identical binary (x87/SSE helpers 0.55–0.65x, 7-Zip 0.89x, a tight generated loop 1.00x) — which is how it was found: "our tree with every switch off is 0.71x of stock" was this lottery, not the patches (all-off is really 0.97x). Pristine QEMU has it too. A constructor in `tcg/region.c` runs when the image loads (before `main()`, before guest RAM, in `qemu-system-i386` and in `libqemu-embed` alike) and takes a `PROT_NONE` `MAP_JIT` reservation within 2 GiB of its own image — 1 GiB, else 512 or 256 MiB, the space above the image being usually fragmented by then — which `alloc_code_gen_buffer_anon` uses, shrinking the buffer to the reservation if that is smaller; an mmap *hint* at TCG-init time was tried first and was too late (macOS returns the next free gap, 8 GiB away). **No switch**: it runs before the command line exists; the A/B is a pristine build (`build/qemu-stock`) over six ASLR-on launches each, in doc 22. `QEMU_JIT_DEBUG=1` prints every try. Darwin only (Linux/x86-64 has the same reach rules but a different allocator; not measured) | upstream places the buffer near the text |
-| `64-voodoo2-dither-sub-recompilers` | **The Voodoo 2's two rasterizer code generators subtract the dither on a blend read-back, as 86Box's interpreter does** (2026-09-16, doc 21 §9, M14 track job B). A Voodoo dithers what it writes and takes that position's dither back out of the destination before a blend when `fbzMode` bit 19 (`DITHER_SUB`) is set; 86Box's interpreter does it with `dithersub_rb`/`dithersub_g` (or the 2x2 pair), gated on its `dithersub` setting (`-device voodoo2,dither-sub=`), and neither the x86-64 nor the ARM64 generator did, so with the recompiler (the default) a colour blended onto itself drifted a little further on every pass. Both now replace the destination's `rgb565[]` entry with the three lookups under the same two conditions (x as the dither write reads it, `real_y`, alpha byte kept); the block cache already keys on the whole `fbzMode`. A patch on the **overlay** (`hw/voodoo/86box/`, rsynced from `voodoo/86box/` before the queue applies) so the vendored files stay verbatim. Checked against the tables before a guest (x86-64 natively, ARM64 under Unicorn, every byte value at every dither position) and by the `voodoo-guest` check's dither phase, which now requires the columns to equal the reference and the frame to be one 4x4 dither tile; `-device voodoo2,recompiler=off` is the A/B. **No switch**: `dither-sub=off` turns the subtraction off on both paths alike | upstream 86Box has the fix and `scripts/sync-86box-voodoo.sh` brings it in |
-| `65-pit-reinject` | **A 1 kHz guest clock ran at the rate of the host's wakeups: 6 % on a Windows host** (2026-09-17, M11: MIDI "too slow" on the first Windows run). `irq_timer` runs when the main loop wakes, and every PIT transition that came due meanwhile is raised back to back under the BQL before the CPU can take one — on the edge-triggered 8259, one interrupt. Windows 9x's multimedia timer runs counter 0 at 1 ms for `timeBeginPeriod(1)` (a MIDI sequencer, many games) and counts IRQ 0, so its clock was 100 % on Linux, 50 % with 2 ms waits and 6 % with Windows' default 15.6 ms ones (QEMU never asks Windows for a finer tick; the player now does, `timeBeginPeriod(1)`, but a 1 ms wait there is often 2). Now an edge that finds IRQ 0 requested and unmasked at the master PIC is owed, and `pic_intack` calls a hook the PIT registers that raises one owed tick as a fresh edge — after the ISR is entered, so it waits for the EOI and the handler runs once per tick. Capped at a quarter second of ticks (a count of 0, before the reset, taken as 65536: a clang build divided by it, 2026-09-17); a new count drops them; a guest with IRQ 0 masked at the 8259 (an APIC HAL) owes nothing. **Paced since 2026-09-22**: an acknowledge raises the next owed edge only when half a period has passed since the last owed one, so a catch-up runs at twice the rate (a regular tick and an owed one per period) instead of as one burst — raised at every acknowledge they nest (Windows 98's timer handler acknowledges early and runs with interrupts on), and a quarter second of 1 kHz ticks back to back, after the vCPU had stalled inside an MMIO access (the Direct3D executor in the Wine process compiling its first shaders, M15), took the VMM down with a fatal exception 0D, a 3.5 s stall reset the machine; `reinject=off` was the A/B that named it (D3D7TEST on the Win98 machine: dead with the burst, 300 frames at 57 fps without, and the same paced). The pace is kept at the acknowledge and not by a timer: a half-period timer lands in the main loop's next wakeup beside the regular edge, the two merge, and the guest got one tick per wakeup — 66 % in the rate phase on the Air. `-global isa-pit.reinject=off` is the A/B. Test: the rate phase of `tools/pit-guest-test.py` — `PITRATE.COM` (guest-tools/src/pitrate.asm) counts IRQ 0 at 1 kHz and the host times its COM1 lines, as built and under `tools/wait-granularity.c` (an LD_PRELOAD rounding `ppoll` to 15.6 ms): 100 % spinning and halted, the control 6 %; QCLOCK's phase still reads no backward step with the waits rounded | upstream reinjects coalesced PIT ticks (it does for the RTC only) |
-| `66-passthrough-hides-cursor` | **The display adapter's hardware cursor is hidden while another card has the monitor** (2026-09-17, M11: Windows' arrow drawn over Moto Racer beside the game's own pointer — on the Voodoo 2, so on every host). `graphic_hw_passthrough` is how the Voodoo 2 (`fbiInit0` VGA_PASS) and the 3D frontend (`embedfx.c`) take console 0, and the 2D adapter behind them keeps whatever cursor its driver set: Windows' desktop pointer on `d3dpt-vga` stays enabled behind a full-screen Glide game, since on real hardware the pass-through cable shows nothing of the 2D card. `dpy_mouse_set` now stores and publishes through `dpy_mouse_publish`, which reports the cursor hidden while the console is in pass-through; a pass-through change publishes again, and so does a listener registered meanwhile. New trace event `dpy_mouse_publish`. Test: the `voodoo-guest-d3dpt` check sets a 2x2 cursor on `d3dpt-vga` before the Voodoo takes the monitor and reads the trace: shown before, hidden during, shown after; the control (the publish ignoring pass-through) fails "stayed visible" | upstream has pass-through (qemu-3dfx's patch adds it) |
-| `67-x87x-arith-call-shape` | **Patch 48's PC=64 helper takes four arguments and divides 128 by 64 bits with one `divq`** (2026-09-17, M11). On the Windows build the vCPU spent 10.8 % in `helper_x87x_arith` against 4.6 % on Linux and 4.3 % in libgcc's `__udivti3` against 1.75 %: under the Windows x64 ABI a fifth argument goes on the stack behind 32 bytes of shadow space and `__udivti3`'s 128-bit operands go through memory. The two sign\|exponent words now travel as one 64-bit argument, and `x87f_div_x` divides through `X87F_UDIV128` — `udiv_qrnnd` from `fpu_helper.c` (the quotient fits: the dividend's high half is below the divisor), the portable `__int128` division kept for `tools/x87-fast-test.c`. A DOS kernel at PC=64 (fild, fld m32, fdivp, fsqrt, fistp) on the GCC Windows build: 92.5 → 86.0 ns a pass; unchanged on Linux, where its time is `floatx80_sqrt`'s. `tools/x87-guest-test.py`: 906,713 lines identical on/off, on Linux and on the Windows build under wine | upstream patch 48 has no Windows ABI cost |
-| `68-windows-clang` | **QEMU's Windows build accepts clang, which the package now builds QEMU with** (2026-09-17, M11: Moto Racer slow at 5 % CPU on a 5900X). mingw GCC 15 implements `__thread` as emulated TLS — a call to `__emutls_get_address` for every access, 10.5 ns against 1 ns — and QEMU reads `current_cpu`, the BQL flag and RCU state on every device access. A DOS kernel reading a VGA register in a loop, under wine: Linux 52.7 ns, GCC Windows build 121.6, clang 63.5; memory and generated code equal on all three, x87 at 24/53 bits level, x87 helpers at 64 bits 1.25x (GCC with patch 67: 1.17x). A Glide game polls the Voodoo 2's status register millions of times a second. QEMU 9.2 errors out on a Windows compiler without `gcc_struct`; such a compiler now gets `-mno-ms-bitfields` (the GCC layout for every struct, upstream's later route) and `QEMU_PACKED` drops the attribute under clang. `configure-qemu.sh --windows` uses `packaging/windows/clang-mingw-cc` (clang `--target=x86_64-w64-mingw32`, lld, GCC's mingw runtime) with `--disable-plugins` (lld has no `--dynamic-list`); `WIN_QEMU_CC=gcc` is the old build, and `build-windows.sh` configures afresh when the compiler changes. Checked on the Windows build under wine: the x87 (906,713 lines), SSE (546,425) and rep (536) batteries identical on/off, and every `package-windows.sh` check, the player loading the clang-built embed DLL included. GCC builds unchanged | upstream QEMU drops `gcc_struct` (it did, later) |
-| `69-mkvenv-file-uri` | **`mkvenv` hands pip its bundled wheels as a real `file:` URL** (2026-09-17, M11: the native Windows build's first configure). It built `f"file://{wheels_dir}"`, which on Windows is `file://C:/…` — a URL whose *host* is `C:`. Python up to 3.13 pulled the drive letter out anyway; 3.14's `url2pathname` reads it as written, a UNC path `\\C:\…`, so pip found no wheels and configure stopped at "could not find a version that satisfies requirement pycotap==1.3.1 … mkvenv was configured to operate offline". MSYS2's only Python is 3.14. `Path(wheels_dir).resolve().as_uri()` is `file:///C:/…` there and the same `file:///…` as before on Linux and macOS (mkvenv's offline install of meson 1.5.0 + pycotap 1.3.1 checked on Linux with it) | upstream builds the URL with `as_uri()` |
-| `70-mesa-darwin-no-xquartz` | **The macOS build needs no XQuartz** (2026-09-17). Upstream qemu-3dfx's Mesa pass-through on macOS is GLX on XQuartz, and its meson hunk put `-I/opt/X11/include` and `-L/opt/X11/lib -lX11 -lXxf86vm -lGL` on every emulator's line, so `configure-qemu.sh` refused to run without XQuartz. Nothing had rendered through that backend since SDL went: `qemu-system-i386` registers no 3D provider, so its context was always refused (patch 04), and libqemu-embed overrides it with its own CGL backend (patch 31). On Darwin `hw/mesa/mglcntx_linux.c` is now a weak backend that refuses the same way: it still asks the provider hook (so the "no 3D provider" warning still names the problem), answers the guest's window-ready poll, describes the one pixel format and its attributes, and fails context creation. It defines the same symbols as the GLX backend, checked by compiling the Darwin branch on Linux and comparing `nm`. `dllname` is OpenGL.framework's, like the embed backend's; `-framework OpenGL` stays on the link line. Linux is unchanged. The app no longer carries XQuartz's libGL and X11 libraries | upstream qemu-3dfx drops GLX on Darwin |
+A patch is a git-format diff that forward-applies to the tree the patches
+before it produce:
 
-Completed: dma-buf / IOSurface zero-copy texture export (Spike A), Glide offscreen
-path via `GlideHostOps` (patch 33, doc 12 §5), and in-guest disc shelf (patch 52,
-M6). A folder disc that outgrew a CD took 53 (M5g) and Win9x's seek-as-stop took 54, a read error inside CD audio 55;
-56–59 remain reserved for future CD-ROM backend extensions (M5 track, doc 17).
+1. Run `prepare-qemu.sh`, copy the files you will change (the "pre" tree),
+   edit them in `qemu/`.
+2. Diff: `git diff --no-prefix --no-index a b` from two copies laid out as
+   `a/<path>` and `b/<path>`; a new file needs a `--- /dev/null` header.
+   Put a paragraph of what and why above the first header.
+3. Prove it from pristine: `prepare-qemu.sh` twice (both runs must apply
+   everything), then build. A reverse check against an edited tree proves
+   nothing.
 
-Regenerating a patch: apply the queue, edit the file(s) in `qemu/`, produce
-`diff -u` against a copy of the pre-edit state with `a/`/`b/` paths, then
-re-run `prepare-qemu.sh` twice to prove it applies cleanly and is idempotent.
-Patches touching overlay files (hw/3dfx, hw/mesa, embed/) must come after
-the overlay is refreshed — prepare handles the order.
-| `71-voodoo2-packet3-packed-color` | **A command-FIFO triangle packet's packed colour word is read whenever either the RGB or the alpha parameter is named** (2026-09-17, doc 21, M14). Packet 3 lists its per-vertex parameters in bits 17:10 and says with bit 28 that the colour arrives as one packed ARGB word instead of three floats; 86Box took that word only under the RGB bit and a separate alpha float only when bit 28 was clear, so a vertex with **iterated alpha over a constant colour** — which Glide sends with the packed bit set and the RGB bit *clear* (`glide3x/cvg/glide3/src/gglide.c`: `STATE_REQUIRES_IT_ALPHA` without `STATE_REQUIRES_IT_DRGB` sets `SST_SETUP_A`, sets `packedRGB`, adds one word a vertex) — left a word a vertex unread and every later header was read out of the middle of somebody's parameters. Both consumers in `vid_voodoo_fifo.c` now take one packed word under bit 28 if either parameter is named, and three floats plus an alpha float otherwise, each under its own bit; `voodoo/voodoo2.c`'s packet walk (the ring in RAM, doc 21 §9) counts words by the same rule and is fixed with it, and says so once when it meets such a packet. A patch on the **overlay** (`hw/voodoo/86box/`, rsynced from `voodoo/86box/` before the queue applies) so the vendored files stay verbatim. **Not the 3DMark 99 glitch it was found while chasing**: that guest sends no such packet (the device's own line never appeared), so the hole was real but unrelated — see doc 21 | upstream 86Box has the fix and `scripts/sync-86box-voodoo.sh` brings it in |
-| `72-voodoo2-fifo-order` | **86Box's FIFO thread runs its own FIFO and the command ring in the order the guest wrote them** (2026-09-19, doc 21 §13, M14). The guest has one bus into the chip, so a write it puts in the memory FIFO (`voodoo->fifo` — an LFB or texture write) and a word it puts in the command ring reach the pixel pipeline in the order it made them. The thread had no way to say which came first: it drained the whole memory FIFO and then ran the ring until it was empty. With the ring behind — in a game always, Carmageddon's race ~20,000 words — an LFB write landed far from where the guest put it, and **both ways round were seen on the same game**: finishing the ring first put a HUD written through the LFB *after* the swap that followed it, so it landed in the buffer that swap had just turned into the back one and flashed in and out; draining the memory FIFO first put it *before* the world geometry already queued, and the world painted over it, so it almost never appeared. Each entry now carries the ring's write pointer as it was queued (`cmdfifo_mark`, in the three pad bytes' place); it runs once the ring has been consumed that far and not before, and the ring loop yields the moment the memory FIFO's head is due. Signed difference, because both counters run on for ever; with the command FIFO off every mark equals the read pointer and nothing changes. It costs nothing — no wait anywhere, the same work in the guest's order — and the vCPU-side wait it replaced was priced at 3,200 waits and 1.8 s of vCPU time per 5 s. A patch on the **overlay** (`hw/voodoo/86box/`), so the vendored files stay verbatim. The ordering phase of `tools/voodoo-guest-test.py` exercises it (a loaded ring, then an LFB block, then the swap) but does not discriminate on an idle host: the window needs a rasterizer that is behind, which is a game under TCG, so the game is the oracle | upstream 86Box has the fix and `scripts/sync-86box-voodoo.sh` brings it in |
-| `73-vga-vram-prebacked` | **The VGA core takes a `vram` region its owner backed already** (2026-09-22, M15, ADR-018). `vga_common_init` allocated `vga.vram` itself, unconditionally; `d3dpt-vga` now backs it first, when its Direct3D executor runs in another process (Wine on the host, below DXVK's Vulkan 1.3 floor), with `memory_region_init_ram_from_fd` over a region of that executor's shared file — so the guest's VRAM and command window are the bytes the other process maps, and a batch runs where the guest wrote it. The core skips its own allocation when the region has a size, and refuses one of the wrong size. No behaviour change for any other VGA | never: our device's need |
+**When a later patch touches the same files.** Editing patch N can shift
+the context a later patch M depends on, and `git apply` gives no partial
+credit: M stops applying. (Patch 11 and 12 share their TCG files; every
+change to 11 regenerates 12.) Then:
+
+1. Take M out of the queue as well, and save its payload — the files as M
+   leaves them.
+2. Regenerate N against the tree the patches before it produce. Before
+   diffing, `git -C qemu checkout --` the files only N touches (prepare
+   restores only files some *present* patch lists), and make sure no file
+   N creates is in the "pre" tree.
+3. Put M's payload back by hand on top and diff it against the N-only tree
+   to regenerate M.
+
+Files that come from an overlay (`block/cdimage.c`,
+`include/block/cdimage.h`, `include/block/libdisc.h`, `hw/3dfx`,
+`hw/d3dpt`, …) are edited in the repo, never in a patch. The one
+exception is 86Box's vendored Voodoo sources, which stay verbatim in
+`voodoo/86box/`: a fix to them is a patch on the overlay
+(`hw/voodoo/86box/`, patches 64, 71 and 72), which prepare applies after
+the rsync.
+
+## The switches
+
+Every optimization in the queue can be turned off at run time, so a guest
+that computes a wrong answer is diagnosed with one run, not a bisect. The
+launcher's machine form offers fourteen of them as "Emulation
+optimizations" (doc 07; the `optimizations` check); a machine that has
+changed nothing emits no property, so its command line also runs on a
+stock QEMU.
+
+| Switch | Where | Patches it gates | Default |
+|---|---|---|---|
+| `x87-fast` | `-cpu` | 05, 06, 37, 45, 48, 49 | on |
+| `sse-fast` | `-cpu` | 11, 36, 39 | on |
+| `simd-fast` | `-cpu` | 12 | on |
+| `rep-fast` | `-cpu` | 17 | on |
+| `x87-pc64-as-53` | `-cpu` | 47 (inexact) | **off** |
+| `tb-invalidate-fast` | `-accel tcg` | 15, 35 | on |
+| `tlb-floor` | `-accel tcg` | 16 | on |
+| `smc-same-value` | `-accel tcg` | 18 | on |
+| `tls-hot-paths` | `-accel tcg` | 19 | on |
+| `inline-lookup` | `-accel tcg` | 20, 38 | on |
+| `soft-imm` | `-accel tcg` | 24 | on |
+| `jump-cache-keep` | `-accel tcg` | 42 | on |
+| `eob-chain` | `-accel tcg` | 43 | on |
+| `tlb-retire` | `-accel tcg` | 44 | on |
+| `pinned-regs` | `-accel tcg` | 21 | **off**, not offered |
+
+The accelerator properties are spelled `-accel tcg,<prop>=off` (not
+`-machine accel=`); `QEMU_TCG_OPTS=<prop>=off` passes them to the DOS
+batteries. `pinned-regs` is not offered by the launcher (2026-09-16, user
+decision: too unstable for too little gain) and a bundle that still says
+it on never reaches the command line. Patches 14, 41, 63 and 67 have no
+switch: they change no behaviour, only cost. Device-level A/Bs:
+`-global isa-pit.overdue-irq=off` (34), `-global isa-pit.reinject=off`
+(65), `-device voodoo2,recompiler=off` (64).
+
+## The patches
+
+Numbers 03 and 56–59 are unused (56–59 are kept for CD-ROM backend
+work, doc 17). Two files share the number 20.
+
+### 00-3dfx-darwin-contextalpha
+qemu-3dfx's shared code uses `GL_CONTEXTALPHA`, defined only under
+`CONFIG_LINUX`: the Darwin build broke. **Drop:** upstream qemu-3dfx
+fixes it.
+
+### 01-upstream-i386-lss-tb-exit-fix
+Backport of QEMU `0f1d6606c28d` (issue 2987): 9.2.4 carries the LSS /
+interrupt-shadow regression without its fix, and Win98 SE takes
+`exception 0D` on the first boot after setup under TCG. **Drop:** base ≥
+10.1.
+
+### 02-3dfx-sdl-optional
+qemu-3dfx makes SDL2 a hard requirement of the whole build (`Featuring
+qemu-3dfx required SDL2`) because upstream's only 3D provider is in
+`ui/sdl2.c`. We register the embed library's window-less provider through
+patch 30's vtable and configure with `--disable-sdl --disable-sdl-image`,
+so this error is the only thing in the way. `hw/3dfx` and `hw/mesa` are
+not gated on SDL. **Drop:** upstream qemu-3dfx stops requiring SDL.
+
+### 04-3dfx-graceful-no-display
+With no 3D provider registered, `MGLCreateContext` / `MGLMakeCurrent` see
+a NULL window and refuse the context instead of taking the VM down. This
+is the backend's half of patch 30's contract, and what a standalone
+`qemu-system-i386` hits (it registers no provider; on macOS patch 70's
+backend refuses before asking). **Drop:** never.
+
+### 05-x87-fast
+x87 arithmetic on the host FPU when the guest runs at 53- or 24-bit
+precision with round-to-nearest (Windows' default, Direct3D's setting);
+bit-exact against softfloat, falls back for everything else. Super PI 1M
+on the M1 Air 9:49 → 6:33. **Switch:** `x87-fast`. **Test:**
+`tools/x87-fast-test.c` (host oracle), `tools/x87-guest-test.py`.
+**Drop:** upstream grows a floatx80 hardfloat path.
+
+### 06-x87-inline-tcg
+The x87 stack kept as host doubles across instructions inside TCG at
+PC=53 and PC=24 (doc 13): eight scalar binary64 TCG opcodes (x86-64
+VEX+FMA3, aarch64), conversion to x80 only at TB exits, before helpers and
+on faults (unwind repair through a third `insn_start` word); anything
+unusual runs the helper out of line and exits the TB. Bit-exact except
+for empty registers after a pop. DOS loop 21.6 (softfloat) / 10.6 (patch
+05) / 2.9 ns per op; XP Super PI 1M on the Air 9:49 → 1:57. **Switch:**
+`x87-fast`. **Test:** `tools/x87-guest-test.py`. **Drop:** upstream float
+ops in TCG, or an upstream rewrite of the x87 translator.
+
+### 07-upstream-x87-helper-fixes
+Backports `cf10af6c703d` (pseudo-NaN in FPATAN/FYL2X/FYL2XP1 is Invalid
+with the default NaN) and `0924d9d3db36` (fcomi/fucomi clear OF/SF/AF),
+the latter mirrored in patch 06's inline compare so both paths agree. The
+denormal / flush-to-zero fixes are skipped: they need 10.0's softfloat
+rework. **Drop:** base ≥ 11.1.
+
+### 08-upstream-i386-decoder-fixes
+Backports the 2025–26 decoder fixes era code trips: F6/F7 /1 TEST alias,
+RCL/RCR count modulo for 8/16-bit, V86 entry only at CPL 0, real-mode
+interrupt stack size, TSS T bit, mov to CS / segments 6–7 as #UD, invalid
+0F C7 forms. **Drop:** base ≥ 11.1.
+
+### 09-upstream-i386-rep-string
+Backports 10.0's repeated-string series (14 commits): REP/REPZ run several
+iterations per TB with explicit `cc_op` and RF handling. rep movs/stos
+12–16 % faster per element (`tools/string-bench.py`). **Drop:** base ≥
+10.0.
+
+### 10-embed-api
+Meson builds `shared_library('qemu-embed-<target>')` per system target
+from the existing static library plus `embed/libqemu_embed.c`,
+`embedaudio.c`, `embedfx.c` and `mglcntx_embed.c` (epoxy and gbm when
+found), with an ld64 export list (`embed/libqemu_embed.symbols`) because
+QEMU's plugin `-exported_symbols_list` hides everything else on macOS. On
+Windows it also compiles `mglcntx_mingw.c`'s WGL half into the emulators
+alone (patch 31). The API is doc 11. **Drop:** an upstream embed API.
+
+### 11-sse-inline-tcg
+SSE/SSE2 float arithmetic inline on the host FPU (doc 16) when MXCSR is
+round-to-nearest, no FTZ/DAZ, all exceptions masked and PE already sticky
+(TB flag bit 31). Packed ops on the vector unit (new TCG `fadd/fsub/fmul/
+fdiv/fsqrt_vec`, `fmin/fmax_vec`, `fcmp_vec` mapping straight to
+`VMINPS`/`VCMPPS` on x86-64), scalar ops in general registers; NaN, inf,
+overflow, underflow and divide-by-zero take the helper out of line;
+`ldmxcsr`/`fxrstor`/`xrstor` end the TB. Packed 7.5–12×, scalar 3.4–3.9×.
+**Switch:** `sse-fast`. **Test:** `tools/sse-guest-test.py` (546,425
+lines identical on/off). **Drop:** upstream float ops in TCG.
+
+### 12-simd-inline-tcg
+MMX and SSE integer and permutation instructions inline (doc 16):
+shuffles, unpacks, packs, `pmulhw`, `pmaddwd`, `pavg`, `psadbw`, shifts
+by register, `pshufw`, and the MMX entry as three stores. New TCG vector
+ops `tbl_vec` (byte table lookup), `mulsh/muluh_vec` and
+`ssnarrow/usnarrow_vec` (x86-64 only; aarch64 keeps a SWAR fallback).
+Legacy encodings only. MMX chain 4.0× on aarch64, 2.1× on x86-64.
+**Switch:** `simd-fast`. **Test:** `tools/sse-guest-test.py`. **Drop:**
+upstream gvec permutes and narrowing ops. Shares files with 11: a change
+to 11 regenerates this one.
+
+### 13-perfmap-darwin
+`-perfmap` and `tcg/perf.c` on every host, not Linux only (`/tmp/perf-
+<pid>.map`, one line per translated guest instruction), which is what
+`tools/tcg-profile.sh` maps macOS `sample` hits through. `-jitdump` stays
+Linux-only (it needs `mmap` and `flockfile`); on Windows it says it is
+unavailable.
+**Drop:** upstream drops the `CONFIG_LINUX` gate.
+
+### 14-jit-wx-state
+macOS flips the `MAP_JIT` buffer between writable and executable per
+thread; QEMU made the call before every TB run and around every patch or
+translation without remembering the state — 12 % of Super PI's vCPU
+thread. A per-thread state makes the call only on a change (Super PI 1M
+1:36 → 1:25). The state starts *unknown* on purpose: the main thread is in
+execute mode when `tcg_prologue_init` asks for write, a vCPU thread is
+not. A wrong initial state skips the first write call, faults on the
+prologue store and spins at 100 % inside `tcg_prologue_init` with QMP
+never answering. **Drop:** upstream tracks the state.
+
+### 15-tb-invalidate-fast
+TB invalidation on guest writes, four cuts: the DMA path no longer rounds
+the first page's range down to the page start (the vAPIC ROM's TPR stubs
+sat below the state the APIC writes on every interrupt, so every XP guest
+retranslated them thousands of times a second, idle too — upstream
+master still has it); a per-page code map (patch 35) lets a write that
+misses every TB skip the page collection and list walk; a write that
+cannot hit a TB shared with a neighbouring page runs under the page's own
+lock; no whole jump-cache flush per invalidated `CF_PCREL` TB. **Switch:**
+`tb-invalidate-fast` (patch 29). **Test:** `tools/smc-guest-test.py`.
+**Drop:** upstream clamps the first page's range and keeps per-page code
+ranges.
+
+### 16-tlb-floor
+`CPU_TLB_DYN_MIN_BITS`/`DEFAULT_BITS` 6/8 → 12. The softmmu TLB is
+direct-mapped and resized at every flush from the entries used since the
+last; XP flushes 450 times a second, so it sat at 64–256 entries where
+live pages collide constantly (Moto Racer: 6 million victim swaps a
+second, 48 % of the vCPU in the slow path → 1.3 %). Cost: 128 KiB per mmu
+index, cleared per flush. **Switch:** `tlb-floor` (patch 29, read per
+resize). **Drop:** upstream's resize policy counts conflicts, or a
+set-associative TLB.
+
+### 17-rep-fast
+REP MOVS / STOS as a host `memcpy`/`memmove`/`memset` per page run. With
+at least 8 elements left, `helper_rep_movs_fast`/`_stos_fast` take the
+run that stays inside the current source and destination pages, probe
+each once without faulting (filling the TLB, marking dirty and
+invalidating TBs as the stores would; MMIO, watchpoints and unmapped pages
+are refused), copy, and return the count done; anything else falls into
+the per-element loop, capped at 15 iterations per entry. The helper
+writes nothing to `env`, so a longjmp out of the probe restarts the
+instruction cleanly. Not emitted under TF, single-step or icount.
+MOVSD/STOSD 2.1 → 0.07 ns per element. **Switch:** `rep-fast`. **Test:**
+`tools/rep-guest-test.py` (536 cases against a Python model). **Drop:**
+upstream grows a rep fast path.
+
+### 18-smc-same-value
+A store that leaves a code page's bytes unchanged invalidates no TB: the
+store slow path compares the bytes with memory before `notdirty_write`
+and skips the invalidation when equal (dirty bits still set; 16-byte,
+probe and atomic stores still invalidate). Exact by construction.
+Software renderers of the era patch their span loops' immediates per
+span, and 94 % of Moto Racer's ~700,000 code-page stores a second rewrote
+the value already there; its race went 7.3 → 21.7 fps. **Switch:**
+`smc-same-value`. **Test:** `tools/smc-guest-test.py`. **Drop:** upstream
+takes it (worth sending).
+
+### 19-tls-hot-paths
+Thread-local reads off the TCG hot paths, which on macOS are calls into
+dyld's `_tlv_get_addr` (8.8 % of Moto Racer's vCPU → 2.5 %).
+`notdirty_write` uses `_rcu_locked` dirty-bitmap helpers instead of five
+nested RCU lock pairs per store to a code page (`cpu_exec` already holds
+the read section; `cpu_exec_step_atomic` now takes one too), and the
+`tcg.c` allocators read `tcg_ctx` once and pass it down. Left as they are
+on purpose, and the remaining 2.5 %: the `tcgv_*_arg` read in each
+`tcg_gen_op*` wrapper (removing it needs a context-taking twin of every
+`tcg_gen_opN`), `cpu_tb_exec`'s per-thread JIT state (a per-CPU one is
+wrong under round-robin with several vCPUs), and `tcg-op-ldst.c`.
+**Switch:** `tls-hot-paths` (patch 29; the RCU half only — the `tcg_ctx`
+half has no reachable behaviour). **Drop:** the RCU part is worth sending
+upstream; the `tcg_ctx` part matters only where TLS is a call.
+
+### 20-embed-audio
+Registers the `embed` audiodev the player plays through: the QAPI
+enum/union entry, `audio_template.h`'s per-direction case, and the
+`audio_create_pdos` case in `audio/audio.c` (without it, a NULL pdo
+segfaults). **Drop:** with 10.
+
+### 20-inline-lookup
+The jump-cache probe of indirect branches (`ret`, `call *`, `jmp *`, a
+jump leaving its page) as TCG ops instead of a call to
+`helper_lookup_tb_ptr` (~70 host instructions: 13.9 % of 7-Zip's vCPU).
+`translator_lookup_and_goto_ptr` computes pc, cs_base and flags the way
+`cpu_get_tb_cpu_state()` does, folds every mismatch — pc, cs_base, flags,
+cflags, breakpoints, single-step — into one word **branch-free** (a
+`brcond` ends a TCG block and spills every temp), and one `goto_ptr` takes
+the TB or the epilogue, where the main loop's lookup fills the cache.
+Kept on the helper: `CF_NO_GOTO_PTR`, exec/nochain logging,
+`one-insn-per-tb`, 32-bit hosts, the x86-64 target. 7-Zip compress +12 %,
+decompress +7 %. Any new TB flag must be built here too (patch 37).
+**Switch:** `inline-lookup`. **Drop:** upstream grows a generic inline
+probe with a per-target state hook.
+
+### 21-pinned-regs
+The i386 `eip` and eight GPRs pinned in aarch64's callee-saved x20–x28
+for the life of a chain of TBs (doc 18): the prologue loads, the epilogue
+stores, helpers get them stored or reloaded as their flags require, the
+allocator and liveness pass keep pinned temps in place, `op T; mov G, T`
+coalesces, and the aarch64 slow path saves live caller-saved registers
+itself. x86-64 lists no registers. 7-Zip compress +3 %, decompress +15 %.
+Parked: a boot crash seen once with 8 pinned and a 3 % stall at the flags
+helper boundary. **Switch:** `pinned-regs=on` (off by default, not
+offered); `QEMU_TCG_PIN_MAX=n` caps the count. **Drop:** never (a backend
+feature); the coalescing and slow-path save are worth proposing upstream
+alone.
+
+### 22-upstream-apic-reset-cpuid
+**A Win98 guest that restarts freezes on its first frame.** Win98 turns
+its local APIC off through `IA32_APIC_BASE`, which rightly clears
+`CPUID.01H:EDX.APIC`; `apic_reset_common()` restores the enable bit but
+not the feature bit, so the next POST finds no APIC, SeaBIOS skips
+`smp_setup()` and never sets LINT0 to ExtINT, and every i8259 interrupt
+is dropped at the masked LVT0. The guest spins on the BIOS tick counter
+at 100 % of a core while `vga_draw_text` keeps blinking the caret on the
+host side (`info pic`: `irr` set, `isr=00`; `info lapic`: `LVT0 masked`).
+The fix records the CPU model's APIC bit at realize and restores it on
+reset, leaving `-cpu …,-apic` alone. Reproduces on stock QEMU 11.1.0.
+**Test:** `tools/win98-reboot-test.sh`. **Drop:** upstream takes it
+(worth sending).
+
+### 23-upstream-dsound-option
+`--disable-dsound` was a no-op: 9.2's guard `if not
+get_option('dsound').auto() or …` is true for *disabled* too, so every
+Windows build compiled `dsoundaudio.c` and linked `-lole32 -ldxguid` for
+a backend nothing reaches. Disabled now skips the block. **Test:** the
+`no-optionals` check (QAPI's `AUDIODEV_DRIVER_DSOUND` absent). **Drop:**
+upstream fixes the guard.
+
+### 24-soft-immediates
+A block whose own code the guest keeps patching reads those operands from
+the code bytes at run time. `accel/tcg/tb-softimm.c` counts, per physical
+address (hashed multiplicatively), the writes that throw a block away;
+past four, the next translation emits its immediates and displacements as
+host loads of the guest's code bytes, so the guest's store *is* the
+update, and the block lists the byte ranges read that way so a write
+inside them invalidates nothing. A block thrown away four times anyway
+goes back to constants. Covered: the group-1 ALU ops, MOV, IMUL3, memory
+displacements, and the imm8 count of every shift and rotate (not RCL/RCR
+on 8/16-bit, not SHLD/SHRD); jump targets, ports and SSE lane selectors
+stay constants. Little-endian hosts with unaligned loads, single-vCPU,
+the block's first page. Moto Racer's race 41 → 58 fps (TB invalidations
+36,500/s → 1/s); Blood's corridor 9.4 → 131 fps. **Switch:** `soft-imm`.
+**Test:** `tools/smc-guest-test.py`, which also requires four cases'
+fields to have been *absorbed*, since a right answer does not prove the
+block survived its patches (a `pc >> 2` hash once let two blocks two bytes
+apart share a counter and compute right while never absorbing). **Drop:**
+upstream invalidates and retranslates; worth proposing once a second
+guest confirms it.
+
+### 25-upstream-sb16-reset-irq
+QEMU's `sb16` raised IRQ 5 in three places no driver could lower it
+again, and on the edge-triggered PIC a held line swallows every later
+interrupt: a DSP reset pulsed the line during auto-init DMA (an interrupt
+no hardware makes, latched unowned in the PIC), and a silence block
+(DSP 0x80) raised it without setting the status bit the driver's read
+clears. A reset also cancels a pending silence block now. Symptom: Duke
+Nukem 3D's SETUP played its sound test once, then "Playback failed,
+possibly due to an invalid or conflicting IRQ" (doc 20 §5.2). **Test:**
+the `sb16-irq` check. **Drop:** upstream fixes it.
+
+### 26-usb-gamepad
+Builds `hw/usb/dev-gamepad.c` (overlay): a USB HID gamepad — two sticks
+as X/Y and Z/Rz, an 8-way hat with a null state, twelve buttons, a
+six-byte report. QEMU has no gamepad and no axis input event, so it is a
+whole device, in its own file because every machine already has a
+`usb-tablet` on `dev-hid.c`. Built under `CONFIG_USB_HID`. The host drives
+it with **absolute state**, not events (`usb_gamepad_set_state()` from the
+embed shim, embed API v8 `qemu_embed_pad_state`), so a dropped update is
+corrected by the next; a second instance is refused. XP, 98 SE and Me use
+their in-box HID stack (98 SE asks for its source files once). Doc
+`docs/tracks/m13-gamepads.md`. **Test:** the `pad`, `pad-guest-xp` and
+`pad-guest-98` checks, `tools/hid-descriptor-check.py`. **Drop:** never.
+
+### 27-gameport
+Builds `hw/input/gameport.c` (overlay), the analog joystick port at
+0x200–0x207, which QEMU never had — DOS's only way to a controller. A
+write arms four RC one-shots (`t = 24.2 µs + 0.011 × R µs` over a 0–100
+kΩ pot); a read compares deadlines on `QEMU_CLOCK_VIRTUAL`, so there is
+no timer. Its own `CONFIG_GAMEPORT` and a standalone ISA device, so it
+does not come and go with the sound card. Fed from the same
+`qemu_embed_pad_state`; the d-pad drives the first stick's axes to their
+ends, because a DOS game has no other way to read one. Win9x would need
+"Standard Game Port" by hand, and does not: its Windows games read the
+USB pad through DirectInput and winmm. **Test:** the `pad` and
+`pad-guest` checks (`tools/pad-guest-test.py`). **Drop:** never.
+
+### 28-upstream-vga-chain4-dirty
+`vga_mem_writeb`'s chain-4 branch stores at `(addr << 2) | plane` but
+marks `addr` dirty after doubleword-mode shifting, so every write marks
+the first quarter of VRAM and in mode 13h nothing below scanline 51 is
+redrawn. Only adapters that route chain-4 writes through this function
+show it: the Cirrus, not `-vga std` (which maps a RAM alias). Symptom:
+Duke Nukem 3D at 320×200 wrong on `-vga cirrus`, clean on std. **Test:**
+`tools/vga-dirty-guest-test.py`. **Drop:** upstream fixes it.
+
+### 29-optimization-switches
+Gives patches 15, 16 and 19 the switches they lacked (`tb-invalidate-fast`,
+`tlb-floor`, `tls-hot-paths`), so "every optimization off" really is: the
+three left in had been exactly the ones on TB invalidation, the TLB and
+`notdirty_write`, and once let a fault be blamed away from them. Under
+`tls-hot-paths=off` both RCU branches must set the same dirty bits, which
+makes the off branch patch 19's oracle. **Test:** the `optimizations`
+check. **Drop:** never; it is what makes the queue bisectable.
+
+### 30-3dfx-ui-vtable
+qemu-3dfx's eleven UI entry points (`mesa_*`, `glide_*`) dispatch through
+a `QemuFxUiOps` table (`ui/fxui.c`) any frontend can register; the embed
+library registers its window-less provider (`embed/embedfx.c`). No
+provider: contexts refused, no Glide window, the VM keeps running. SDL's
+half is gone with `--disable-sdl`. **Drop:** upstream qemu-3dfx grows a
+provider seam.
+
+### 31-mesa-ctx-weak
+`hw/mesa/mglcntx_linux.c`'s exports are weak, so `embed/mglcntx_embed.c`
+overrides them inside libqemu-embed while `qemu-system-i386` keeps the
+native backend (on Linux GLX; on macOS patch 70's refusing backend). The
+embed backend is EGL surfaceless + pbuffer on Linux, a drawable-less CGL
+context with an FBO on macOS. A COFF weak external is not an ELF weak
+definition, so on Windows `mglcntx_mingw.c` is split instead — its WGL
+backend behind `MESAGL_WGL_BACKEND`, compiled a second time into the
+emulators alone by patch 10. **Drop:** per-consumer backend selection in
+meson.
+
+### 32-mesa-setfunc
+`MesaGLSetFunc(fenum, fn)` swaps one guest-dispatch entry; the macOS
+embed backend redirects `glBindFramebuffer(…, 0)` to its stand-in FBO.
+**Drop:** upstream exposes the table.
+
+### 33-glide-host-ops
+Glide renders into the frontend's context instead of a window of its own
+(doc 12 §5). `hw/3dfx` `dlopen`s a host `libglide2x` at `grGlideInit`;
+`QemuFxUiOps::glide_host_ops` returns the `GlideHostOps` table
+(`glidept/glide_host.h`) and `init_glide2x` hands it to the wrapper's
+optional `setHostOps` before anything can open a window. The library is
+found as `QEMU_GLIDE_LIB`, then `build/glide/libglide2x.so`, then the
+loader's path, then `/usr/local/lib` — the build tree before the loader,
+because a distribution's OpenGLide has no `setHostOps` and would open a
+window. The NULL-handle check now precedes the `setConfig` lookups, which
+had `dlsym`ed the whole process. A wrapper or frontend without the hook
+is upstream's behaviour. **Test:** the `glide-host` check. **Drop:**
+upstream qemu-3dfx grows a window-less provider.
+
+### 34-pit-overdue-irq
+**A DOS game's clock ran at twice real time.** The IRQ 0 edge at counter
+0's wrap is raised by `irq_timer` a main-loop wakeup late, and a guest
+reading the PIT in a tight loop sees the counter wrapped with the tick
+not yet counted — which DOS Quake's `Sys_FloatTime` counts as a whole
+period twice (`QCLOCK.COM`: every tick a 55 ms backward step, 200 %).
+Every PIT port access now first delivers overdue transitions in order,
+and the `IN`/`OUT` ends its TB so the interrupt is taken before the next
+instruction. **Switch:** `-global isa-pit.overdue-irq=off`. **Test:** the
+`pit-guest` check. **Drop:** upstream delivers the edge on access.
+
+### 35-tb-code-map
+Patch 15's per-page byte range of code becomes a 64-bit map, one bit per
+64-byte chunk, set for every chunk a TB touches. A Win9x module is code
+at both ends and data between, so the range made every data write walk
+the page's TB list (twice, with patch 24): 57 % of QEMU in 3DMark 99,
+invalidating nothing. With the map a write to a chunk with no bit returns
+before either walk. 3DMark 99: 3334 → 5894. **Switch:**
+`tb-invalidate-fast`. **Test:** `tools/smc-guest-test.py`, the DOS
+batteries. **Drop:** upstream keeps a per-page code map.
+
+### 36-sse-load-vector
+A 16-byte SSE memory operand was loaded as two 8-byte halves and stored
+to `env` as two, so the vector load that reads it next could not be
+store-forwarded and stalled. The pair is now assembled in the vector
+unit (patch 12's `SIMD_TBL_MASK64LO`) and written with one `st_vec`; same
+access, alignment check and fault. CPU 3DMarks +16 %. **Switch:**
+`sse-fast` (with `TCG_TARGET_HAS_v128`). **Test:**
+`tools/sse-guest-test.py`. **Drop:** upstream assembles an i128 into a
+vector.
+
+### 37-x87-pe-sticky
+Once the inexact flag is set, patch 06 no longer computes it: a TB
+translated with PE already sticky (`TB_FLAG_X87_PE`, bit 2) drops the
+residual computation and the `fpus` update per op. The guard re-checks
+PE at run time (a chained TB is not looked up again), and `fclex`,
+`fninit`, `fldenv`, `frstor` and `fnsave` leave sticky mode for the rest
+of their TB. Patch 20's inline lookup must carry the bit: without it,
+epilogue exits cost a quarter of the frame rate. **Switch:** `x87-fast`.
+**Test:** `tools/x87-guest-test.py`. **Drop:** upstream has no x87 shadow
+path.
+
+### 38-lookup-known-flags
+Patch 20's inline lookup rebuilt the x87 mode, SSE mode and x87 PE bits
+from `env` on every indirect jump (~22 of ~70 host instructions). Each of
+them can only change at an instruction that ends the TB, so the leaving
+TB's own bits are a constant OR; a bit set during the TB is emitted as 0,
+which picks the exact variant until the next full lookup — slower, never
+wrong. hflags and eflags are still loaded. CPU 3DMarks +5 %. **Switch:**
+`inline-lookup`. **Drop:** with 20.
+
+### 39-vec-allsign
+New TCG op `vec_allsign_i32` (zero iff every byte of a vector has its top
+bit set): `vpmovmskb` + `xor` on x86-64, `cmlt`/`uminv`/`umov`/`eor` on
+aarch64. Patch 11's per-op lane check is that op and a `brcond`, instead
+of a round trip of the mask through `env->sses_scratch`; a backend
+without the op keeps the round trip. **Switch:** `sse-fast`. **Drop:**
+upstream grows a vector-test op.
+
+### 40-d3dpt-device
+Adds the `hw/d3dpt` meson subdir and puts the paravirtual Direct3D
+device (doc 14) on the pc machine beside the qemu-3dfx devices: SysBus,
+register page at 0xdfffe000, 64 MiB window at 0xd8000000, the executor
+library opened at the first guest attach (`d3dpt_exec_load.c`). The same
+overlay carries `d3dpt_vga.c`, the `d3dpt-vga` PCI adapter of the XP and
+9x display drivers (docs 15 and 19): a stdvga core, a register BAR and
+128 MiB of VRAM whose top 64 MiB is the Direct3D command window.
+**Drop:** never.
+
+### 41-disas-context-uninit
+QEMU builds with `-ftrivial-auto-var-init=zero`, and
+`gen_intermediate_code`'s `DisasContext` is ~13.6 KB since patch 06's
+slow blocks: a memset per translation (8.7 GB in one 3DMark 99 run). It
+opts out (`__attribute__((uninitialized))`); the translator initialises
+what it reads and `x87s_new_slow` clears each slow block it hands out.
+Helps retranslation-heavy guests. **Drop:** upstream marks it too.
+
+### 42-jump-cache-keep
+A TLB flush no longer empties the jump cache: an entry carries the
+cache's generation in the pc word's high half, a flush bumps the
+generation, and `tb_lookup()` re-validates a stale entry against the pc's
+current mapping and re-stamps it. The cache is 65,536 entries instead of
+4,096. Win98's VMM writes the same CR3 2,400 times a second.
+**Switch:** `jump-cache-keep`. **Drop:** upstream keys its jump cache by
+physical page.
+
+### 43-eob-chain
+A block ending without a jump (`mov ds/es`, `sti`, `mov ss`, `popf`,
+`iret`, `sysenter`, an x87 or MXCSR control-word change) always went back
+to the main loop — five round trips per VxD call on Win98. It now chains
+through the inline lookup when `cpu->interrupt_request` is zero, and a
+block ending on a control-word change rebuilds the lookup's mode bits
+from `env` (patch 38's constants are wrong there; MSVC's `_ftol` hit
+that). Main-loop entries 12.3 M → 5.7 M per 10 s. **Switch:**
+`eob-chain`. **Drop:** upstream chains these.
+
+### 44-tlb-retire
+A CR3 write no longer forgets every translation. `tlb_flush_retiring()`
+moves the entries filled since the last flush into a per-mmu-index
+retired table and clears only those; a miss probes the retired table and
+reuses an entry when the target
+(`TCGCPUOps.tlb_retired_reusable`; i386: CR3, mode, A20, SMM, PKRU/PKRS,
+and every page-table entry the walk read, unchanged) says it still holds.
+Any other flush drops the tables, `invlpg` its page. 95 % of Win98's
+refills are reused; within noise on the Ryzen, kept for hosts where a
+walk is not cheap. The filled-slot list is `uint32_t`: as `uint16_t` it
+wrapped past 65,536 entries, cleared the wrong slots and killed Win98 a
+few seconds into `SETUP.EXE` with a different victim each time. `info
+jit` prints refills and reuses. **Switch:** `tlb-retire`. **Drop:**
+upstream's TLB keeps state across CR3 writes.
+
+### 45-x87-prec24-f32
+At PC=24 (Direct3D's setting, a 3D game's whole frame) the shadows are
+binary32 in their own globals (`cpu_x87_ss[]`), and with PE sticky an
+op is one `addss`/`mulss`/`divss`/`sqrtss` plus a range check:
+correctly rounded binary32 is the x87's PC=24 result while the exponent
+fits. Overflow, underflow and the lowest binade (where binary32 rounds up
+into it and the x87's wider exponent does not) take the slow path; with
+PE undecided the binary64 path runs. CPU 3DMarks 16295 → 16899. The
+battery sweeps every control word a second time with PE set, because
+`fninit` before every case had meant the sticky variants never ran.
+**Switch:** `x87-fast`. **Test:** `tools/x87-guest-test.py`. **Drop:**
+upstream has no x87 shadow path.
+
+### 46-darwin-strchrnul
+`cc.has_function('strchrnul')` links through meson's own prototype, which
+carries no availability, so it succeeded whatever
+`MACOSX_DEPLOYMENT_TARGET` said and a build for an older macOS called a
+weak symbol that is NULL there (the 15.4 SDK declares it from 15.4). On
+Darwin the check includes `<string.h>` with
+`-Werror=unguarded-availability-new`, so the deployment target decides
+(`docs/build-macos.md`, "The floor"). **Drop:** upstream checks
+availability.
+
+### 47-x87-pc64-as-53
+**The one inexact switch, off by default.** Code at PC=64 has no host
+type with a 64-bit mantissa and paid a softfloat helper per op;
+`x87-pc64-as-53=on` makes `update_fp_status` treat PC=64 as PC=53, so
+patches 05 and 06 apply. `fnstcw` still returns the guest's word; results
+differ from an x87 in the mantissa's last 11 bits, and the launcher
+labels it "not exact" (doc 13). 3DMark2001 SE's Lobby 35.2 → 50.3 fps.
+**Switch:** `x87-pc64-as-53`. **Test:** the `optimizations` check.
+**Drop:** never.
+
+### 48-x87-pc64-inline
+x87 at PC=64 inline and exact (doc 13): the fourth x87 mode keeps the
+stack as the x80 values themselves (mantissas in i64 globals, sign and
+exponent in i32 ones), so loads, stores, `fild` and compares are inline
+and `+ − × ÷` call pure helpers (`TCG_CALL_NO_RWG_SE`) doing 128-bit
+integer arithmetic rounded nearest-even, with overflow, tininess,
+denormals and NaNs sent to the slow block. `fsqrt`/`frndint` are not
+inlined in this mode. Lobby 35.2 → 39.7 fps. **Switch:** `x87-fast`.
+**Test:** `tools/x87-guest-test.py` (PC=64 control words, exact ties).
+**Drop:** upstream has no x87 shadow path.
+
+### 49-x87-pc64-inline-mul
+Patch 48's `fmul` (a `mulu2_i64` product, normalized, rounded and packed
+as TCG ops) and `fst m32` inline, with no helper call; add, subtract,
+divide, `fst m64` and `fist` stay calls (an inline add would compute both
+add and subtract to stay label-free). Lobby 39.7 → 44.2 fps. **Switch:**
+`x87-fast`. **Test:** `tools/x87-guest-test.py`. **Drop:** upstream has
+no x87 shadow path.
+
+### 50-cdimage-block-driver
+Builds the `cdimage` block driver (doc 17 §5.2): meson option
+`libdisc_dir` (where `liblibdisc.a` is; `configure-qemu.sh` passes
+`target/release`), the `libdisc` dependency with the staticlib's
+per-platform link libraries (an `if/elif`, since meson forbids chained
+ternaries), `CONFIG_CDIMAGE`, and `block/cdimage.c` (overlay). `-cdrom
+x.cue`/`.ccd` probe to `cdimage`; a plain `.iso` stays on `raw`.
+Snapshots and migration with a cdimage medium are unsupported. **Drop:**
+never, or an upstream cdimage.
+
+### 51-atapi-disc-model
+`hw/ide/atapi.c` asks `cdimage_disc()` on every command; NULL is the
+stock path byte for byte (doc 17 §5.3–5.4). With a disc model: verified
+READ(10/12), READ CD / READ CD MSF over the full MMC-3 field table, TOC,
+SUB-CHANNEL, DISC INFORMATION, GET CONFIGURATION, mode pages 2A and 0E,
+MODE SELECT(10), and CD-DA — PLAY AUDIO, PAUSE/RESUME, STOP PLAY/SCAN and
+the stop half of START STOP UNIT (how XP's `mcicda` stops) — through
+`-device ide-cd,audiodev=<id>`, or a position at 75 sectors/s without
+one; INQUIRY from `model=`. New IDE fields are not migrated.
+`CDIMAGE_TRACE=1` logs packets, replies and sense. **Test:**
+`tools/atapi-guest-test.py`, `tools/xp-cdimage-test.sh`. **Drop:** never.
+
+### 52-atapi-disc-shelf
+A vendor ATAPI opcode (0xD0) on `ide-cd` that lists the host's disc shelf
+and loads or ejects from it, so the guest's `CDSHELF` swaps discs without
+the launcher (doc 07). The CD-ROM drive is the one thing DOS, Win98 and
+XP can all send a raw command to, so it needs no guest driver.
+`shelf=<file>` is a `<label>\t<path>` line file the launcher writes; a
+drive without it answers ILLEGAL REQUEST. The opcode is `CONDDATA`
+because LOAD/EJECT through SPTI or ASPI leave the byte count at zero; a
+disc the host cannot open is refused with 02/3A up front; the medium
+change runs from a bottom half, so the tray moves after the command
+returns, as on a real drive. Protocol `cdshelf/cdshelf_proto.h` (bump
+`CDSHELF_PROTO_VERSION` on change). **Test:** `tools/atapi-guest-test.py`.
+**Drop:** never.
+
+### 53-atapi-dvd-profile
+A cdimage medium longer than an 80-minute CD (`CD_MAX_SECTORS`) reports
+as a DVD-ROM — current profile, feature `0x001f`, mode page 2A's DVD read
+bit — because past 99:59:74 an MSF has no address to give. With a CD in
+the tray the bytes are unchanged. Needed by folder discs (doc 17 §2.1).
+**Test:** `BIG=1 tools/dirdisc-guest-test.sh`. **Drop:** never.
+
+### 54-atapi-audio-seek-stop
+**On Win9x a seek is the stop**: `mcicda` sends one PLAY AUDIO MSF and two
+SEEKs for a whole play/pause/stop session, so a SEEK now ends playback
+(data reads do not: Win98's CDFS re-reads the volume descriptors
+throughout a play). Also, position replies no longer fall back to the
+last data sector read after a stop. Symptom: "the stop doesn't work on
+Win98" — the disc played on behind a stopped MCI (doc 17 §5.4). **Test:**
+`tools/cdaudio-guest-test.sh`. **Drop:** never.
+
+### 55-atapi-audio-read-error
+A host I/O error (`LIBDISC_EIO`) on a CD audio sector plays 2352 bytes
+of silence and the next sector is read again, as a real drive reads
+through a bad audio sector; before, one transient failure (an image on a
+network share) stopped the music with status 0x14 until the game asked
+for another track. A data sector in the range or a vanished medium still
+stops, with a warning. **Test:** the `atapi-read-error` check
+(`tools/read-error-inject.c`). **Drop:** never.
+
+### 60-opl3-mpu401-devices
+Builds the music devices (doc 20 §1, §5): meson option `libsynth_dir`,
+the `libsynth` dependency, `CONFIG_LIBSYNTH`, and `hw/audio/opl3.c` +
+`mpu401.c` (overlay). `opl3` is a YMF262 at 0x388 and, with `sbbase=`, at
+a Sound Blaster's 2x0–2x3 and 2x8/2x9, its timers on the virtual clock
+(an AdLib detection reads them). `mpu401` is UART mode with `synth=gm|mt32`
+and **no interrupt unless `irq=` asks** (doc 20 §5.1: IRQ 2/9 is the ACPI
+SCI on PIIX4, and an unacknowledgeable ACK triple-faulted Win98). Both
+print a 5 s activity line; neither has vmstate. **Test:** the `libsynth`
+and `music` checks. **Drop:** never, or an upstream MPU-401.
+
+### 61-sb16-mixer-volumes
+QEMU's `sb16` stored the CT1745 mixer's volumes and applied none, so
+Windows' sliders did nothing and effects over CD music clipped. Master ×
+voice now scales the SB16's voice (reapplied after `AUD_open_out`), the
+SB Pro registers mirror both ways, and a small registry in the audio core
+(`audio_mixin_attach`/`_detach`/`_set_volume`) lets `opl3` and `ide-cd`'s
+CD audio take the FM and CD levels and output switches. Reset is 0 dB
+with CD on, so a DOS game that never programs the mixer sounds as
+before; a machine without an SB16 plays every input at unity. **Test:**
+the `sb-mixer` check; `CDVOL=` in `tools/audio-glitch-test.py cd`.
+**Drop:** an upstream sb16 mixer.
+
+### 62-voodoo2-device
+`subdir('hw/voodoo')` and nothing else: `-device voodoo2` (doc 21) is the
+overlay — 86Box's Voodoo emulation verbatim (`voodoo/86box/UPSTREAM`
+names the commit), a shim of 86Box's platform headers, and a QEMU PCI
+device. **Test:** the `voodoo-guest*` checks. **Drop:** never, or when
+86Box grows a QEMU device.
+
+### 63-jit-buffer-near-helpers
+On macOS the TCG code buffer is reserved within 2 GiB of QEMU's image
+when the image loads (a constructor in `tcg/region.c`, before `main()`
+and before guest RAM; 1 GiB, else 512 or 256 MiB), so every helper call
+is a near `BL` or `ADRP` sequence. The buffer had landed 8 GiB away in
+about a third of launches, running helper-heavy code 35–45 % slower with
+the same binary (doc 22 §5.0). An mmap hint at TCG init was too late.
+Darwin only. `QEMU_JIT_DEBUG=1` prints every try. No switch (it runs
+before the command line); the A/B is a pristine build. **Drop:** upstream
+places the buffer near the text.
+
+### 64-voodoo2-dither-sub-recompilers
+86Box's x86-64 and ARM64 rasterizer code generators now subtract the
+dither from a blend read-back under `fbzMode` bit 19, as its interpreter
+does; without it a colour blended onto itself drifted a little on every
+pass (doc 21 §9). An overlay patch. **Switch:** `-device
+voodoo2,dither-sub=off` turns it off on both paths, `recompiler=off` is
+the A/B. **Test:** the `voodoo-guest` check's dither phase. **Drop:**
+upstream 86Box fixes it and `scripts/sync-86box-voodoo.sh` brings it in.
+
+### 65-pit-reinject
+**A 1 kHz guest clock ran at the rate of the host's wakeups** — 6 % on a
+Windows host's 15.6 ms timer, which played MIDI slow. Transitions that
+came due while the main loop slept were raised back to back, one
+interrupt at the edge-triggered 8259. Now an edge that finds IRQ 0
+already requested is owed, and `pic_intack` raises one owed tick as a
+fresh edge after the ISR is entered, paced to at most one per half period
+(a burst on every acknowledge nests under Win98's timer handler and took
+the VMM down after a long vCPU stall; a pacing timer merges with the
+regular edge). Capped at a quarter second of ticks; a new count drops
+them; IRQ 0 masked at the 8259 owes nothing. **Switch:** `-global
+isa-pit.reinject=off`. **Test:** the `pit-guest` check's rate phase
+(`tools/wait-granularity.c` rounds waits to 15.6 ms). **Drop:** upstream
+reinjects coalesced PIT ticks.
+
+### 66-passthrough-hides-cursor
+While another card has the monitor (`graphic_hw_passthrough`: the Voodoo
+2, the 3D frontend), the 2D adapter's hardware cursor is reported hidden:
+`dpy_mouse_set` publishes through `dpy_mouse_publish`, which answers
+hidden in pass-through and publishes again when it changes. Symptom:
+Windows' arrow drawn over a full-screen Glide game. Trace event
+`dpy_mouse_publish`. **Test:** the `voodoo-guest-d3dpt` check. **Drop:**
+upstream has pass-through.
+
+### 67-x87x-arith-call-shape
+Patch 48's PC=64 helper takes four arguments (the two sign|exponent
+words as one) and divides with `udiv_qrnnd` instead of `__udivti3`:
+under the Windows x64 ABI a fifth argument and 128-bit operands go
+through memory, and the helper cost 10.8 % of the vCPU there against
+4.6 % on Linux. **Test:** `tools/x87-guest-test.py`. **Drop:** with 48.
+
+### 68-windows-clang
+QEMU's Windows build accepts clang, which the package uses: mingw GCC's
+`__thread` is emulated TLS (a call per access, 10.5 ns against 1 ns) and
+QEMU reads `current_cpu`, the BQL flag and RCU state on every device
+access — a VGA register read loop took 121.6 ns against 52.7 on Linux,
+63.5 with clang. A Windows compiler without `gcc_struct` gets
+`-mno-ms-bitfields` and `QEMU_PACKED` drops the attribute under clang.
+`configure-qemu.sh --windows` uses `packaging/windows/clang-mingw-cc`
+with `--disable-plugins` (lld has no `--dynamic-list`); `WIN_QEMU_CC=gcc`
+is the old build. **Test:** the batteries and `package-windows.sh`'s
+checks on the Windows build under wine. **Drop:** upstream drops
+`gcc_struct` (it did, later).
+
+### 69-mkvenv-file-uri
+`mkvenv` hands pip its bundled wheels as `Path(...).as_uri()` instead of
+`f"file://{dir}"`, which on Windows is a URL whose host is `C:`: Python
+3.14 reads it as UNC and configure stops with "could not find a version
+that satisfies requirement pycotap==1.3.1 … configured to operate
+offline". MSYS2's only Python is 3.14. **Drop:** upstream uses
+`as_uri()`.
+
+### 70-mesa-darwin-no-xquartz
+**The macOS build needs no XQuartz.** qemu-3dfx's Mesa backend on macOS
+was GLX on XQuartz, and nothing had rendered through it since SDL went.
+On Darwin `hw/mesa/mglcntx_linux.c` is now a weak backend that asks the
+provider hook (so the "no 3D provider" warning still appears), answers
+the window-ready poll and the pixel-format queries, and refuses the
+context; same symbols as the GLX one (checked with `nm`), `dllname`
+OpenGL.framework's. Linux is unchanged. **Drop:** upstream qemu-3dfx drops
+GLX on Darwin.
+
+### 71-voodoo2-packet3-packed-color
+A command-FIFO triangle packet's packed colour word (bit 28) is read
+whenever either the RGB or the alpha parameter is named. 86Box took it
+only under the RGB bit, so a vertex with iterated alpha over a constant
+colour — which Glide sends with the packed bit set and RGB clear — left a
+word unread and every later header was read from the middle of the
+parameters. Fixed in both consumers in `vid_voodoo_fifo.c` and in
+`voodoo/voodoo2.c`'s packet walk, which warns once when it meets one. An
+overlay patch (doc 21). **Drop:** upstream 86Box fixes it.
+
+### 72-voodoo2-fifo-order
+86Box's FIFO thread runs its memory FIFO (LFB and texture writes) and the
+command ring in the order the guest wrote them: each entry carries the
+ring's write pointer at queue time (`cmdfifo_mark`) and runs once the
+ring has been consumed that far, and the ring loop yields when the
+memory FIFO's head is due. It had drained one and then the other, and a
+game's HUD written through the LFB either flashed (after the swap) or
+vanished under the world geometry (before it) (doc 21 §13). No wait
+anywhere. An overlay patch. **Test:** the ordering phase of
+`tools/voodoo-guest-test.py` exercises it; only a game under TCG, where
+the rasterizer is behind, discriminates. **Drop:** upstream 86Box fixes
+it.
+
+### 73-vga-vram-prebacked
+`vga_common_init` accepts a `vram` region its owner has already backed
+and allocates one only when it has no size (a wrong size is refused).
+`d3dpt-vga` backs it from the Wine executor's shared file
+(`memory_region_init_ram_from_fd`) when the executor runs in another
+process (ADR-018, doc 14), so the guest's VRAM and command window are the
+bytes that process maps. No change for any other VGA. **Drop:** never.

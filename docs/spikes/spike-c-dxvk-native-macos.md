@@ -1,5 +1,12 @@
 # Spike C — DXVK d3d9 native on macOS (doc 14 P0b), 2026-09-03
 
+**What became of it:** option 2 below. ADR-007 made DXVK the executor on
+every platform, on KosmicKrisp on macOS 26+; the patches it started are
+`patches/dxvk/01`–`05` (the SDL2 WSI it used was replaced by the headless
+one, patch 04, and `scripts/configure-dxvk.sh` is the build). Hosts below
+DXVK's Vulkan 1.3 floor run the same executor on Windows' own d3d9 or on
+Wine on the host (doc 14). What follows is the record of the spike.
+
 Question: can DXVK's d3d9 run natively on the Air (M1, macOS 15.7.9) over
 MoltenVK, so that DXVK is the host executor of the paravirtual Direct3D
 device on every platform? Measured against DXVK master (3.1.0, d7ac258,
@@ -72,10 +79,10 @@ info:    Skipping: Device does not support required feature 'shaderCullDistance'
 follows). The same binary is the acceptance test for KosmicKrisp after
 the macOS 26 upgrade — and so is `tools/d3dgame9-native.cpp`, which
 compiles the unmodified reference scene against DXVK through a small
-Win32-on-SDL2 shim (`tools/d3dgame-native/win32_sdl.h`; window-less and
-renamed `win32_headless.h` since 2026-09-07): it runs to the
-same refusal today and will write the first executor BMP to diff against
-`reference/d3d/rig-2026-09-03/d3dgame9-w300-ff.bmp` afterwards.
+Win32 shim (then over SDL2, now the window-less
+`tools/d3dgame-native/win32_headless.h`): it ran to the same refusal, to
+write the first executor BMP against
+`reference/d3d/rig-2026-09-03/d3dgame9-w300-ff.bmp` after the upgrade.
 
 ## Verified on KosmicKrisp (2026-09-03, Air on macOS 26.6.2)
 
@@ -91,8 +98,9 @@ solid on such a driver. With both, `dxvk-d3d9-test` writes its BMP and
 `d3dgame9-native -frames 600 -dump 300` at 120 fps windowed matches the rig
 golden as closely as RADV does (1095 vs 1089 pixels beyond tolerance 8, 16
 beyond 32 on both, HUD masked). The fill-mode row was numbered 05 because
-the headless-WSI patch (04) landed from Linux the same evening. ADR-007 stands; option 2 below is the
-production path and option 1 is no longer needed.
+the headless-WSI patch (04) landed from Linux the same evening. ADR-007
+stands; option 2 below is the production path and option 1 is no longer
+needed.
 
 ## Options for the macOS executor
 
@@ -128,7 +136,7 @@ production path; the P1 transport, the guest DLLs and the D3DGAME9
 golden diff are identical under both. Do not write a native Metal
 backend.
 
-## Reproduce
+## Reproduce (as run then; the SDL2 WSI is no longer built)
 
 ```sh
 brew install molten-vk vulkan-loader vulkan-headers vulkan-tools glslang sdl2 meson ninja

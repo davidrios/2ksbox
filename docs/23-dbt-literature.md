@@ -1,17 +1,16 @@
-# 23. The parked optimizations against the literature (survey of 2026-09-15)
+# 23. The parked optimizations against the literature
 
-A user request: look at what we optimized (`patches/qemu/README.md`, docs
-13, 16, 18, the M8/M9 track docs), at what we could *not* do or parked,
-and search the literature — arXiv first — for the ideas behind those
-parked items. This is the result, kept here so the next session on TCG
-performance starts from it rather than searching again. Doc 22 §7 is the
-short form.
+What the dynamic-binary-translation literature has on the TCG work this
+project parked or could not do (the queue itself: `patches/qemu/README.md`,
+docs 13, 16 and 18, the M8/M9 track docs), searched arXiv first on
+2026-09-15, and — in the last section — each ranked candidate built as a
+spike and measured on doc 22's tier. The next session on TCG performance
+starts here rather than searching again. Doc 22 §7 is the short form.
 
-**Order of events, for the record.** None of this was read before the
-patches were written. The queue was built from profiles of the workloads
-by Claude, the AI assistant that did the implementation work, from what it
-already knew; this survey came afterwards. Where a patch matches a paper
-below, the two arrived at the same place independently.
+None of this was read before the patches were written: the queue was
+built from profiles of the workloads by Claude, the AI assistant that did
+the implementation work, and the survey came afterwards. Where a patch
+matches a paper below, the two arrived at the same place independently.
 
 **Coverage note.** arXiv carries almost nothing on dynamic binary
 translation: a full-text search for "dynamic binary translation" returns
@@ -63,13 +62,13 @@ Their numbers agree with our probe's per-load gain, which is the
 strongest confirmation the design gets. The user-space mmap variants are
 closed to us on the Air: macOS maps at 16 KiB and the guest's pages are
 4 KiB; only the VM has the 4 KiB granule (the probe measured `TGran4=0`).
-**Read Captive and the 2024 ISPRAS paper before reopening the track.**
-**Gauged on the real workloads on 2026-09-16** (`track/m9-hwmmu`, the
-track doc's "Gauging the gain"): a memory census of each workload times
-the probe's workload-shaped kernels projects 1.1–1.2x (7-Zip 1.2x, Super
-PI and Quake II 1.16x, Blood 1.1x, the FP kernels 1.05x), and the
-nested-TLB risk does not occur on any of them. **Abandoned for the
-time being (user decision, 2026-09-16)**: not worth the port's complexity.
+But the per-load gain does not become a workload gain here: a memory
+census of each workload times the probe's workload-shaped kernels
+projects 1.1–1.2x (7-Zip 1.2x, Super PI and Quake II 1.16x, Blood 1.1x,
+the FP kernels 1.05x), and the nested-TLB risk does not occur on any of
+them (doc 22 §8.2; the M9 track's "Gauging the gain"). **Abandoned for
+the time being (user decision, 2026-09-16)**: not worth the port's
+complexity. Read Captive and the 2024 ISPRAS paper before reopening it.
 
 Cheaper cuts at the same cost that we did take: patch 16 (TLB floor) and
 patch 44 (retire instead of flush). Also relevant: Tong, Koju, Kawahito,
@@ -80,8 +79,9 @@ resizing, a victim TLB (which QEMU adopted), helper threads to flush.
 ### 2. Indirect branches past patch 20
 
 Patch 20 inlines QEMU's jump-cache probe; what remains is a hash, a
-compare, and the conflicts of a 4096-entry cache (11.7 M hash-table
-lookups per 10 s in 3DMark 99 before patch 42).
+compare and conflict misses (11.7 M hash-table lookups per 10 s in
+3DMark 99 with the stock 4096 entries, 2.5 M after patch 42 grew the
+cache to 65,536).
 
 - **Tiaozhuan** — Li, Guo, Lan, Xue, Han, Niu, Zhang, *A General and
   Efficient Indirect Branch Optimization for Binary Translation*,
@@ -104,7 +104,7 @@ lookups per 10 s in 3DMark 99 before patch 42).
 
 Generic, exact, and on top of patch 20: the cheapest candidate here.
 
-### 3. Pinned guest registers (patch 21, opt-in with two open bugs)
+### 3. Pinned guest registers (patch 21, parked)
 
 - **Zurstraßen, Bosbach, Reimann, Leupers**, *Static Global Register
   Allocation for Dynamic Binary Translators*,
@@ -145,8 +145,8 @@ inline; add, sub and div are still 128-bit integer helpers.
 
 ### 6. Self-modifying code residue
 
-Patch 24 refuses stores on the second page of a page-straddling block;
-M9 item 4b wants two-page blocks linkable.
+Patch 24 refuses stores on the second page of a page-straddling block,
+and the M9 track's open items want two-page blocks linkable.
 
 - **Dehnert et al.**, *The Transmeta Code Morphing Software*,
   [CGO 2003](http://www.xsim.com/papers/transmeta-code-morphong-software.dehnert-cgo03.pdf):
@@ -165,8 +165,10 @@ M9 item 4b wants two-page blocks linkable.
 
 - **Risotto** — Gouicem et al., *A Dynamic Binary Translator for Weak
   Memory Model Architectures*, [ASPLOS 2023](https://dl.acm.org/doi/10.1145/3567955.3567962):
-  verified fence placement for x86 on Arm, +6.7 %. Measured free on the
-  M1 (doc 16's follow-ups); noted so nobody measures it again.
+  verified fence placement for x86 on Arm, +6.7 %. On the M1 doc 16's
+  memory-operand bench saw no cost from the barriers and 7-Zip 2–10 %
+  (single runs); `-smp 1,maxcpus=1` already drops them, and a default
+  would need an audit (M9 track, "Open").
 
 ## The arXiv-native papers
 
@@ -191,7 +193,7 @@ M9 item 4b wants two-page blocks linkable.
   — TLB simulation on QEMU (2019).
 
 Nothing, on arXiv or elsewhere, addresses the Voodoo 2's per-dword MMIO
-trap; doc 21 §9's RAM-backed FIFO window remains the plan.
+trap; doc 21 §9's RAM-backed FIFO window is our answer to it.
 
 ## Ranking, by fit and evidence
 
@@ -204,19 +206,16 @@ trap; doc 21 §9's RAM-backed FIFO window remains the plan.
 4. The RAPIDO 2025 flag-check paper for doc 16's follow-ups.
 5. SC '25 double-word arithmetic for x87 PC=64 (speculative).
 
-## Spikes: each candidate tried, one at a time (2026-09-16)
+## Spikes: each candidate tried, one at a time
 
-A user request: implement each of the ranked items as a spike and compare
-with the numbers of doc 22. The method is doc 22's reproducible tier
-(`tools/specbench/run.sh`, the XP image, every launch through `noaslr`),
-one build of the tree with every spike behind its own `-accel tcg`
-switch, a fresh `default` run of the unchanged binary the same morning as
-the control, and the guest stage of `scripts/test.sh` on every build (the
-DOS x87 / rep / SMC / SSE batteries, the PIT clock, MIDI, ATAPI, the pad;
-the three Voodoo checks were failing before the spikes on this checkout,
-because the tree's copy of `voodoo/voodoo2.c` predates the RAM FIFO —
-`scripts/build.sh` re-prepares it — and are out of scope here). Super PI's
-digits are identical in every row. The diff, the scripts that produce it
+Each ranked item was implemented as a spike (user request, 2026-09-16)
+and measured on doc 22's reproducible tier (`tools/specbench/run.sh`,
+the XP image, every launch through `noaslr`): one build of the tree with
+every spike behind its own `-accel tcg` switch, a fresh `default` run of
+the unchanged binary the same morning as the control, and the guest
+stage of `scripts/test.sh` on every build (the DOS x87 / rep / SMC / SSE
+batteries, the PIT clock, MIDI, ATAPI, the pad; the Voodoo checks were
+out of scope). Super PI's digits are identical in every row. The diff, the scripts that produce it
 and every run's result lines are under `docs/22-data/spikes/`; nothing
 from it is in the patch queue. Run-to-run noise on this tier is about
 ±2 % (doc 22 §5.2), and the control itself came out 1–2 % under doc 22's
@@ -291,9 +290,8 @@ What each one is, and what the number says:
   crash, believed to be an eighth pinned register. It is not: with the
   count capped at seven the XP guest rebooted in Super PI's first
   repetition exactly as doc 22's nine-register run did. The bug is in the
-  pinned path itself, and the next step is the one the M9 track lists
-  (`-d int` on the reboot, a bisect over the allocator changes), not a
-  different count.
+  pinned path itself; the next step is to catch the reboot (`-d int`)
+  and bisect over the allocator changes, not a different count.
 - **Not spiked.** §1, the hardware MMU: weeks, by the probe's own
   estimate, and its user-space variants are closed on macOS (16 KiB
   pages). §5, SC '25 double-word arithmetic for x87 at 64 bits: its
@@ -303,8 +301,8 @@ What each one is, and what the number says:
   64-bit mantissa has the double-rounding problem on halfway cases and
   the argument that makes it exact is the whole work; not a spike. §6,
   Transmeta's self-checking translations: only a Windows 98 renderer
-  exercises it, and the games tier is a day of runs. §8: measured free
-  already.
+  exercises it, and the games tier is a day of runs. §8: already
+  measured, and a change of default rather than a technique.
 
 **The conclusion.** On this tier the queue is at the point where the
 literature's remaining generic ideas buy nothing measurable: the

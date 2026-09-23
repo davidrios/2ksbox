@@ -200,8 +200,9 @@ The guest's:
 2. **Total Annihilation's exit from inside a skirmish** (the user's
    crash report; an exit from the main menu is clean).
 3. **A fault inside a HAL callback leaks `cmd_lock`** and freezes the
-   session until the process dies (§36); an unwind that releases it
-   would make the next such bug one failed call.
+   session until the process dies (§36). Accepted for v1 (user
+   decision, 2026-09-16); an unwind that releases it would make the
+   next such bug one failed call.
 4. **ACPI standby**: on resume nothing reprograms the adapter and the
    screen is a blank VGA text page; the player does not report
    `SUSPEND`/`WAKEUP` (§41).

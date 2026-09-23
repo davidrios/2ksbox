@@ -35,7 +35,7 @@
 //!   minimal program with a window and a hook of its own saw its own
 //!   window's keys, so it is neither a Windows rule nor that window; what in
 //!   this process does it was never found, and `RIDEV_NOHOTKEYS` makes the
-//!   question moot. docs/00-status.md, "The first Windows host run", item 5.
+//!   question moot. docs/03-display-pipeline.md, "Input path".
 //! - **macOS**: nothing. Cmd reaches the app already; Cmd+Tab would need an
 //!   event tap and the Accessibility permission.
 //!
