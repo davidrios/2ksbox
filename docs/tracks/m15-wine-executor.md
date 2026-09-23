@@ -41,8 +41,11 @@ instead (ADR-007's second amendment).
 
 ## State
 
-Built and working end to end on the M1 Air; the acceptance run (step 5)
-is left. Measured numbers are in doc 14 under the Wine section.
+Built and working end to end on the M1 Air, and accepted (step 5) on a
+real macOS 15: the user ran the packaged community app there on
+2026-09-23 and reported that it "works wonderfully". No frame rate was
+written down for that run. Step 6 is next. Measured numbers are in doc
+14 under the Wine section.
 
 - **Host tests.** `d3dpt-dp2-test` and `d3dpt-exec-test` through the
   child are byte-identical to in-process DXVK, under Rosetta (WineHQ
@@ -190,9 +193,12 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    It passes when the QEMU log says `exec: Direct3D executor in another
    process (Wine), ready`, the match draws on the M1's GL through the
    packaged pair, and its frame rate is written down against the Air's
-   22.6. The reboot is the user's. XP's desktop is reached (State); left
-   is FIFA 2000 into a match there, with its frame rate.
-6. **Retire WineD3D-in-guest, in one commit**, once 5 passes. It removes
+   22.6. The reboot is the user's. **Passed on 2026-09-23**: the user
+   ran the packaged app on the 15 volume and reported it "works
+   wonderfully". The frame rate of that run was not written down; if it
+   is ever wanted, it is the harness's count (`tools/tcg-fps.py`) on
+   that volume against the Air's 22.6.
+6. **Retire WineD3D-in-guest, in one commit**, now that 5 has passed. It removes
    the ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7`
    with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher, the wine9x build
    and `patches/wine9x/`, `tools/xp-wined3d-test.sh` and

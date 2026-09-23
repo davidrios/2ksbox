@@ -27,7 +27,7 @@ is the index.
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
-| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done; the macOS 15 community app rebuilt with the realize-crash fix and the launcher probing its own Vulkan · FIFA 2000 into a match from that app, then retire WineD3D-in-guest (step 6) |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–5 done: the community app passed on a real macOS 15 (user, 2026-09-23) · step 6, retire WineD3D-in-guest in one commit; the Flatpak's Wine; the spike's host tests on the rig's Linux Wine |
 | Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | | as listed |
 
 Rules: work on `main` or on a branch `track/<name>-<topic>` off it,
@@ -236,14 +236,14 @@ Each track's own order is in its track doc. This is the order across
 tracks, plus the items no track owns.
 
 1. **M15, the Direct3D fallback on Wine** (ADR-018,
-   `tracks/m15-wine-executor.md` "Steps"). The packaged community app
-   boots XP to its desktop on a real macOS 15 (the floor,
-   `build-macos.md`). Step 5: FIFA 2000 into a match there; the app and
-   `build/xp-mac15.qcow2` are built, and booting the Mac into that volume
-   is the user's to do. Also the spike's two host tests on the rig's
-   Linux Wine. Then step 6: WineD3D-in-guest removed in one commit, and
-   the Flatpak's Wine decided. A Windows host below the floor is not part
-   of this; it already runs its own `system32\d3d9.dll`.
+   `tracks/m15-wine-executor.md` "Steps"). Step 5 passed: the packaged
+   community app on a real macOS 15 (the floor, `build-macos.md`) runs
+   the game through the Wine executor, user-confirmed on 2026-09-23 ("works
+   wonderfully"); no frame rate was written down. Next is step 6:
+   WineD3D-in-guest removed in one commit, and the Flatpak's Wine
+   decided. Also the spike's two host tests on the rig's Linux Wine. A
+   Windows host below the floor is not part of this; it already runs its
+   own `system32\d3d9.dll`.
 2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
    Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %
