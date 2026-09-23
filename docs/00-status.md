@@ -517,3 +517,7 @@ to one subsystem lives in its design doc; pointers are at the end.
 - x87 precision modes and the batteries: doc 13. SSE: doc 16.
 - A slang preset smearing its edges (`clamp_to_border`): doc 03.
 - `macdeployqt` and the macOS bundle: `build-macos.md` "The app".
+- The Windows launcher's verbs ending in `0xC0000005` after a full
+  answer (the Qt statics' destructors after the Qt DLLs are gone;
+  `console::exit_after_verb`), the DLL closure, the Store package:
+  `build-windows.md`.

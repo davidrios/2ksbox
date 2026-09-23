@@ -120,6 +120,17 @@ writes `2ksbox-debug.log` with the exit codes and a copy of
 nothing of ours ran, and the exit code says why (`0xC0000135` a missing
 DLL, `0xC0000142` an initialiser, `0xC0000005` a fault).
 
+**A verb ends the process with `TerminateProcess`, not `exit`**
+(`launcher_core::console::exit_after_verb`). The QML module compiled
+into `2ksbox.exe` keeps a `QGlobalStatic` whose destructor calls into
+`Qt6Qml.dll`; with msvcrt as the C runtime the executable's destructors
+run inside msvcrt's `DLL_PROCESS_DETACH`, after the Qt DLLs (loaded
+later, detached earlier) are gone, so every `--paths` and `--diagnose`
+printed its whole answer and then died with `0xC0000005` (found
+2026-09-23 running the staged package natively). A GUI run tears Qt
+down in order and never saw it. The verb has written everything by
+then; Rust's buffers are flushed and the process is ended.
+
 **The DLLs are a closure, not a list.** `objdump` walks the staged
 binaries' import tables and ships what is in the mingw sysroot, never
 Windows' own (`kernel32`, `opengl32`, `d3d9`, the `api-ms-win-*` sets);

@@ -94,14 +94,17 @@ fn main() {
         launcher_core::console::attach_parent();
     }
     if let Some(verb) = verb.as_deref() {
+        // Ended without `exit`: on Windows that ran this binary's Qt
+        // statics' destructors after the Qt DLLs were gone
+        // (`console::exit_after_verb`).
         if let Some(code) = launcher_core::cli::run(verb, &mut args) {
-            std::process::exit(code);
+            launcher_core::console::exit_after_verb(code);
         }
         // `--diag-frame` is not a verb: the headless screenshot path is
         // driven by environment variables (`qt/diag.rs`).
         if verb.starts_with("--") && verb != "--diag-frame" {
             eprintln!("unknown option {verb}");
-            std::process::exit(2);
+            launcher_core::console::exit_after_verb(2);
         }
     }
 

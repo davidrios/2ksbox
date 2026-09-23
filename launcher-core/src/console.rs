@@ -115,6 +115,40 @@ pub fn inherits_output() -> bool {
 }
 
 /// Whether this process has a console attached at all.
+/// End the process after a debug verb has answered, with `code`.
+///
+/// On Windows this is `TerminateProcess`, not `exit`, and the reason is
+/// the Qt launcher's own global statics. The QML module compiled into
+/// that binary registers its units in a `QGlobalStatic` at start-up,
+/// whose destructor calls back into `Qt6Qml.dll`. With msvcrt as the C
+/// runtime, the executable's destructors run inside msvcrt's own
+/// `DLL_PROCESS_DETACH`, which `LdrShutdownProcess` reaches only after
+/// it has detached the Qt DLLs loaded after msvcrt, so the destructor
+/// called into a library already torn down and every verb ended in
+/// `0xC0000005` after printing its whole answer (a GUI run, which tears
+/// Qt down in order through `QGuiApplication`'s destructor, was fine).
+/// There is nothing to run at that point: the verb wrote what it had,
+/// and this flushes what Rust still buffers. The player ends its
+/// headless paths the same way, for a different atexit hazard.
+///
+/// Elsewhere `exit` orders the teardown correctly and is used as is.
+pub fn exit_after_verb(code: i32) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(windows)]
+    unsafe {
+        use std::ffi::c_void;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> *mut c_void;
+            fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
+        }
+        TerminateProcess(GetCurrentProcess(), code as u32);
+    }
+    std::process::exit(code)
+}
+
 #[cfg(windows)]
 fn has_console() -> bool {
     use std::ffi::c_void;
