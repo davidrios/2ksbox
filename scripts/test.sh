@@ -592,17 +592,43 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   case "$o" in "(nothing to add"*) ;; *) echo "a second run added profiles again: $o"; rc=1;; esac
   [ "$(ls "$dir/profiles"/*.toml | wc -l)" -eq 3 ] || { echo "the profile library is not still three"; rc=1; }
 
-  # A new machine starts on CRT Aperture once the library has it
-  # (`wizard::default_shader_profile`), and on the app default before
-  # (the profile directory `empty` has none): the same form, the same
-  # verb, only the library differs.
+  # The first download marks CRT Aperture as the library's default
+  # (`shader_library::create_defaults`), and a machine on "(default)"
+  # (a new one names no profile) plays through it: `--print-shader-args`
+  # is the line the player gets. The default is one file,
+  # `default-profile.txt`, so a front end and a hand edit agree.
+  [ "$(cat "$dir/profiles/default-profile.txt" 2>/dev/null)" = crt-aperture ] \
+    || { echo "the first download did not mark CRT Aperture as the default"; rc=1; }
   mkdir -p "$dir/library"
-  o="$(LAUNCHER_LIBRARY_DIR="$dir/library" target/release/launcherx --wizard-new win98 Tube 1 2>/dev/null | tail -1)"
-  [ -f "$o" ] || { echo "--wizard-new made no bundle"; return 1; }
-  grep -q '^shader_profile = "crt-aperture"' "$o" || { echo "a new machine did not start on CRT Aperture:"; grep shader "$o"; rc=1; }
-  o="$(LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_SHADER_PROFILES_DIR="$dir/empty" target/release/launcherx --wizard-new win98 Bare 1 2>/dev/null | tail -1)"
-  [ -f "$o" ] || { echo "--wizard-new made no bundle (empty profile library)"; return 1; }
-  if grep -q '^shader_profile = ' "$o"; then echo "a new machine with no profile library got a profile:"; grep shader "$o"; rc=1; fi
+  bundle="$(LAUNCHER_LIBRARY_DIR="$dir/library" target/release/launcherx --wizard-new win98 Tube 1 2>/dev/null | tail -1)"
+  [ -f "$bundle" ] || { echo "--wizard-new made no bundle"; return 1; }
+  if grep -q '^shader_profile = ' "$bundle"; then echo "a new machine names a profile instead of the default:"; grep shader "$bundle"; rc=1; fi
+  o="$(target/release/launcherx --print-shader-args "$bundle")"
+  case "$o" in "--shader "*crt-aperture.slangp) ;; *) echo "a machine on (default) does not play the default profile: $o"; rc=1;; esac
+  # A machine that names a profile keeps it whatever the default is.
+  target/release/launcherx --assign-shader "$bundle" apple-ii
+  o="$(target/release/launcherx --print-shader-args "$bundle")"
+  case "$o" in *apple-monitor-II.slangp) ;; *) echo "a machine naming Apple II plays something else: $o"; rc=1;; esac
+  target/release/launcherx --assign-shader "$bundle" "(none)"
+  # Moving the default moves every machine on it; clearing it is the
+  # unshaded app default again, and the picker's first row says which.
+  o="$(target/release/launcherx --default-shader-profile crt-royale)"
+  [ "$o" = crt-royale ] || { echo "--default-shader-profile did not move the default: $o"; rc=1; }
+  o="$(target/release/launcherx --print-shader-args "$bundle")"
+  case "$o" in "--shader "*crt-royale.slangp) ;; *) echo "the machine did not follow the default to CRT Royale: $o"; rc=1;; esac
+  # A second download (or `--default-profiles` by hand) never takes a
+  # default the user chose.
+  target/release/launcherx --default-profiles third_party/slang-shaders >/dev/null
+  [ "$(target/release/launcherx --default-shader-profile)" = crt-royale ] || { echo "a second run of the starters moved the default"; rc=1; }
+  o="$(target/release/launcherx --default-shader-profile "(none)")"
+  [ "$o" = "(none)" ] || { echo "clearing the default left: $o"; rc=1; }
+  o="$(target/release/launcherx --print-shader-args "$bundle")"
+  [ -z "$o" ] || { echo "with no default the machine still gets a shader: $o"; rc=1; }
+  # A default whose profile is gone (deleted by hand here; the
+  # window's Delete also clears the file) is no default.
+  target/release/launcherx --default-shader-profile crt-royale >/dev/null
+  rm "$dir/profiles/crt-royale.toml"
+  [ "$(target/release/launcherx --default-shader-profile)" = "(none)" ] || { echo "a deleted default profile is still the default"; rc=1; }
   return $rc
 }
 qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)

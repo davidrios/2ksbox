@@ -1,5 +1,7 @@
-// The shader profile list (doc 07): New / Edit / Delete over
-// `shader_library`. The editor it opens is its own window
+// The shader profile list (doc 07): New / Edit / Delete / Use as default
+// over `shader_library`. The default is what a machine on "(default)"
+// plays with; the row says so and the button on every other row moves
+// it. The editor it opens is its own window
 // (`ShaderEditorWindow.qml`) rather than a second mode of this one: a
 // real window cannot be reliably resized once the window manager has
 // mapped it, and the two want very different sizes.
@@ -19,6 +21,9 @@ Window {
     required property ShaderEditor editor
 
     signal changed()
+
+    /// Whether any row is the default, for the "No default" button.
+    readonly property bool hasDefault: root.profiles.hasDefault
 
     /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: listBody
@@ -93,6 +98,7 @@ Window {
                     required property int index
                     required property string name
                     required property string preset
+                    required property bool isDefault
 
                     width: profileList.width
 
@@ -105,6 +111,16 @@ Window {
                             Layout.fillWidth: true
                             elide: Text.ElideLeft
                             opacity: 0.7
+                        }
+                        Label {
+                            text: qsTr("default")
+                            visible: profileRow.isDefault
+                            font.bold: true
+                        }
+                        Button {
+                            text: qsTr("Use as default")
+                            visible: !profileRow.isDefault
+                            onClicked: { root.profiles.setDefaultAt(profileRow.index); root.changed() }
                         }
                         Button {
                             text: qsTr("Edit…")
@@ -130,6 +146,11 @@ Window {
                 Button {
                     text: qsTr("New profile…")
                     onClicked: root.editor.newProfile()
+                }
+                Button {
+                    text: qsTr("No default")
+                    enabled: root.hasDefault
+                    onClicked: { root.profiles.clearDefault(); root.changed() }
                 }
                 Item { Layout.fillWidth: true }
             }

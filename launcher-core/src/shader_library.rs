@@ -20,6 +20,55 @@ pub fn default_dir() -> PathBuf {
 pub struct ProfileEntry {
     pub path: PathBuf,
     pub profile: ShaderProfile,
+    /// The library's default (`default_id`): what a machine on the app
+    /// default plays with.
+    pub is_default: bool,
+}
+
+/// The file beside the profiles naming the library's default: one line,
+/// a profile id. A machine whose `shader_profile` is `None` ("(default)"
+/// in every picker) plays with this profile; with no file, or a file
+/// naming a profile that is gone, it plays unshaded, as before there was
+/// a default. One file rather than a flag in each profile, so an editor
+/// that rewrites a profile cannot drop the mark and there is never a
+/// second default.
+pub const DEFAULT_FILE: &str = "default-profile.txt";
+
+/// The default profile's id, when the file names a profile that exists.
+pub fn default_id(dir: &Path) -> Option<String> {
+    let id = std::fs::read_to_string(dir.join(DEFAULT_FILE)).ok()?;
+    let id = id.trim();
+    (!id.is_empty() && dir.join(format!("{id}.toml")).is_file()).then(|| id.to_string())
+}
+
+/// Mark `id` as the library's default, or `None` for no default.
+pub fn set_default(dir: &Path, id: Option<&str>) -> std::io::Result<()> {
+    let file = dir.join(DEFAULT_FILE);
+    match id {
+        Some(id) => {
+            std::fs::create_dir_all(dir)?;
+            std::fs::write(file, format!("{id}\n"))
+        }
+        None => match std::fs::remove_file(file) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        },
+    }
+}
+
+/// The default profile itself, for a machine on the app default.
+pub fn find_default(dir: &Path) -> Option<ShaderProfile> {
+    find(dir, &default_id(dir)?)
+}
+
+/// What every picker's first row and the grid's "Shader" column call
+/// the app default: the bare word with no default marked, the word and
+/// the profile's name with one.
+pub fn default_label(profiles: &[ProfileEntry]) -> String {
+    match profiles.iter().find(|e| e.is_default) {
+        Some(e) => format!("{} {}", crate::wizard::SHADER_DEFAULT_LABEL, e.profile.name),
+        None => crate::wizard::SHADER_DEFAULT_LABEL.to_string(),
+    }
 }
 
 /// The profile id a machine's `shader_profile` field stores: a `.toml`
@@ -70,6 +119,11 @@ pub fn create(dir: &Path, name: String, preset: PathBuf) -> std::io::Result<Path
 /// has to be a no-op. It also skips a preset the collection doesn't
 /// contain, since a profile naming a missing `.slangp` is a parse error
 /// waiting for whoever opens it.
+///
+/// A library with no default yet gets the first starter (CRT Aperture,
+/// the Windows-era tube) as its default (user decision 2026-09-24), so
+/// every machine on "(default)" plays through it from the first
+/// download on. A default the user set stays theirs.
 pub fn create_defaults(dir: &Path, presets_dir: &Path) -> Vec<String> {
     let existing: Vec<String> = scan(dir).into_iter().map(|e| e.profile.name).collect();
     let mut added = Vec::new();
@@ -92,6 +146,16 @@ pub fn create_defaults(dir: &Path, presets_dir: &Path) -> Vec<String> {
             Err(e) => eprintln!("[shader-library] creating the {name} profile: {e}"),
         }
     }
+    if default_id(dir).is_none() {
+        if let Some((first, _)) = crate::shader_source::DEFAULT_PROFILES.first() {
+            let starter = scan(dir).into_iter().find(|e| e.profile.name == *first);
+            if let Some(entry) = starter {
+                if let Err(e) = set_default(dir, Some(&id_of(&entry.path))) {
+                    eprintln!("[shader-library] marking the {first} profile as the default: {e}");
+                }
+            }
+        }
+    }
     added
 }
 
@@ -101,12 +165,16 @@ pub fn scan(dir: &Path) -> Vec<ProfileEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
+    let default = default_id(dir);
     let mut entries: Vec<ProfileEntry> = read
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "toml"))
         .filter_map(|path| match ShaderProfile::load(&path) {
-            Ok(profile) => Some(ProfileEntry { path, profile }),
+            Ok(profile) => {
+                let is_default = default.as_deref() == Some(id_of(&path).as_str());
+                Some(ProfileEntry { path, profile, is_default })
+            }
             Err(err) => {
                 eprintln!("[shader-library] skipping {}: {err}", path.display());
                 None
@@ -125,6 +193,15 @@ pub fn find(dir: &Path, id: &str) -> Option<ShaderProfile> {
     ShaderProfile::load(&dir.join(format!("{id}.toml"))).ok()
 }
 
+/// Delete a profile; if it was the library's default, the library has
+/// no default afterwards (`default_id` would say so anyway, but the
+/// file should not name a ghost).
 pub fn delete(path: &Path) -> std::io::Result<()> {
-    std::fs::remove_file(path)
+    std::fs::remove_file(path)?;
+    if let Some(dir) = path.parent() {
+        if std::fs::read_to_string(dir.join(DEFAULT_FILE)).is_ok_and(|s| s.trim() == id_of(path)) {
+            set_default(dir, None)?;
+        }
+    }
+    Ok(())
 }

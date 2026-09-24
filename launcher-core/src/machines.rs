@@ -98,7 +98,8 @@ impl Machines {
 
     /// The label the "Shader" column shows: the profile's name if the
     /// machine names one that still exists, else a raw `shader`
-    /// override's path, else the app default.
+    /// override's path, else the app default (named after the library's
+    /// default profile when one is marked, `shader_library::default_label`).
     pub fn shader_label(&self, entry: &library::LibraryEntry) -> String {
         entry
             .machine
@@ -107,7 +108,7 @@ impl Machines {
             .and_then(|id| self.profiles.iter().find(|e| shader_library::id_of(&e.path) == id))
             .map(|e| e.profile.name.clone())
             .or_else(|| entry.machine.shader.as_ref().map(|p| p.display().to_string()))
-            .unwrap_or_else(|| crate::wizard::SHADER_DEFAULT_LABEL.to_string())
+            .unwrap_or_else(|| shader_library::default_label(&self.profiles))
     }
 
     pub fn shader_label_at(&self, row: usize) -> String {

@@ -240,7 +240,10 @@ the guest's cursor and the window never grabs. Turn it off in the
 machine's settings for games that want a real PS/2 mouse.
 
 - **Shader profiles…** names a preset plus your parameter overrides, with
-  a live preview against a screenshot. A machine picks a profile by name.
+  a live preview against a screenshot. A machine picks a profile by name,
+  or stays on "(default)", which is whichever profile you mark **Use as
+  default** (CRT Aperture after the first download; "No default" means
+  no shader).
 - **Clone…** copies a machine whole, disk and snapshots, under a new
   name.
 - **Gamepads.** A machine's settings choose whether a pad appears in the

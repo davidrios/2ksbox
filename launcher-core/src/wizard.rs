@@ -28,7 +28,7 @@ use crate::bundle::{
 };
 use crate::disc_library::DISC_FILTER;
 use crate::shader_library::{self, ProfileEntry};
-use crate::{host_gpu, library, player, shader_source};
+use crate::{host_gpu, library, player};
 use std::path::{Path, PathBuf};
 
 /// The shader picker's first row, and the "Shader" column's word for a
@@ -175,9 +175,9 @@ pub struct Form {
     /// error until then.
     pub extra_qemu_args: String,
     /// A shader profile id (`shader_library`), or `None` for the app
-    /// default. Independent of `EditTarget::shader` (see `bundle::Machine`).
-    /// A new machine starts on the CRT Aperture profile when the library
-    /// has it (`default_shader_profile`).
+    /// default, which is the library's default profile when one is marked
+    /// (`shader_library::default_id`). Independent of `EditTarget::shader`
+    /// (see `bundle::Machine`).
     pub shader_profile: Option<String>,
     /// What the last `submit` failed with, for the form to show.
     pub error: Option<String>,
@@ -268,7 +268,7 @@ impl Default for Form {
             disk_path: String::new(),
             disk_size_gb: bundle::default_disk_size_gb(Family::Win98),
             install_media: String::new(),
-            shader_profile: default_shader_profile(),
+            shader_profile: None,
             error: None,
             saved_path: None,
             family: Family::Win98,
@@ -291,21 +291,6 @@ impl Default for Form {
             editing: None,
         }
     }
-}
-
-/// The profile a new machine starts on: the first starter profile
-/// (`shader_source::DEFAULT_PROFILES`, CRT Aperture, the Windows-era
-/// tube), when the library has one by that name and its preset is still
-/// there. `None` (the app default, unshaded) before the collection has
-/// been downloaded or after the profile was deleted; the picker's first
-/// row stays one pick away either way. Looked up by name, not by id: a
-/// profile the user re-created under the same name has a new slug.
-pub fn default_shader_profile() -> Option<String> {
-    let (name, _) = shader_source::DEFAULT_PROFILES.first()?;
-    shader_library::scan(&shader_library::default_dir())
-        .into_iter()
-        .find(|e| e.profile.name == *name && e.profile.preset.is_file())
-        .map(|e| shader_library::id_of(&e.path))
 }
 
 // --- opening -------------------------------------------------------
@@ -1074,15 +1059,16 @@ impl Form {
         self.music_chosen = false;
     }
 
-    /// The shader picker's rows: the app default first, then every
-    /// profile of the library by name, in `shader_library::scan`'s
-    /// order. A front end hands the same `profiles` to the three verbs
+    /// The shader picker's rows: the app default first (named after the
+    /// library's default profile when one is marked,
+    /// `shader_library::default_label`), then every profile of the
+    /// library by name, in `shader_library::scan`'s order. A front end hands the same `profiles` to the three verbs
     /// below, so a row is a profile and nothing in the widget translates
     /// between an index and an id. When the Qt window did that itself it
     /// needed a delegate of its own, and its combo box looked unlike the
     /// others in the form.
     pub fn shader_profile_labels(profiles: &[ProfileEntry]) -> Vec<String> {
-        std::iter::once(SHADER_DEFAULT_LABEL.to_string())
+        std::iter::once(shader_library::default_label(profiles))
             .chain(profiles.iter().map(|e| e.profile.name.clone()))
             .collect()
     }

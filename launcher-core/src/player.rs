@@ -129,16 +129,21 @@ pub fn pc_bios_dir() -> PathBuf {
 /// Resolve `machine`'s shader setting into the preset+overrides the
 /// player actually runs with: a named `shader_profile` (looked up in the
 /// profile library) takes precedence, then the raw `shader` override,
-/// then no shader at all. A `shader_profile` naming a deleted profile
-/// falls through to `shader` or none rather than failing the machine
-/// (see `shader_library::find`).
+/// then the library's default profile (`shader_library::default_id`,
+/// what "(default)" means), then no shader at all. A `shader_profile`
+/// naming a deleted profile falls through the same way rather than
+/// failing the machine (see `shader_library::find`).
 fn resolve_shader(machine: &Machine) -> Option<ShaderProfile> {
+    let dir = shader_library::default_dir();
     if let Some(id) = &machine.shader_profile {
-        if let Some(profile) = shader_library::find(&shader_library::default_dir(), id) {
+        if let Some(profile) = shader_library::find(&dir, id) {
             return Some(profile);
         }
     }
-    machine.shader.clone().map(|preset| ShaderProfile::new(String::new(), preset))
+    if let Some(preset) = machine.shader.clone() {
+        return Some(ShaderProfile::new(String::new(), preset));
+    }
+    shader_library::find_default(&dir)
 }
 
 /// The `--shader [path] [--shader-params k=v,...]` arguments `spawn`

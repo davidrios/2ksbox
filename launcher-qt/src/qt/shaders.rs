@@ -37,6 +37,7 @@ pub mod ffi {
         #[base = QAbstractListModel]
         #[qml_element]
         #[qproperty(i32, count)]
+        #[qproperty(bool, has_default)]
         type ProfileModel = super::ProfileModelRust;
 
         #[qinvokable]
@@ -59,6 +60,14 @@ pub mod ffi {
 
         #[qinvokable]
         fn delete_at(self: Pin<&mut ProfileModel>, row: i32);
+
+        /// Mark row `row` as the library's default (`shader_library::set_default`).
+        #[qinvokable]
+        fn set_default_at(self: Pin<&mut ProfileModel>, row: i32);
+
+        /// No default: machines on "(default)" play unshaded.
+        #[qinvokable]
+        fn clear_default(self: Pin<&mut ProfileModel>);
     }
 
     #[auto_cxx_name]
@@ -209,10 +218,12 @@ use std::pin::Pin;
 const P_NAME: i32 = 0;
 const P_PRESET: i32 = 1;
 const P_ID: i32 = 2;
+const P_IS_DEFAULT: i32 = 3;
 
 #[derive(Default)]
 pub struct ProfileModelRust {
     count: i32,
+    has_default: bool,
     dir: PathBuf,
     entries: Vec<shader_library::ProfileEntry>,
 }
@@ -230,6 +241,7 @@ impl ffi::ProfileModel {
             P_NAME => QVariant::from(&qs(&entry.profile.name)),
             P_PRESET => QVariant::from(&qs(entry.profile.preset.display())),
             P_ID => QVariant::from(&qs(shader_library::id_of(&entry.path))),
+            P_IS_DEFAULT => QVariant::from(&entry.is_default),
             _ => QVariant::default(),
         }
     }
@@ -239,6 +251,7 @@ impl ffi::ProfileModel {
         roles.insert(P_NAME, QByteArray::from("name"));
         roles.insert(P_PRESET, QByteArray::from("preset"));
         roles.insert(P_ID, QByteArray::from("profileId"));
+        roles.insert(P_IS_DEFAULT, QByteArray::from("isDefault"));
         roles
     }
 
@@ -254,6 +267,8 @@ impl ffi::ProfileModel {
         unsafe { self.as_mut().end_reset_model() };
         let count = self.entries.len() as i32;
         self.as_mut().set_count(count);
+        let has_default = self.entries.iter().any(|e| e.is_default);
+        self.as_mut().set_has_default(has_default);
     }
 
     fn path_at(&self, row: i32) -> QString {
@@ -264,6 +279,21 @@ impl ffi::ProfileModel {
         let Some(path) = self.entries.get(row as usize).map(|e| e.path.clone()) else { return };
         if let Err(e) = shader_library::delete(&path) {
             eprintln!("[shader-manager] deleting {}: {e}", path.display());
+        }
+        self.refresh();
+    }
+
+    fn set_default_at(self: Pin<&mut Self>, row: i32) {
+        let Some(id) = self.entries.get(row as usize).map(|e| shader_library::id_of(&e.path)) else { return };
+        if let Err(e) = shader_library::set_default(&self.dir, Some(&id)) {
+            eprintln!("[shader-manager] marking {id} as the default: {e}");
+        }
+        self.refresh();
+    }
+
+    fn clear_default(self: Pin<&mut Self>) {
+        if let Err(e) = shader_library::set_default(&self.dir, None) {
+            eprintln!("[shader-manager] clearing the default profile: {e}");
         }
         self.refresh();
     }

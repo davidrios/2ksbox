@@ -203,6 +203,10 @@ impl FirstRun {
         if !added.is_empty() {
             line.push_str(&format!(" Added {} ready-made profiles: {}.", added.len(), added.join(", ")));
         }
+        let default = shader_library::scan(&self.profiles_dir).into_iter().find(|e| e.is_default);
+        if let Some(entry) = default {
+            line.push_str(&format!(" Machines on \"(default)\" use {}.", entry.profile.name));
+        }
         line
     }
 

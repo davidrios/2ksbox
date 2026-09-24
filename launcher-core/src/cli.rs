@@ -656,6 +656,22 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             let path = args.next().expect("usage: --picked <path>");
             println!("{}", browse::picked(Path::new(&path)).display());
         }
+        "--default-shader-profile" => {
+            // The library's default profile (`shader_library::DEFAULT_FILE`),
+            // what a machine on "(default)" plays with: prints the id, or
+            // "(none)"; with an argument, sets it ("(none)" clears it).
+            let dir = shader_library::default_dir();
+            if let Some(id) = args.next() {
+                let id = (id != "(none)").then_some(id);
+                if let Some(id) = &id {
+                    if shader_library::find(&dir, id).is_none() {
+                        panic!("no profile {id} in {}", dir.display());
+                    }
+                }
+                shader_library::set_default(&dir, id.as_deref()).expect("set the default profile");
+            }
+            println!("{}", shader_library::default_id(&dir).unwrap_or_else(|| "(none)".to_string()));
+        }
         "--new-shader-profile" => {
             let usage = "usage: --new-shader-profile <name> <preset.slangp>";
             let name = args.next().expect(usage);
