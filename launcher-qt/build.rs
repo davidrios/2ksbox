@@ -16,6 +16,33 @@ fn main() {
     // The icon Explorer shows for the launcher: this crate becomes
     // 2ksbox.exe in the Windows package.
     embed_windows_icon();
+    // On a Mac the Qt is ours (scripts/build-deps.sh, docs/build-macos.md
+    // "The libraries"), under build/deps/<arch>, and cxx-qt-build finds
+    // Qt through QMAKE or a qmake6 on PATH. A `cargo build` run by hand
+    // without QMAKE once found Homebrew's qmake6 and linked the launcher
+    // against a Qt the package then failed on (built for macOS 26, with
+    // QtDBus and brotli in its closure). So when QMAKE is unset and our
+    // Qt is built, name it here; a preset QMAKE still wins.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+        && std::env::var_os("QMAKE").is_none()
+    {
+        let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+            Ok("aarch64") => "arm64",
+            Ok(other) => other,
+            Err(_) => "arm64",
+        }
+        .to_string();
+        let qmake = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../build/deps")
+            .join(&arch)
+            .join("bin/qmake");
+        println!("cargo:rerun-if-env-changed=QMAKE");
+        println!("cargo:rerun-if-changed={}", qmake.display());
+        if qmake.is_file() {
+            // SAFETY: single-threaded build script, before anything reads it.
+            unsafe { std::env::set_var("QMAKE", &qmake) };
+        }
+    }
     // `appearance.cpp` calls `QQuickStyle`, and it is compiled into the
     // generated archive that the linker reaches after the Qt import
     // libraries `qt_module` names. ELF doesn't care, but a PE import

@@ -604,12 +604,24 @@ reference scene.
 
 *Addendum (2026-09-23, user: "the intel version is obviously macos 15
 only").* The Intel app is made on the Apple Silicon Mac under Rosetta
-against an Intel Homebrew (`scripts/build.sh --x86_64`,
-`package-macos.sh --x86_64`; `build-macos.md` "The Intel build"). It is
-the community build and nothing else, and it carries **no Vulkan**:
-KosmicKrisp exists only as arm64 and MoltenVK is refused, so no DXVK
-and no in-process executor either. Its Direct3D is the executor on
-native x86_64 Wine, and a Mac with no Wine has none.
+(`scripts/build.sh --x86_64`, `package-macos.sh --x86_64`;
+`build-macos.md` "The Intel build"). It is the community build and
+nothing else, and it carries **no Vulkan**: KosmicKrisp exists only as
+arm64 and MoltenVK is refused, so no DXVK and no in-process executor
+either. Its Direct3D is the executor on native x86_64 Wine, and a Mac
+with no Wine has none.
+
+*Second addendum (2026-09-23, user: "depending on homebrew at all was a
+mistake").* Homebrew's installer refuses Intel Macs since 7.0, which
+would have ended the Intel build before it started, and Homebrew's
+bottle floor was the app's floor. So **nothing the app carries comes
+from Homebrew any more**: `scripts/build-deps.sh` builds QEMU's
+libraries (static) and Qt 6.9.3 from pinned upstream tarballs for the
+floor and either architecture (`build-macos.md` "The libraries"), and
+**the community build's floor is macOS 12**, the lowest the newest Qt
+line that reaches it allows (`scripts/macos-floor.sh`; 6.5 would reach
+11, but its open-source line ended in 2023). Homebrew remains a source
+of build tools and of recipes to crib from.
 
 **What stays open.** The store build adds the sandbox and whatever
 review asks. The store's licensing question (GPL-2 QEMU and 86Box under

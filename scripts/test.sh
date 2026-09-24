@@ -36,7 +36,7 @@ export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.
 export PLAYER_KEYBOARD_CAPTURE="${PLAYER_KEYBOARD_CAPTURE:-0}"
 if [ "$OS" = Darwin ]; then
   # The cargo builds below link for the same macOS as everything else
-  # (Homebrew's floor, scripts/macos-floor.sh), not for rustc's default.
+  # (the floor, scripts/macos-floor.sh), not for rustc's default.
   MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}"
   export MACOSX_DEPLOYMENT_TARGET
   # DXVK dlopens the Vulkan loader by leaf name; a DYLD_* variable handed
@@ -2480,11 +2480,10 @@ host_stage() {
   # must find them all inside the app. Only when that build exists; a Mac
   # that never made it is not a failure.
   if [ "$OS" = Darwin ] && [ "$ARCH" = arm64 ]; then
-    if [ -f build/x86_64/qemu/libqemu-embed-i386.dylib ] && [ -x launcher-qt/target/x86_64-apple-darwin/release/launcher-qt ] \
-       && [ -x /usr/local/bin/brew ]; then
+    if [ -f build/x86_64/qemu/libqemu-embed-i386.dylib ] && [ -x launcher-qt/target/x86_64-apple-darwin/release/launcher-qt ]; then
       run_check package-x86_64 package-x86_64.log scripts/package-macos.sh --x86_64 --no-build --no-sign --no-dmg --out "$OUT/package-x86_64" || true
     else
-      skip package-x86_64 "no Intel build (scripts/build.sh --x86_64, with the Intel Homebrew)"
+      skip package-x86_64 "no Intel build (scripts/build.sh --x86_64)"
     fi
   fi
 

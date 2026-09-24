@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# Build the libraries QEMU needs on macOS from their upstream sources,
-# ourselves, into build/deps/<arch>: glib (with pcre2, and the libffi and
-# stub libintl its own tarball carries as subprojects, pinned by its wrap
-# files), pixman, libslirp and zstd. Static, so libqemu-embed-i386.dylib
-# and qemu-img carry them and the app ships no dependency dylib for
-# QEMU's side. Every version is pinned with its checksum below, and
-# nothing is fetched after the tarballs.
+# Build the libraries the macOS app carries from their upstream sources,
+# ourselves, into build/deps/<arch>. For QEMU: glib (with pcre2, and the
+# libffi and stub libintl its own tarball carries as subprojects, pinned
+# by its wrap files), pixman, libslirp and zstd, static, so
+# libqemu-embed-i386.dylib and qemu-img carry them and the app ships no
+# dependency dylib for QEMU's side. For the launcher: Qt 6 as frameworks,
+# qtbase with its own bundled zlib, png, jpeg, freetype, harfbuzz, pcre2
+# and double-conversion and none of the system libraries Homebrew's build
+# links (ICU, dbus, OpenSSL, glib, zstd, brotli), qtshadertools and
+# qtdeclarative for QtQuick, and qttools for macdeployqt alone. Every
+# version is pinned with its checksum below, and nothing is fetched after
+# the tarballs.
 #
 #   scripts/build-deps.sh                 this Mac's architecture, the floor
 #   scripts/build-deps.sh --arch x86_64   the Intel build's (build/deps/x86_64)
-#   scripts/build-deps.sh --clean         from scratch
+#   scripts/build-deps.sh --clean         from scratch (a recipe changed for
+#                                         the same version: the stamps are
+#                                         name, version and floor)
 #
 # Why not Homebrew's (docs/build-macos.md, "The libraries", user decision
 # 2026-09-23): Homebrew builds every library for the macOS it runs on and
@@ -48,8 +55,8 @@ WORK="$ROOT/build/deps/work-$ARCH"
 [ -z "$CLEAN" ] || rm -rf "$PREFIX" "$WORK"
 mkdir -p "$SRC" "$PREFIX" "$WORK"
 
-for t in meson ninja pkg-config cc; do
-  command -v "$t" >/dev/null || { echo "build-deps.sh: no $t (meson, ninja and pkg-config build these; they ship nothing)" >&2; exit 1; }
+for t in meson ninja pkg-config cmake cc; do
+  command -v "$t" >/dev/null || { echo "build-deps.sh: no $t (meson, ninja, pkg-config and cmake build these; they ship nothing)" >&2; exit 1; }
 done
 
 # name  version  tarball  sha256  url
@@ -59,6 +66,11 @@ glib 2.90.0 glib-2.90.0.tar.xz 17d15cac2af80a33271127408e0abc2748eb297c595c2a264
 pixman 0.46.4 pixman-0.46.4.tar.gz d09c44ebc3bd5bee7021c79f922fe8fb2fb57f7320f55e97ff9914d2346a591c https://cairographics.org/releases/pixman-0.46.4.tar.gz
 libslirp 4.9.5 libslirp-v4.9.5.tar.gz f43e68b60b580647574ec4a0e2b6c600a56281e6c39f79426510832dc810f483 https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.5/libslirp-v4.9.5.tar.gz
 zstd 1.5.7 zstd-1.5.7.tar.gz eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3 https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+qtbase 6.9.3 qtbase-everywhere-src-6.9.3.tar.xz c5a1a2f660356ec081febfa782998ae5ddbc5925117e64f50e4be9cd45b8dc6e https://download.qt.io/official_releases/qt/6.9/6.9.3/submodules/qtbase-everywhere-src-6.9.3.tar.xz
+qtshadertools 6.9.3 qtshadertools-everywhere-src-6.9.3.tar.xz 629804ee86a35503e4b616f9ab5175caef3da07bd771cf88a24da3b5d4284567 https://download.qt.io/official_releases/qt/6.9/6.9.3/submodules/qtshadertools-everywhere-src-6.9.3.tar.xz
+qtdeclarative 6.9.3 qtdeclarative-everywhere-src-6.9.3.tar.xz 5a071b227229afbf5c976b7b59a0d850818d06ae861fcdf6d690351ca3f8a260 https://download.qt.io/official_releases/qt/6.9/6.9.3/submodules/qtdeclarative-everywhere-src-6.9.3.tar.xz
+qttools 6.9.3 qttools-everywhere-src-6.9.3.tar.xz 0cf7ab0e975fc57f5ce1375576a0a76e9ede25e6b01db3cf2339cd4d9750b4e9 https://download.qt.io/official_releases/qt/6.9/6.9.3/submodules/qttools-everywhere-src-6.9.3.tar.xz
+qtimageformats 6.9.3 qtimageformats-everywhere-src-6.9.3.tar.xz 4fb26bdbfbd4b8e480087896514e11c33aba7b6b39246547355ea340c4572ffe https://download.qt.io/official_releases/qt/6.9/6.9.3/submodules/qtimageformats-everywhere-src-6.9.3.tar.xz
 '
 
 fetch() { # tarball sha256 url -> the unpacked source directory
@@ -110,13 +122,33 @@ INI
 fi
 say() { printf '\n\033[1m==> deps: %s\033[0m\n' "$*"; }
 
+# Qt's builds are cmake. The same target and architecture, our prefix,
+# and *no* Homebrew: this Mac's cmake searches /opt/homebrew on its own
+# (CMAKE_SYSTEM_PREFIX_PATH), and Qt's configure would find zstd, brotli,
+# ICU and dbus there and link them, so both prefixes are ignored and the
+# pkg-config lookups are off. The frameworks keep Qt's `@rpath` install
+# names and Qt's own tools their LC_RPATH (the rpath feature stays on:
+# without it qmake and moc abort on "no LC_RPATH's found"); cxx-qt-build
+# gives the launcher an rpath to this prefix, so it runs unpackaged from
+# a checkout, and the packager deletes that rpath after macdeployqt has
+# copied the frameworks. Qt 6.9 warns about an SDK newer than 15; that
+# is this Xcode, and the build is fine with it.
+QTCMAKE=(cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX"
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="$T" -DCMAKE_OSX_ARCHITECTURES="$ARCH"
+  -DCMAKE_IGNORE_PREFIX_PATH="/opt/homebrew;/usr/local"
+  -DCMAKE_PREFIX_PATH="$PREFIX" -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+  -DQT_NO_APPLE_SDK_MAX_VERSION_CHECK=ON)
+
 built=()
 while read -r name ver tar sha url; do
   [ -n "$name" ] || continue
   stamp="$PREFIX/.built-$name-$ver-$T"
   if [ -f "$stamp" ]; then echo "    $name $ver built for macOS $T $ARCH"; continue; fi
   src=$(fetch "$tar" "$sha" "$url")
-  b="$WORK/$name"; rm -rf "$b"
+  b="$WORK/$name"
+  # A meson directory is set up once; Qt's cmake ones are kept, so a
+  # changed option reconfigures and rebuilds only what it touches.
+  case "$name" in qt*) ;; *) rm -rf "$b" ;; esac
   say "$name $ver ($ARCH, macOS $T)"
   case "$name" in
     pcre2)
@@ -146,6 +178,53 @@ while read -r name ver tar sha url; do
       make -C "$src/lib" -j8 libzstd.a CFLAGS="$CFLAGS" >/dev/null
       make -C "$src/lib" install-static install-includes install-pc PREFIX="$PREFIX" LIBDIR="$PREFIX/lib" >/dev/null
       make -C "$src/lib" clean >/dev/null ;;
+    qtbase)
+      # Frameworks; Qt's own copies of every third-party library; the
+      # system's TLS (SecureTransport) rather than OpenSSL; no ICU (Qt
+      # uses CoreFoundation on a Mac), no dbus, no glib. The modules the
+      # launcher never loads are not built: Sql, PrintSupport, Concurrent,
+      # Test, Xml, Widgets (QtQuick's dialogs are the platform's, through
+      # the Cocoa theme).
+      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+        -DFEATURE_framework=ON -DFEATURE_pkg_config=OFF \
+        -DFEATURE_system_zlib=OFF -DFEATURE_system_png=OFF -DFEATURE_system_jpeg=OFF \
+        -DFEATURE_system_freetype=OFF -DFEATURE_system_harfbuzz=OFF -DFEATURE_system_pcre2=OFF \
+        -DFEATURE_system_doubleconversion=OFF -DFEATURE_system_libb2=OFF -DFEATURE_system_textmarkdownreader=OFF \
+        -DFEATURE_zstd=OFF -DFEATURE_brotli=OFF -DFEATURE_icu=OFF -DFEATURE_glib=OFF -DFEATURE_dbus=OFF \
+        -DFEATURE_openssl=OFF -DFEATURE_securetransport=ON -DFEATURE_gssapi=OFF -DFEATURE_libproxy=OFF \
+        -DFEATURE_vulkan=OFF -DFEATURE_fontconfig=OFF \
+        -DFEATURE_sql=OFF -DFEATURE_printsupport=OFF -DFEATURE_concurrent=OFF -DFEATURE_testlib=OFF \
+        -DFEATURE_xml=OFF -DFEATURE_widgets=OFF >/dev/null
+      ninja -C "$b" install >/dev/null ;;
+    qtimageformats)
+      # The WebP plugin alone, on the libwebp the module bundles: the
+      # macOS style's BusyIndicator is an animated WebP, and without the
+      # plugin it is a blank square and an error per frame.
+      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+        -DFEATURE_webp=ON -DFEATURE_system_webp=OFF -DFEATURE_tiff=OFF -DFEATURE_system_tiff=OFF \
+        -DFEATURE_mng=OFF -DFEATURE_jasper=OFF >/dev/null
+      ninja -C "$b" install >/dev/null ;;
+    qtshadertools|qttools)
+      # qttools for macdeployqt alone: every other tool is a feature, off.
+      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+        -DFEATURE_assistant=OFF -DFEATURE_designer=OFF -DFEATURE_linguist=OFF -DFEATURE_pixeltool=OFF \
+        -DFEATURE_qdbus=OFF -DFEATURE_qdoc=OFF -DFEATURE_qev=OFF -DFEATURE_qtattributionsscanner=OFF \
+        -DFEATURE_qtdiag=OFF -DFEATURE_qtplugininfo=OFF -DFEATURE_distancefieldgenerator=OFF \
+        -DFEATURE_kmap2qmap=OFF -DFEATURE_clang=OFF -DFEATURE_clangcpp=OFF >/dev/null
+      ninja -C "$b" install >/dev/null ;;
+    qtdeclarative)
+      # QtQuick, Controls (the macOS, Fusion and Basic styles; the
+      # launcher asks for the platform's, and Fusion is its fallback;
+      # the iOS style stays because the macOS style's BusyIndicator
+      # imports its implementation module), Layouts and Dialogs. No
+      # particles, no designer support, no QML debugger or profiler.
+      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+        -DFEATURE_quick_particles=OFF -DFEATURE_quick_designer=OFF \
+        -DFEATURE_quickcontrols2_material=OFF -DFEATURE_quickcontrols2_universal=OFF \
+        -DFEATURE_quickcontrols2_imagine=OFF -DFEATURE_quickcontrols2_fluentwinui3=OFF \
+        -DFEATURE_quickcontrols2_windows=OFF -DFEATURE_quickcontrols2_ios=ON \
+        -DFEATURE_qml_debug=OFF -DFEATURE_qml_profiler=OFF -DFEATURE_qml_preview=OFF >/dev/null
+      ninja -C "$b" install >/dev/null ;;
   esac
   touch "$stamp"
   built+=("$name")
@@ -179,4 +258,5 @@ PY
 echo
 echo "deps ($ARCH, macOS $T): $PREFIX"
 ls "$PREFIX/lib"/*.a | sed 's|.*/|    |'
+ls -d "$PREFIX/lib"/Qt*.framework 2>/dev/null | sed 's|.*/|    |' | tr '\n' ' '; echo
 [ ${#built[@]} -eq 0 ] || echo "    built now: ${built[*]}"

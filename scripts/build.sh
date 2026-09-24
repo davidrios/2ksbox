@@ -6,15 +6,16 @@
 #   scripts/build.sh qemu rust       only those stages
 #   scripts/build.sh --test          everything, then scripts/test.sh host
 #   scripts/build.sh --x86_64        on an Apple Silicon Mac: the Intel build,
-#                                    under Rosetta with the Intel Homebrew
-#                                    (docs/build-macos.md, "The Intel build")
+#                                    under Rosetta (docs/build-macos.md,
+#                                    "The Intel build")
 #
 # Stages, in the order they must run:
 #
 #   deps    macOS only: scripts/build-deps.sh, the libraries QEMU links
-#           (glib, pixman, libslirp, zstd) built from source for the
-#           floor into build/deps/<arch>, static (docs/build-macos.md,
-#           "The libraries"). Elsewhere the distribution's.
+#           (glib, pixman, libslirp, zstd; static) and the launcher's Qt
+#           6, built from source for the floor into build/deps/<arch>
+#           (docs/build-macos.md, "The libraries"). Elsewhere the
+#           distribution's.
 #   qemu    prepare-qemu.sh (overlay + patch queue) -> configure-qemu.sh
 #           -> ninja: qemu-system-i386, qemu-img, qemu-io,
 #           libqemu-embed-i386.{so,dylib}
@@ -91,34 +92,29 @@ done
 # --- the Intel build on an Apple Silicon Mac ----------------------------
 # ADR-019's community build for Intel Macs, made on this one under Rosetta
 # (docs/build-macos.md, "The Intel build"): the whole script re-runs itself
-# as an x86_64 process with the Intel Homebrew (/usr/local) first on PATH.
-# From there on nothing is told the architecture: uname, the compiler,
-# the Intel Homebrew's meson, ninja and pkg-config all answer x86_64, and
-# every stage script recognises the translated process
-# (sysctl.proc_translated) and keeps to its own directories, build/x86_64
-# and target/x86_64-apple-darwin, beside the native build's. So `arch
-# -x86_64 scripts/build.sh` is the same build; the flag only spares the
-# typing. An Intel Mac never runs translated and builds natively.
+# as an x86_64 process. From there on nothing is told the architecture:
+# uname and the compiler answer x86_64, every stage script recognises the
+# translated process (sysctl.proc_translated) and keeps to its own
+# directories, build/x86_64, build/deps/x86_64 and
+# target/x86_64-apple-darwin, beside the native build's, and the
+# libraries are built for x86_64 by the same deps stage. So `arch -x86_64
+# scripts/build.sh` is the same build; the flag only spares the typing.
+# An Intel Mac never runs translated and builds natively.
 ROSETTA=""
 if [ "$(uname -s)" = Darwin ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
   ROSETTA=1
 fi
 if [ -n "$X86_64" ] && [ -z "$ROSETTA" ]; then
   [ "$(uname -s)" = Darwin ] || { echo "build.sh: --x86_64 is the Intel build of the macOS app; this is not a Mac" >&2; exit 1; }
-  [ -x /usr/local/bin/brew ] || {
-    echo "build.sh: --x86_64 needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
-  exec arch -x86_64 /usr/bin/env PATH="/usr/local/bin:$PATH" "$0" "${ARGS[@]}"
+  exec arch -x86_64 "$0" "${ARGS[@]}"
 fi
 # Where this build's outputs go, and the cargo target that puts them
 # there. The native build's are the defaults every doc names.
 QB=build/qemu; TD=target/release; QTD=launcher-qt/target/release; CT=()
 if [ -n "$ROSETTA" ]; then
-  [ -x /usr/local/bin/brew ] || {
-    echo "build.sh: an x86_64 build needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
-  case ":$PATH:" in *:/usr/local/bin:*) ;; *) export PATH="/usr/local/bin:$PATH" ;; esac
   QB=build/x86_64/qemu; TD=target/x86_64-apple-darwin/release
   QTD=launcher-qt/target/x86_64-apple-darwin/release; CT=(--target x86_64-apple-darwin)
-  echo "==> the Intel build, under Rosetta: $QB, $TD (brew: $(command -v brew))"
+  echo "==> the Intel build, under Rosetta: $QB, $TD"
 fi
 
 EXPLICIT=""
@@ -172,9 +168,8 @@ stamp_stale() {
 }
 stamp_save() { printf '%s\n' "$STAMP_VALUE" > "$STAMP_FILE"; }
 
-# macOS: everything is built for the oldest macOS Homebrew still supports
-# (scripts/macos-floor.sh), because the app carries Homebrew's libraries
-# and runs nowhere older than they do (docs/build-macos.md, "The floor").
+# macOS: everything is built for the floor (scripts/macos-floor.sh), the
+# oldest macOS the app runs on (docs/build-macos.md, "The floor").
 # Every stage (configure-qemu.sh, cargo, DXVK, the executor, the wrapper)
 # gets the same value, or ld warns "built for newer macOS version" on every
 # link. A preset MACOSX_DEPLOYMENT_TARGET wins.
@@ -221,11 +216,17 @@ if want deps; then
   elif ! have meson || ! have ninja || ! have pkg-config; then
     skip deps "needs meson, ninja and pkg-config" || true
   else
-    say "deps: glib, pixman, libslirp, zstd ($(uname -m), macOS $MACOSX_DEPLOYMENT_TARGET)"
+    say "deps: glib, pixman, libslirp, zstd and Qt 6 ($(uname -m), macOS $MACOSX_DEPLOYMENT_TARGET)"
+    # The script's own stamps (name, version, floor) skip what is built;
+    # a recipe change for the same version wants `build-deps.sh --clean`
+    # by hand, since a clean here would rebuild Qt (an hour) on every
+    # edit to the script.
     if stamp_stale "deps-$(uname -m)" scripts/build-deps.sh \
        || [ ! -f "build/deps/$(uname -m)/lib/pkgconfig/glib-2.0.pc" ] \
-       || ! ls "build/deps/$(uname -m)"/.built-glib-*-"$MACOSX_DEPLOYMENT_TARGET" >/dev/null 2>&1; then
-      scripts/build-deps.sh --clean
+       || [ ! -x "build/deps/$(uname -m)/bin/qmake" ] \
+       || ! ls "build/deps/$(uname -m)"/.built-glib-*-"$MACOSX_DEPLOYMENT_TARGET" >/dev/null 2>&1 \
+       || ! ls "build/deps/$(uname -m)"/.built-qtdeclarative-*-"$MACOSX_DEPLOYMENT_TARGET" >/dev/null 2>&1; then
+      scripts/build-deps.sh
       stamp_save
       DEPS_FRESH=1
       BUILT+=(deps)
@@ -287,6 +288,19 @@ if want qemu; then
     if [ "$(uname -s)" = Darwin ] && [ -f "$QB/config-meson.cross" ] \
        && ! grep -q -- "'-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET'" "$QB/config-meson.cross"; then
       needs_configure=1
+    fi
+    # Configured for another CPU: meson takes the machine its Python runs
+    # on for the host, and a configure that once ran on the Intel build's
+    # x86_64 interpreter leaves a build directory that compiles every file
+    # with -msse2 and fails on this arm64 Mac; a plain reconfigure keeps
+    # that answer. Only a fresh directory forgets it.
+    if [ "$(uname -s)" = Darwin ] && [ -f "$QB/meson-logs/meson-log.txt" ]; then
+      case "$(uname -m)" in arm64) want=aarch64 ;; *) want=$(uname -m) ;; esac
+      got=$(grep -m1 '^Host machine cpu family:' "$QB/meson-logs/meson-log.txt" | awk '{print $NF}')
+      if [ -n "$got" ] && [ "$got" != "$want" ]; then
+        echo "    $QB was configured for $got, this is $want: configuring from scratch"
+        rm -rf "$QB"; needs_configure=1
+      fi
     fi
     if [ -n "$needs_configure" ]; then
       if [ -z "${QEMU_PYTHON:-}" ] && [ -z "$ROSETTA" ] && ! have uv; then
@@ -355,10 +369,15 @@ fi
 # cxx-qt-build finds Qt through `qmake6` and drives moc and
 # qmltyperegistrar itself, so the tool to look for is qmake6.
 if want qt; then
+  # On a Mac the Qt is ours (the deps stage), named to cxx-qt-build
+  # through QMAKE, never a qmake6 found on PATH.
+  if [ "$(uname -s)" = Darwin ] && [ -z "${QMAKE:-}" ] && [ -x "build/deps/$(uname -m)/bin/qmake" ]; then
+    export QMAKE="$PWD/build/deps/$(uname -m)/bin/qmake"
+  fi
   if ! have cargo; then skip qt "no cargo" || true
   elif ! have qmake6 && [ -z "${QMAKE:-}" ]; then
     case "$(uname -s)" in
-      Darwin) skip qt "no qmake6 (brew install qt)" || true ;;
+      Darwin) skip qt "no Qt (scripts/build.sh deps builds it)" || true ;;
       *)      skip qt "no qmake6 (qt6-base + qt6-declarative)" || true ;;
     esac
   else

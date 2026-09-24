@@ -52,6 +52,21 @@ extern "C" void launcher_qt_choose_style() {
         return;
     }
 #endif
+#ifdef Q_OS_MACOS
+    // The macOS style draws real Cocoa views (Quick Controls' QMacStyle
+    // paints an NSView per control), so it needs the cocoa platform
+    // under it. Qt 6.9 names it by the operating system, so on the
+    // offscreen platform of the package check (`QT_QPA_PLATFORM=offscreen`,
+    // doc 07) the first Button died in objc_msgSend. That platform is
+    // named before the application exists, so the environment is what
+    // there is to read here: any platform but cocoa gets Fusion.
+    const QByteArray platform = qgetenv("QT_QPA_PLATFORM");
+    if (!platform.isEmpty() && platform != "cocoa"
+        && qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+        QQuickStyle::setStyle(QStringLiteral("Fusion"));
+        return;
+    }
+#endif
     if (QQuickStyle::name().isEmpty())
         QQuickStyle::setStyle(QStringLiteral("Fusion"));
 }

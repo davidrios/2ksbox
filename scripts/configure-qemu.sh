@@ -18,9 +18,10 @@
 # docs/build-macos.md "The Intel build") runs this whole script under
 # Rosetta, and that is how it is recognised (sysctl.proc_translated): it
 # configures into build/x86_64/qemu against the Rust staticlibs built for
-# x86_64-apple-darwin, with the Intel Homebrew's Python, so uname, the
-# compiler and meson all answer x86_64 without being told. On an Intel Mac
-# nothing runs translated and the build is the plain native one.
+# x86_64-apple-darwin and the libraries under build/deps/x86_64, with an
+# x86_64 Python from uv, so uname, the compiler and meson all answer
+# x86_64 without being told. On an Intel Mac nothing runs translated and
+# the build is the plain native one.
 #
 # On Windows itself, in MSYS2's MINGW64 shell, the same build is native
 # (docs/build-windows.md, "Building on Windows"): --windows is implied, no
@@ -90,20 +91,16 @@ if [ -n "${QEMU_PYTHON:-}" ]; then
   PYTHON="$QEMU_PYTHON"
   check_python QEMU_PYTHON
 elif [ -n "$ROSETTA" ]; then
-  # uv's interpreter is an arm64 binary, and meson takes the machine it
-  # runs on for the build machine, so an arm64 Python configures an arm64
-  # QEMU into the Intel build's directory. The Intel Homebrew's Python is
-  # x86_64 (its meson brings one).
-  PYTHON=""
-  for v in 3.13 3.12 3.11 3.10 3.9; do
-    p="/usr/local/opt/python@$v/bin/python$v"
-    [ -x "$p" ] && { PYTHON="$p"; break; }
-  done
-  [ -n "$PYTHON" ] || {
-    echo "no Intel Homebrew Python under /usr/local/opt/python@3.*: arch -x86_64 brew install python@3.13 (docs/build-macos.md, 'The Intel build')"; exit 1; }
-  check_python "the Intel Homebrew's python"
+  # The usual uv interpreter is an arm64 binary, and meson takes the
+  # machine it runs on for the build machine, so an arm64 Python would
+  # configure an arm64 QEMU into the Intel build's directory. uv installs
+  # an x86_64 build of the same version by its full name.
+  command -v uv >/dev/null || { echo "uv not found, and the Intel build's meson needs an x86_64 Python from it"; exit 1; }
+  X86PY="cpython-$PYVER-macos-x86_64-none"
+  uv python install "$X86PY" --quiet --no-bin
+  PYTHON="$(uv python find "$X86PY")"
   [ "$("$PYTHON" -c 'import platform; print(platform.machine())')" = x86_64 ] || {
-    echo "$PYTHON is not an x86_64 interpreter"; exit 1; }
+    echo "$PYTHON is not an x86_64 interpreter (uv python install $X86PY)"; exit 1; }
 elif [ -n "$NATIVE" ]; then
   PYTHON=/mingw64/bin/python3
   [ -x "$PYTHON.exe" ] || [ -x "$PYTHON" ] || {
@@ -112,8 +109,20 @@ elif [ -n "$NATIVE" ]; then
 else
   command -v uv >/dev/null || {
     echo "uv not found — install it (https://docs.astral.sh/uv/), or set QEMU_PYTHON to a 3.8–3.13 interpreter"; exit 1; }
-  uv python install "$PYVER" --quiet
-  PYTHON="$(uv python find "$PYVER")"
+  # By its full name, this machine's architecture included: once the
+  # Intel build has installed uv's x86_64 3.12 beside the native one,
+  # a bare "3.12" can answer with either, and an x86_64 interpreter
+  # here makes meson run the compiler as x86_64 under Rosetta, which
+  # then "cannot find" every arm64 archive (libdisc, first).
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) NATIVEPY="cpython-$PYVER-macos-aarch64-none" ;;
+    Darwin-x86_64) NATIVEPY="cpython-$PYVER-macos-x86_64-none" ;;
+    *) NATIVEPY="$PYVER" ;;
+  esac
+  # --no-bin: uv would otherwise drop a python3.12 on ~/.local/bin, and
+  # the Intel build's x86_64 one shadowed the shell's python3.12 once.
+  uv python install "$NATIVEPY" --quiet --no-bin
+  PYTHON="$(uv python find "$NATIVEPY")"
 fi
 echo "==> python: $PYTHON ($("$PYTHON" -V 2>&1))"
 
@@ -176,9 +185,9 @@ elif [ -n "$WINDOWS" ]; then
           --host-cc=gcc --disable-plugins)
   fi
 elif [ "$(uname -s)" = Darwin ]; then
-  # Every Mac build targets Homebrew's floor, the oldest macOS the app's
-  # Homebrew libraries exist for (scripts/macos-floor.sh; build.sh exports
-  # the same value, and a preset one wins). It goes in as a flag as well as
+  # Every Mac build targets the floor, the oldest macOS the app runs on
+  # (scripts/macos-floor.sh; build.sh exports the same value, and a preset
+  # one wins). It goes in as a flag as well as
   # the environment. A changed flag changes every command line, so a
   # reconfigure recompiles the tree, where a changed environment alone
   # would keep the objects built for the old target.

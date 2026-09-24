@@ -63,13 +63,17 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
   builds (ADR-019). The **App Store** build is macOS 26+ on Apple Silicon
   only (DXVK + KosmicKrisp, no Wine, no Rosetta) and never gets a pre-26
   version. The **community** build (`scripts/package-macos.sh
-  --community`, Developer ID DMG) keeps Homebrew's floor (15.0 now; the
-  number follows `brew update`, `scripts/macos-floor.sh`), carries the M15
-  Wine executor, and permits Intel Macs untested; no row claims Intel
-  until one has run the reference scene. The Intel app is made on the
-  Air under Rosetta against an Intel Homebrew (`scripts/build.sh
-  --x86_64`, `package-macos.sh --x86_64`), community only, no Vulkan
-  at all; `docs/build-macos.md` "The Intel build".
+  --community`, Developer ID DMG) runs down to **macOS 12**
+  (`scripts/macos-floor.sh`, set by Qt 6.9), carries the M15 Wine
+  executor, and permits Intel Macs untested; no row claims Intel until
+  one has run the reference scene. **Nothing the app carries comes from
+  Homebrew** (user decision 2026-09-23): `scripts/build-deps.sh` builds
+  QEMU's libraries (static) and Qt from pinned sources into
+  `build/deps/<arch>`; Homebrew is build tools only, never propose
+  `brew install` for anything that ships. The Intel app is made on the
+  Air under Rosetta (`scripts/build.sh --x86_64`, `package-macos.sh
+  --x86_64`), community only, no Vulkan at all; `docs/build-macos.md`
+  "The Intel build".
 - **Direct3D 8/9 is our own paravirtual device** (ADR-006, doc 14):
   guest serializer DLLs / display-driver DDI + a native host executor.
   `d3dpt/d3dpt_proto.h` is the one header for guest, device and executor.

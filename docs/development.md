@@ -68,8 +68,8 @@ Also: [testing](testing.md), [macOS](build-macos.md),
 `scripts/build.sh` is the one command, and the one to run after every
 `git pull`; it redoes only what changed. `--help` lists the stages
 (`deps qemu rust qt dxvk exec guest`; `deps` is macOS only, QEMU's
-libraries built from source, [build-macos.md](build-macos.md) "The
-libraries"). Naming stages builds only those,
+libraries and Qt built from source, [build-macos.md](build-macos.md)
+"The libraries"). Naming stages builds only those,
 `--test` follows with `scripts/test.sh host`, and a stage whose tools
 are missing is skipped with the reason in the closing summary. What it
 runs, for driving one stage by hand:
@@ -125,7 +125,7 @@ What each stage needs to know:
 - A build belongs to one checkout. Never borrow another's `build/`,
   `target/` or `*_BIN` (00-status, "Building").
 - **`--x86_64` on an Apple Silicon Mac is the Intel build**, under
-  Rosetta with the Intel Homebrew, into `build/x86_64/` and
+  Rosetta, into `build/x86_64/`, `build/deps/x86_64/` and
   `target/x86_64-apple-darwin/` beside the native build's; the `dxvk`
   stage is skipped there (no Vulkan on an Intel Mac) and the `exec` stage
   builds only the executor on Wine ([build-macos.md](build-macos.md),
@@ -525,8 +525,8 @@ LunarG loader and KosmicKrisp, then signs with the
 hardened runtime and the JIT entitlement, notarizes and staples.
 `--community` is ADR-019's community build, which adds the Wine pair.
 `--x86_64` (after `scripts/build.sh --x86_64`) is the Intel app, made on
-the same Mac under Rosetta against an Intel Homebrew: always the
-community build, with no Vulkan, into `build/macos-x86_64`.
+the same Mac under Rosetta: always the community build, with no Vulkan,
+into `build/macos-x86_64`. Nothing in either app comes from Homebrew.
 Details: [build-macos.md](build-macos.md), "The app" and "The Intel
 build".
 

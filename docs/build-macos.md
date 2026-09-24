@@ -12,20 +12,19 @@ Mac").
 ```sh
 xcode-select --install                       # Apple clang + git
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install ninja meson pkg-config gnu-sed uv   # build tools only ("The libraries" below)
-brew install qt                              # Qt 6: the launcher, and macdeployqt
+brew install ninja meson cmake pkg-config gnu-sed uv   # build tools only ("The libraries" below)
 brew install mingw-w64 xorriso nasm mtools   # guest-tools ISO, the Wine pair, the DOS batteries
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-- **Qt 6** builds `launcher-qt` and brings `macdeployqt`. Without it
-  `build.sh` skips its `qt` stage and no package can be made. It is the
-  last Homebrew library the app carries ("The libraries" below).
-- **QEMU's libraries are not Homebrew's.** `build.sh`'s `deps` stage
-  (`scripts/build-deps.sh`) builds glib, pixman, libslirp and zstd from
-  pinned upstream tarballs into `build/deps/<arch>`, static, and
-  `configure-qemu.sh` lets pkg-config see nothing else. meson, ninja and
-  pkg-config are needed to build them and ship nothing.
+- **No library the app carries comes from Homebrew.** `build.sh`'s
+  `deps` stage (`scripts/build-deps.sh`) builds QEMU's libraries (glib,
+  pixman, libslirp, zstd; static) and Qt 6 itself (qtbase,
+  qtshadertools, qtdeclarative, and qttools for `macdeployqt`) from
+  pinned upstream tarballs into `build/deps/<arch>`, the first time in
+  about an hour, and `configure-qemu.sh`, the `qt` stage and the
+  packager use nothing else. meson, ninja, cmake and pkg-config are
+  needed to build them and ship nothing.
 - **gnu-sed**: qemu-3dfx's `sign_commit` uses GNU `sed -i`, so
   `prepare-qemu.sh` puts gnu-sed's `gnubin` first on `PATH`.
 - **No XQuartz and no SDL2.** QEMU has no display of its own
@@ -102,16 +101,24 @@ Mac specifics of the stages:
   whose binary was linked for a *newer* macOS when it builds that stage.
   `scripts/test.sh` exports the floor too, or the next `build.sh` would
   clean its player away.
-- ld's `building for macOS-15.0, but linking with dylib
-  '/opt/homebrew/…' which was built for newer version` is harmless: the
-  app carries the floor's builds of those bottles.
+- ld's `building for macOS-12.0, but linking with dylib '…' which was
+  built for newer version` names a library that is not ours: nothing
+  under `build/deps` is built for a newer macOS than the floor, and
+  the package fails on any file that is.
 - `configure-qemu.sh` passes the target as `-mmacosx-version-min` with
   `-Werror=unguarded-availability-new`, so an API newer than the floor
   without an `@available` check fails the build instead of dying on the
   floor's macOS (`strchrnul`, declared from 15.4 and found by meson
   anyway, is patch 46).
+- **A hand-run `cargo build` in `launcher-qt/` uses our Qt too**:
+  `launcher-qt/build.rs` sets `QMAKE` to `build/deps/<arch>/bin/qmake`
+  when that exists and nothing preset it. Before it did, one such build
+  found Homebrew's `qmake6` on `PATH`, and the package failed on a
+  launcher built for macOS 26 with QtDBus and brotli in its closure.
 - `configure-qemu.sh` uses uv's Python only; a Python complaint means uv
-  is not on `PATH`.
+  is not on `PATH`. Under Rosetta (`--x86_64`) it takes uv's x86_64
+  build of the same version, because meson takes the machine its
+  interpreter runs on for the build machine.
 - Homebrew's mingw is symlinked into `/opt/homebrew/bin`, so
   `build-driver.sh` asks the compiler for its sysroot to find the DDK
   headers. `build-wrappers.sh` is `set -e` and writes the ISO last, so
@@ -224,12 +231,14 @@ xcrun notarytool store-credentials 2ksbox-notary \
 there); `paths::bin_dir()` derives it from the running executable, so a
 plain tarball on a Mac is still a Unix prefix.
 
-**Nothing may come from outside the bundle.** The non-system dylib
-closure (20-odd libraries, ~14 MB) goes into `Contents/lib/2ksbox`,
-every install name becomes `@rpath`, and **every `LC_RPATH` pointing
-out of the app is deleted**. Meson gives `libqemu-embed` one per
-Homebrew prefix, searched first, so a bundle that keeps them works here
-and fails on a Mac without Homebrew.
+**Nothing may come from outside the bundle.** Our own libraries go into
+`Contents/lib/2ksbox`, every install name becomes `@rpath`, and **every
+`LC_RPATH` pointing out of the app is deleted**. QEMU's libraries are
+static in `libqemu-embed` and `qemu-img` ("The libraries" below), so
+the non-system dylib closure the staging walks is empty on purpose; the
+walk stays, because a library found under `/opt/homebrew` or
+`/usr/local` is a configure that went wrong, and the `no-optionals`
+check fails on the same thing earlier.
 
 **Qt comes through `macdeployqt`**, run first on a bundle that already
 has its `Info.plist` (it reads `CFBundleExecutable`), into `Frameworks`,
@@ -238,25 +247,30 @@ has its `Info.plist` (it reads `CFBundleExecutable`), into `Frameworks`,
 - **`-qmldir=launcher-qt/qml` is required.** Our QML is a compiled-in
   resource, so without it the scanner deploys no modules and the app
   dies on `module "QtQuick" is not installed`.
-- **It deploys too much.** Homebrew symlinks every Qt formula into one
-  tree and `macdeployqt` takes whole categories, so VirtualKeyboard,
-  Scene2D/3D, Pdf and the like arrive without their frameworks (34
-  `ERROR: Cannot resolve rpath` pairs, folded into one line). The
-  staging prunes the plugin under `PlugIns`, then the dangling QML
-  module (a module's plugin under `Resources/qml` is a **symlink** into
-  `PlugIns`).
-- **It leaves what it keeps half-wired.** Homebrew's Qt already uses
-  `@rpath/…`, so the copies keep Homebrew's rpaths (`libqsvg` resolved
-  nowhere beside `QtSvg.framework`). The staging gives every plugin
-  rpaths into `Contents/Frameworks` from itself and from its loading
-  executable (a QML plugin reached through the symlink has the wrong
-  `@loader_path`), and every plain dylib in `Frameworks` an `@rpath` id
-  and `@loader_path`.
+- **It deploys whole categories.** With Homebrew's Qt, which symlinked
+  every formula into one tree, VirtualKeyboard, Scene2D/3D, Pdf and
+  the like arrived without their frameworks (34 `ERROR: Cannot resolve
+  rpath` pairs, folded into one line). Our Qt has only the modules the
+  launcher imports, so there is little to prune, but the guard stays:
+  a plugin whose framework is not in the bundle is removed, then the
+  dangling QML module (a module's plugin under `Resources/qml` is a
+  **symlink** into `PlugIns`).
+- **It leaves what it keeps half-wired.** A copied plugin keeps the
+  rpaths it was built with, which resolve nowhere in a bundle. The
+  staging gives every plugin rpaths into `Contents/Frameworks` from
+  itself and from its loading executable (a QML plugin reached through
+  the symlink has the wrong `@loader_path`), and every plain dylib in
+  `Frameworks` an `@rpath` id and `@loader_path`.
 - **The ad-hoc re-sign finds every Mach-O by file type, not mode.** An
   arm64 binary whose load commands changed under its signature is
   killed silently, and a QML plugin or Qt framework can arrive mode 644.
 - The offscreen platform plugin is copied beside the cocoa one for the
-  window check.
+  window check, and the launcher draws **Fusion** there
+  (`launcher-qt/src/appearance.cpp`): the macOS style paints real Cocoa
+  views, Qt 6.9 names it by the operating system rather than the
+  platform, and on the offscreen platform its first Button died in
+  `objc_msgSend`. Any `QT_QPA_PLATFORM` but cocoa gets Fusion; a real
+  window still gets the macOS style.
 
 **The Vulkan driver** is the one companion no load command names. The
 app carries the LunarG loader and KosmicKrisp with its own ICD manifest,
@@ -336,38 +350,25 @@ Intel until an Intel Mac has run the reference scene.
 
 ### The Intel build
 
-**Status (2026-09-23): not buildable as written.** The recipe below
-needs an Intel Homebrew, and Homebrew's installer now refuses one
-("Homebrew on macOS is only supported on Apple Silicon processors!",
-Homebrew 7.0.6's `install.sh`), so the `--x86_64` plumbing is checked in
-as work in progress. User decision the same day: depending on Homebrew
-at all was a mistake; the app's libraries are built here ("The
-libraries" above; QEMU's side done, `build-deps.sh --arch x86_64` is its
-Intel half), Qt is next, and the community build then targets the
-lowest macOS that allows. What the Intel build still needs from an
-Intel Homebrew after that is only build tools: an x86_64 Python for
-meson (uv can install one: `uv python install cpython-3.12-macos-x86_64-none`)
-and an x86_64 Qt, which the Qt step removes. The plumbing (the Rosetta
-re-run, the per-architecture directories, the architecture check) stays,
-and the Homebrew lines below are what that replaces.
+**Status (2026-09-23): plumbing in, not yet run.** The first version
+of this recipe needed an Intel Homebrew, and Homebrew's installer
+refuses one ("Homebrew on macOS is only supported on Apple Silicon
+processors!", Homebrew 7.0.6's `install.sh`); that is what ended the
+app's dependence on Homebrew ("The libraries" above). Now the Intel
+build needs no second package manager: its libraries and Qt come from
+`build-deps.sh --arch x86_64`, its Python from uv, its Rust from the
+same rustup. What is left is to run it end to end, then to find an
+Intel Mac for the reference scene.
 
-The Intel app is the community build and nothing else: macOS 15 (the
+The Intel app is the community build and nothing else: macOS 12 (the
 floor), no App Store version, and **no Vulkan at all**, since KosmicKrisp
 exists only as arm64 and MoltenVK is refused (ADR-007). So it carries no
 loader, no ICD, no DXVK and no in-process executor; its Direct3D is the
 executor on Wine (native x86_64 Wine there, no Rosetta), and a Mac with
-no Wine has none. It is made on the Apple Silicon Mac, under Rosetta,
-against a second Homebrew:
+no Wine has none. It is made on the Apple Silicon Mac, under Rosetta:
 
 ```sh
-# once: the Intel Homebrew at /usr/local (the installer needs sudo), and
-# what the build takes from it. uv, mingw-w64 and xorriso stay the
-# native ones: an arm64 program runs from a Rosetta shell, and the guest
-# ISO it makes is the same file
-arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-arch -x86_64 /usr/local/bin/brew install ninja meson pkg-config glib pixman gnu-sed libslirp qt python@3.13
-
-scripts/build.sh --x86_64                          # qemu, rust, qt, exec (dxvk is skipped); ~40 min
+scripts/build.sh --x86_64                          # deps (~an hour, Qt), qemu, rust, qt, exec; dxvk is skipped
 scripts/package-macos.sh --x86_64 --no-notarize    # build/macos-x86_64/2ksbox-<version>-macos-x86_64.dmg
 scripts/package-macos.sh --x86_64 --no-sign --no-dmg   # the staging and its checks alone
                                                    # (scripts/test.sh's package-x86_64 check)
@@ -375,32 +376,31 @@ scripts/package-macos.sh --x86_64 --no-sign --no-dmg   # the staging and its che
 
 How it works, so it stays one build and not a second tree of scripts:
 
-- `--x86_64` re-runs the script as an x86_64 process (`arch -x86_64`)
-  with `/usr/local/bin` first on `PATH`, and that is all. Under Rosetta
-  `uname -m`, Apple's compiler, and the Intel Homebrew's meson, ninja,
-  pkg-config and Python all answer x86_64 without being told, and
-  `arch -x86_64 scripts/build.sh` is the same build.
+- `--x86_64` re-runs the script as an x86_64 process (`arch -x86_64`),
+  and that is all. Under Rosetta `uname -m` and Apple's compiler answer
+  x86_64 without being told, and `arch -x86_64 scripts/build.sh` is the
+  same build. Build tools stay the native ones: an arm64 program runs
+  from a Rosetta shell, and meson, ninja, cmake, mingw and xorriso are
+  arm64 programs whose output is what their flags say.
 - Every script that has a build directory recognises the translated
-  process (`sysctl.proc_translated`) and keeps to `build/x86_64/` and
-  `target/x86_64-apple-darwin/` beside the native build's
-  (`configure-qemu.sh`, `build-d3dpt-exec.sh`, `qemu-embed/build.rs`,
-  `build.sh`, `package-macos.sh`), the way the Windows cross build keeps
+  process (`sysctl.proc_translated`) and keeps to `build/x86_64/`,
+  `build/deps/x86_64/` and `target/x86_64-apple-darwin/` beside the
+  native build's (`configure-qemu.sh`, `build-d3dpt-exec.sh`,
+  `build-deps.sh`, `qemu-embed/build.rs`, `build.sh`,
+  `package-macos.sh`), the way the Windows cross build keeps
   `build/win/`. The `qemu/` and `third_party/dxvk` trees and their
   prepare stamps are shared, so the two builds run one after the other,
   never at once.
-- `configure-qemu.sh` takes the Intel Homebrew's Python, not uv's: meson
-  takes the machine its interpreter runs on for the build machine, and
-  uv's is arm64.
+- meson takes the machine its interpreter runs on for the build machine,
+  so `build-deps.sh` gives its meson builds a cross file naming x86_64
+  (pixman picks its SIMD paths by `host_machine.cpu_family`), and
+  `configure-qemu.sh` runs QEMU's meson on uv's x86_64 Python
+  (`uv python install cpython-<version>-macos-x86_64-none`, done for
+  you). cmake takes `CMAKE_OSX_ARCHITECTURES` and needs no more.
 - cargo is never translated (rustup's toolchain is arm64) and simply
   cross-compiles with `--target x86_64-apple-darwin`; `cc` adds
-  `-arch x86_64` for that target, and `cxx-qt-build` finds the Intel Qt
-  through the `qmake6` on `PATH`.
-- The bottle tag has the architecture in it: `scripts/macos-floor.sh
-  --tag` says `sequoia` where the native build says `arm64_sequoia`,
-  and `macos-bottles.py` swaps in the Intel bottles. Homebrew has Intel
-  at tier 3 since 7.0.0 (bottles frozen, support ending September 2027),
-  so the swap works while every formula the app carries still has an
-  Intel bottle of the installed version.
+  `-arch x86_64` for that target, and `cxx-qt-build` finds the x86_64 Qt
+  through `QMAKE`, which `build.sh` points at `build/deps/x86_64`.
 - The packager checks the architecture of every Mach-O in the app
   beside the floor: a file that is not `x86_64` (an arm64 KosmicKrisp,
   say) fails the package. On an Intel Mac itself nothing is translated,
@@ -426,59 +426,70 @@ upgrade` changed what shipped. So the libraries are built here, from
 upstream, and Homebrew is a source of build tools and of recipes to crib
 flags and patches from, nothing more.
 
-**QEMU's side is done.** `scripts/build-deps.sh` (the `deps` stage of
-`build.sh`, macOS only) builds glib 2.90 with pcre2 10.48 and the libffi
-and stub libintl that glib's own tarball carries as subprojects, pixman
-0.46, libslirp 4.9 and zstd 1.5, from tarballs pinned by sha256 in the
-script, for the architecture named (`--arch x86_64` for the Intel
-build) and `MACOSX_DEPLOYMENT_TARGET`, into `build/deps/<arch>` as
-**static archives**. `configure-qemu.sh` sets `PKG_CONFIG_LIBDIR` to that
-prefix and the SDK's own `.pc` files and passes meson `prefer_static`,
-so `libqemu-embed-i386.dylib` and `qemu-img` carry the libraries and
-link nothing from `/opt/homebrew`; a library QEMU would auto-detect from
-Homebrew (libpng, jpeg-turbo) is simply not found, and `--disable-png
---disable-vnc-jpeg` say so on purpose. The stage is stamped on the
-script, the floor and the architecture, and a rebuild reconfigures QEMU.
-Linux and the Flatpak keep the distribution's libraries; the script
-refuses to run there.
+`scripts/build-deps.sh` (the `deps` stage of `build.sh`, macOS only)
+builds everything from tarballs pinned by sha256 in the script, for the
+architecture named (`--arch x86_64` for the Intel build) and
+`MACOSX_DEPLOYMENT_TARGET`, into `build/deps/<arch>`; each package is
+stamped by name, version and floor, so a floor change rebuilds all and
+a recipe change for the same version wants `--clean`.
 
-**Qt is next**, and it is why the floor below still reads Homebrew's:
-the launcher's Qt and its closure (43 frameworks and about 30 dylibs
-after pruning: ICU, dbus, OpenSSL, tiff, webp, harfbuzz and the rest)
-are Homebrew's bottles. A qtbase + qtdeclarative built here with Qt's
-bundled third-party copies would drop nearly all of that, and the floor
-then becomes what Qt supports on Apple Silicon (macOS 11 with Qt 6.5,
-12 with 6.8; to be confirmed against Qt's supported platforms before
-pinning), not what Homebrew bottles.
+- **QEMU's side**: glib 2.90 with pcre2 10.48 and the libffi and stub
+  libintl that glib's own tarball carries as subprojects, pixman 0.46,
+  libslirp 4.9 and zstd 1.5, as **static archives** whose `.pc` files
+  carry their private link lines publicly. `configure-qemu.sh` sets
+  `PKG_CONFIG_LIBDIR` to that prefix and the SDK's own `.pc` files, so
+  `libqemu-embed-i386.dylib`, `qemu-system-i386` and `qemu-img` carry
+  the libraries and link nothing outside the system; a library QEMU
+  would auto-detect from Homebrew (libpng, jpeg-turbo) is simply not
+  found, and `--disable-png --disable-vnc-jpeg` say so on purpose. Not
+  meson's `prefer_static`: QEMU turns it into `-static`, fatal on macOS.
+- **Qt 6.9.3** as frameworks: qtbase with its bundled zlib, png, jpeg,
+  freetype, harfbuzz, pcre2, double-conversion and libb2, the system's
+  TLS instead of OpenSSL, no ICU (CoreFoundation does its job on a Mac),
+  no dbus, glib, zstd or brotli, and without Sql, PrintSupport,
+  Concurrent, Test, Xml and Widgets; qtshadertools; qtdeclarative with
+  the macOS, Fusion and Basic styles (and the iOS style, whose
+  implementation module the macOS style's BusyIndicator imports), no
+  particles, designer support, debugger or profiler; qtimageformats for
+  its WebP plugin alone, on the libwebp it bundles (the macOS style's
+  busy indicator is an animated WebP); and qttools with every tool but
+  `macdeployqt` off. cmake is told to ignore `/opt/homebrew` and
+  `/usr/local`, which this Mac's cmake searches on its own, and Qt's
+  pkg-config lookups are off, so no system library sneaks in. The
+  frameworks keep Qt's `@rpath` install names (turning the rpath
+  feature off strips Qt's own tools of their `LC_RPATH`, and qmake
+  aborts); `cxx-qt-build` gives the launcher an rpath to the prefix, so
+  it runs unpackaged from a checkout, and the packager deletes that
+  rpath once `macdeployqt` has copied the frameworks. `build.sh`'s `qt`
+  stage and the packager name this Qt through `QMAKE`; a `qmake6` on
+  `PATH` is never used on a Mac.
+
+Linux and the Flatpak keep the distribution's libraries; the script
+refuses to run there. What the closure once was, for the record: 43 Qt
+frameworks and about 30 dylibs (ICU, dbus, OpenSSL, tiff, webp, jasper,
+lcms2, brotli and the rest) from Homebrew's bottles, swapped for the
+floor's builds by a script that is gone with them.
 
 ### The floor
 
-The app runs down to **the oldest macOS Homebrew supports** for as long
-as it carries Homebrew's Qt ("The libraries" above):
-`HOMEBREW_MACOS_OLDEST_SUPPORTED` in Homebrew's `brew.sh`, read by
-`scripts/macos-floor.sh`: **15.0 (Sequoia)** now. QEMU's libraries are
-built for the same target, so nothing of ours raises it, and once Qt is
-ours the number becomes a constant of this repository. A `brew update`
-that drops a release changes the value, and the next `scripts/build.sh`
-retargets everything.
+The app runs down to **macOS 12 (Monterey)**, the number in
+`scripts/macos-floor.sh`, set by the sources the app is built from ("The
+libraries" above): Qt 6.9 is the newest line that still runs on 12 (6.11
+needs 13; 6.5 reached 11 but its open-source line ended in 2023, before
+this Xcode), and QEMU, glib, pixman, libslirp, zstd, the LunarG loader,
+KosmicKrisp and Rust all go lower. Until 2026-09-23 the floor was
+Homebrew's (15.0), because the app carried Homebrew's bottles; it moved
+the day the libraries became ours. Changing the number and running
+`scripts/build.sh` retargets everything, Qt included.
 
 Three pieces make the claim true:
 
 - **Everything of ours is built for the floor**, through the deployment
   target and the availability error flag above (a new floor recompiles
   QEMU and DXVK).
-- **The Homebrew libraries (Qt's, now) are the floor's builds.** Homebrew pours the
-  bottle for the macOS it runs on. After staging, `scripts/macos-bottles.py` swaps every file
-  above the floor for the same version's build from the floor's bottle
-  (`scripts/macos-floor.sh --tag`, e.g. `arm64_sequoia`), fetched from
-  Homebrew's registry on ghcr.io and cached in `build/macos-bottles`. It
-  matches a staged file to its Cellar original by `LC_UUID` (install-name
-  rewrites leave it alone), following the keg's symlinks, and gives the
-  older build the staged file's install name, dependencies and rpaths.
-  The installed version must be one Homebrew has bottles of (`brew
-  upgrade` otherwise). `brew fetch --bottle-tag=…` does not work for
-  this: on a newer Mac it answers "Bottle for tag … is unavailable",
-  though the registry has them all.
+- **The libraries are built for it too** (`scripts/build-deps.sh`
+  passes the target to meson, make and cmake alike), so no file in the
+  app is a build for a newer macOS.
 - **The package fails above it.** `LSMinimumSystemVersion` is the
   highest `LC_BUILD_VERSION` `minos` in the bundle, and any Mach-O above
   the floor fails `package-macos.sh` by name. The ad-hoc signing pass
@@ -486,5 +497,5 @@ Three pieces make the claim true:
   one left unsigned kills the launcher at its first framework
   (`SIGKILL (Code Signature Invalid)`). The "still links" check skips a
   file's own install name, the first line `otool -L` prints, because a
-  framework keeps Homebrew's absolute one. The LunarG loader and
-  KosmicKrisp are 11.0 builds and never set the minimum.
+  framework keeps its absolute one. The LunarG loader and KosmicKrisp
+  are 11.0 builds and never set the minimum.

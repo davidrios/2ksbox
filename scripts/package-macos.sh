@@ -17,8 +17,8 @@
 #                                                 # App Store build never starts Wine
 #   scripts/package-macos.sh --x86_64             # on an Apple Silicon Mac: the Intel app, from
 #                                                 # scripts/build.sh --x86_64 (build/x86_64,
-#                                                 # target/x86_64-apple-darwin) into
-#                                                 # build/macos-x86_64. Always the community
+#                                                 # build/deps/x86_64, target/x86_64-apple-darwin)
+#                                                 # into build/macos-x86_64. Always the community
 #                                                 # build, and with no Vulkan at all: no driver
 #                                                 # exists for an Intel Mac (ADR-019), so its
 #                                                 # Direct3D is the executor on Wine, and Wine
@@ -53,14 +53,13 @@
 #   shape of a Unix prefix, and `launcher_core::paths` finds it by the same
 #   `share/2ksbox` marker. `MacOS/` takes the place of `bin/`, because it
 #   is the one directory macOS launches an executable from.
-# * Signing goes inside-out and the floor is Homebrew's. Every Mach-O is
+# * Signing goes inside-out and the floor is ours. Every Mach-O is
 #   signed before the thing that contains it. The oldest macOS the app
-#   runs on is the oldest Homebrew supports (scripts/macos-floor.sh), and
-#   scripts/build.sh builds everything of ours for it. The Homebrew
-#   libraries copied in are this Mac's bottles, so the ones above the
-#   floor are swapped for the floor's builds (scripts/macos-bottles.py).
-#   LSMinimumSystemVersion is then measured from what the bundle carries,
-#   and any file still above the floor fails the package.
+#   runs on is scripts/macos-floor.sh's number, and scripts/build.sh
+#   builds everything for it: QEMU's libraries and Qt from source
+#   (scripts/build-deps.sh), so nothing in the app comes from the Mac's
+#   package manager. LSMinimumSystemVersion is measured from what the
+#   bundle carries, and any file above the floor fails the package.
 #
 # It does not build QEMU or DXVK. Those come from `scripts/build.sh`. The
 # script reports anything missing by name instead of leaving it out
@@ -93,25 +92,19 @@ while [ $# -gt 0 ]; do
 done
 # The Intel app on an Apple Silicon Mac: the same re-run under Rosetta as
 # scripts/build.sh --x86_64, and the same recognition of it. From there on
-# `uname -m` says x86_64, so the bottle tag, the DMG's name and the
-# architecture check below all come out Intel's without being told, and
-# on an Intel Mac itself nothing is translated and the same lines make its
-# native app.
+# `uname -m` says x86_64, so the DMG's name and the architecture check
+# below come out Intel's without being told, and on an Intel Mac itself
+# nothing is translated and the same lines make its native app.
 ROSETTA=""
 [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ] && ROSETTA=1
 if [ -n "$X86_64" ] && [ -z "$ROSETTA" ]; then
-  [ -x /usr/local/bin/brew ] || {
-    echo "package-macos.sh: --x86_64 needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
-  exec arch -x86_64 /usr/bin/env PATH="/usr/local/bin:$PATH" "$0" "${ARGS[@]}"
+  exec arch -x86_64 "$0" "${ARGS[@]}"
 fi
 ARCH=$(uname -m)
 # This build's inputs: the native build's directories, or the Intel
 # build's beside them (scripts/build.sh --x86_64).
 QB=build/qemu TD=target/release QTD=launcher-qt/target/release D3DPT=build/d3dpt DXVK=build/dxvk CT=()
 if [ -n "$ROSETTA" ]; then
-  [ -x /usr/local/bin/brew ] || {
-    echo "package-macos.sh: the Intel app needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
-  case ":$PATH:" in *:/usr/local/bin:*) ;; *) export PATH="/usr/local/bin:$PATH" ;; esac
   QB=build/x86_64/qemu TD=target/x86_64-apple-darwin/release
   QTD=launcher-qt/target/x86_64-apple-darwin/release D3DPT=build/x86_64/d3dpt DXVK=build/x86_64/dxvk
   CT=(--target x86_64-apple-darwin)
@@ -136,9 +129,9 @@ need "$QB/libqemu-embed-i386.dylib" "scripts/configure-qemu.sh && ninja -C $QB l
 need "$QB/qemu-img" "ninja -C $QB qemu-img"
 need qemu/pc-bios "scripts/prepare-qemu.sh"
 
-# The macOS the app is for: Homebrew's floor, which scripts/build.sh built
-# everything of ours for. Exported so that a cargo build below links for
-# it too.
+# The macOS the app is for (scripts/macos-floor.sh), which scripts/build.sh
+# built everything for. Exported so that a cargo build below links for it
+# too.
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}"
 case "$MACOSX_DEPLOYMENT_TARGET" in *.*) ;; *) MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET.0" ;; esac
 export MACOSX_DEPLOYMENT_TARGET
@@ -258,8 +251,9 @@ write_plist "$FLOOR"
 # binary as a Qt resource, so the import scanner has nothing to read
 # unless it is pointed at the sources, and a bundle deployed without it
 # starts and then dies on `module "QtQuick" is not installed`.
-QMAKE=${QMAKE:-qmake6}
-command -v "$QMAKE" >/dev/null || { echo "package-macos.sh: no $QMAKE (brew install qt); the launcher is Qt 6" >&2; exit 1; }
+# Our Qt (scripts/build-deps.sh): the one the launcher was built against.
+QMAKE=${QMAKE:-$ROOT/build/deps/$ARCH/bin/qmake}
+command -v "$QMAKE" >/dev/null || { echo "package-macos.sh: no $QMAKE (scripts/build.sh deps); the launcher is Qt 6" >&2; exit 1; }
 QT_BINS=$("$QMAKE" -query QT_HOST_BINS)
 QT_PLUGINS=$("$QMAKE" -query QT_INSTALL_PLUGINS)
 MACDEPLOYQT=${MACDEPLOYQT:-$QT_BINS/macdeployqt}
@@ -454,19 +448,6 @@ while read -r f; do
   done < <(otool -l "$f" | awk '/LC_RPATH/{r=1} r&&/path /{print $2; r=0}')
 done < <(machos)
 
-# --- the floor's bottles ----------------------------------------------
-# Everything copied out of Homebrew above is the bottle built for *this*
-# Mac's macOS (on a macOS 26 Mac, libslirp, libpng, jpeg-turbo and
-# QtQml/QtQuick are macOS 26 builds), and one of them is enough to keep the
-# whole app off every older Mac. Homebrew publishes the same versions built
-# on each macOS it supports, so every file above the floor is swapped for
-# the floor's build of itself, keeping the install name, dependencies and
-# rpaths the staging gave it (scripts/macos-bottles.py). The downloads are
-# cached in build/macos-bottles, so only the first package after a
-# `brew upgrade` needs the network.
-TAG=$(scripts/macos-floor.sh --tag "$FLOOR")
-python3 scripts/macos-bottles.py "$C" "$FLOOR" "$TAG" "$ROOT/build/macos-bottles"
-
 # Rewriting a load command breaks the signature every arm64 binary must
 # have, and the kernel answers a broken one with SIGKILL and nothing else,
 # which the checks below would run into. So re-sign ad hoc now.
@@ -496,7 +477,7 @@ minos_of() { otool -l "$1" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; e
 minos=$(machos | while read -r f; do minos_of "$f"; done | sort -V | tail -1)
 minos=${minos:-$FLOOR}
 write_plist "$minos"
-echo "minimum macOS $minos (Homebrew's floor: $FLOOR)"
+echo "minimum macOS $minos (the floor: $FLOOR)"
 
 # --- the check --------------------------------------------------------
 # The same question package-linux.sh asks, in the form a Mac can answer:
@@ -656,13 +637,17 @@ fi
 # and not this Mac's Homebrew one.
 if [ -f "$C/PlugIns/platforms/libqoffscreen.dylib" ]; then
   shot="$scratch/window.png"
-  qtloaded=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
+  # `|| true`: a launcher that fails to load its QML exits non-zero, and
+  # under pipefail that would end the script here, silently, instead of
+  # in the verdict below with the launcher's own words.
+  qtout=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
     QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$shot" LAUNCHER_QT_DELAY=1500 \
-    DYLD_PRINT_LIBRARIES=1 "$C/MacOS/2ksbox" 2>&1 \
-    | sed -n 's|^dyld\[[0-9]*\]: <[^>]*> ||p')
+    DYLD_PRINT_LIBRARIES=1 "$C/MacOS/2ksbox" 2>&1 || true)
+  qtloaded=$(printf '%s\n' "$qtout" | sed -n 's|^dyld\[[0-9]*\]: <[^>]*> ||p')
   if [ -s "$shot" ]; then
     echo "window         $(du -h "$shot" | cut -f1) grabbed offscreen: QML, plugins and all"
   else
+    printf '%s\n' "$qtout" | grep -v '^dyld\[' | sed 's/^/  /' >&2
     echo "package-macos.sh: the staged launcher opened no window offscreen (Qt plugins or QML modules missing)" >&2
     fail=1
   fi
