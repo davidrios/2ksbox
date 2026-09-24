@@ -102,6 +102,8 @@ if [ "$ARCH" != "$(uname -m)" ] || [ "$(sysctl -n sysctl.proc_translated 2>/dev/
 [binaries]
 c = 'cc'
 cpp = 'c++'
+objc = 'cc'
+objcpp = 'c++'
 ar = 'ar'
 strip = 'strip'
 pkg-config = 'pkg-config'
@@ -110,8 +112,14 @@ c_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T', '-I$PREFIX/include']
 c_link_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T', '-L$PREFIX/lib']
 cpp_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T']
 cpp_link_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T']
+objc_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T', '-I$PREFIX/include']
+objc_link_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T', '-L$PREFIX/lib']
+objcpp_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T']
+objcpp_link_args = ['-arch', '$ARCH', '-mmacosx-version-min=$T']
 [host_machine]
 system = 'darwin'
+subsystem = 'macos'
+kernel = 'xnu'
 cpu_family = '$ARCH'
 cpu = '$ARCH'
 endian = 'little'
@@ -121,6 +129,13 @@ INI
   MESON+=(--cross-file "$WORK/cross.ini")
 fi
 say() { printf '\n\033[1m==> deps: %s\033[0m\n' "$*"; }
+# A step's output goes to $WORK/<name>.log; a failure shows the log's
+# tail and stops, so a configure that died is never a mystery.
+run() {
+  "$@" >> "$WORK/$name.log" 2>&1 || {
+    echo "build-deps.sh: $name: '$1' failed; the last lines of $WORK/$name.log:" >&2
+    tail -40 "$WORK/$name.log" >&2; exit 1; }
+}
 
 # Qt's builds are cmake. The same target and architecture, our prefix,
 # and *no* Homebrew: this Mac's cmake searches /opt/homebrew on its own
@@ -145,39 +160,39 @@ while read -r name ver tar sha url; do
   stamp="$PREFIX/.built-$name-$ver-$T"
   if [ -f "$stamp" ]; then echo "    $name $ver built for macOS $T $ARCH"; continue; fi
   src=$(fetch "$tar" "$sha" "$url")
-  b="$WORK/$name"
+  b="$WORK/$name"; : > "$WORK/$name.log"
   # A meson directory is set up once; Qt's cmake ones are kept, so a
   # changed option reconfigures and rebuilds only what it touches.
   case "$name" in qt*) ;; *) rm -rf "$b" ;; esac
   say "$name $ver ($ARCH, macOS $T)"
   case "$name" in
     pcre2)
-      ( cd "$src" && ./configure --prefix="$PREFIX" --disable-shared --enable-static \
+      ( cd "$src" && run ./configure --prefix="$PREFIX" --disable-shared --enable-static \
           --disable-pcre2grep-libz --disable-pcre2grep-libbz2 --disable-pcre2test-libreadline \
-          --enable-jit --quiet && make -j8 >/dev/null && make install >/dev/null && make distclean >/dev/null ) ;;
+          --enable-jit --quiet && run make -j8 && run make install && run make distclean ) ;;
     glib)
       # What QEMU uses and nothing that would need more of the system.
       # libffi (gobject) and libintl (a libc without ngettext) come from
       # the subprojects in glib's own tarball (subprojects/packagecache):
       # a stub libintl, since nothing here has a translation to load, and
       # both installed into the prefix as archives beside glib's.
-      "${MESON[@]}" "$b" "$src" -Dtests=false -Dintrospection=disabled -Dglib_debug=disabled \
+      run "${MESON[@]}" "$b" "$src" -Dtests=false -Dintrospection=disabled -Dglib_debug=disabled \
         -Dman-pages=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dsysprof=disabled \
         -Dselinux=disabled -Dlibmount=disabled -Dlibelf=disabled -Dnls=disabled \
-        -Dxattr=false -Dglib_assert=false -Dglib_checks=false >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+        -Dxattr=false -Dglib_assert=false -Dglib_checks=false
+      run ninja -C "$b" install ;;
     pixman)
-      "${MESON[@]}" "$b" "$src" -Dtests=disabled -Ddemos=disabled -Dgtk=disabled -Dlibpng=disabled \
-        -Dopenmp=disabled >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+      run "${MESON[@]}" "$b" "$src" -Dtests=disabled -Ddemos=disabled -Dgtk=disabled -Dlibpng=disabled \
+        -Dopenmp=disabled
+      run ninja -C "$b" install ;;
     libslirp)
-      "${MESON[@]}" "$b" "$src" >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+      run "${MESON[@]}" "$b" "$src"
+      run ninja -C "$b" install ;;
     zstd)
       # The library alone: no programs, no shared build.
-      make -C "$src/lib" -j8 libzstd.a CFLAGS="$CFLAGS" >/dev/null
-      make -C "$src/lib" install-static install-includes install-pc PREFIX="$PREFIX" LIBDIR="$PREFIX/lib" >/dev/null
-      make -C "$src/lib" clean >/dev/null ;;
+      run make -C "$src/lib" -j8 libzstd.a CFLAGS="$CFLAGS"
+      run make -C "$src/lib" install-static install-includes install-pc PREFIX="$PREFIX" LIBDIR="$PREFIX/lib"
+      run make -C "$src/lib" clean ;;
     qtbase)
       # Frameworks; Qt's own copies of every third-party library; the
       # system's TLS (SecureTransport) rather than OpenSSL; no ICU (Qt
@@ -185,7 +200,7 @@ while read -r name ver tar sha url; do
       # launcher never loads are not built: Sql, PrintSupport, Concurrent,
       # Test, Xml, Widgets (QtQuick's dialogs are the platform's, through
       # the Cocoa theme).
-      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+      run env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
         -DFEATURE_framework=ON -DFEATURE_pkg_config=OFF \
         -DFEATURE_system_zlib=OFF -DFEATURE_system_png=OFF -DFEATURE_system_jpeg=OFF \
         -DFEATURE_system_freetype=OFF -DFEATURE_system_harfbuzz=OFF -DFEATURE_system_pcre2=OFF \
@@ -194,37 +209,37 @@ while read -r name ver tar sha url; do
         -DFEATURE_openssl=OFF -DFEATURE_securetransport=ON -DFEATURE_gssapi=OFF -DFEATURE_libproxy=OFF \
         -DFEATURE_vulkan=OFF -DFEATURE_fontconfig=OFF \
         -DFEATURE_sql=OFF -DFEATURE_printsupport=OFF -DFEATURE_concurrent=OFF -DFEATURE_testlib=OFF \
-        -DFEATURE_xml=OFF -DFEATURE_widgets=OFF >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+        -DFEATURE_xml=OFF -DFEATURE_widgets=OFF
+      run ninja -C "$b" install ;;
     qtimageformats)
       # The WebP plugin alone, on the libwebp the module bundles: the
       # macOS style's BusyIndicator is an animated WebP, and without the
       # plugin it is a blank square and an error per frame.
-      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+      run env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
         -DFEATURE_webp=ON -DFEATURE_system_webp=OFF -DFEATURE_tiff=OFF -DFEATURE_system_tiff=OFF \
-        -DFEATURE_mng=OFF -DFEATURE_jasper=OFF >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+        -DFEATURE_mng=OFF -DFEATURE_jasper=OFF
+      run ninja -C "$b" install ;;
     qtshadertools|qttools)
       # qttools for macdeployqt alone: every other tool is a feature, off.
-      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+      run env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
         -DFEATURE_assistant=OFF -DFEATURE_designer=OFF -DFEATURE_linguist=OFF -DFEATURE_pixeltool=OFF \
         -DFEATURE_qdbus=OFF -DFEATURE_qdoc=OFF -DFEATURE_qev=OFF -DFEATURE_qtattributionsscanner=OFF \
         -DFEATURE_qtdiag=OFF -DFEATURE_qtplugininfo=OFF -DFEATURE_distancefieldgenerator=OFF \
-        -DFEATURE_kmap2qmap=OFF -DFEATURE_clang=OFF -DFEATURE_clangcpp=OFF >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+        -DFEATURE_kmap2qmap=OFF -DFEATURE_clang=OFF -DFEATURE_clangcpp=OFF
+      run ninja -C "$b" install ;;
     qtdeclarative)
       # QtQuick, Controls (the macOS, Fusion and Basic styles; the
       # launcher asks for the platform's, and Fusion is its fallback;
       # the iOS style stays because the macOS style's BusyIndicator
       # imports its implementation module), Layouts and Dialogs. No
       # particles, no designer support, no QML debugger or profiler.
-      env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
+      run env -u CFLAGS -u CXXFLAGS -u LDFLAGS "${QTCMAKE[@]}" -S "$src" -B "$b" \
         -DFEATURE_quick_particles=OFF -DFEATURE_quick_designer=OFF \
         -DFEATURE_quickcontrols2_material=OFF -DFEATURE_quickcontrols2_universal=OFF \
         -DFEATURE_quickcontrols2_imagine=OFF -DFEATURE_quickcontrols2_fluentwinui3=OFF \
         -DFEATURE_quickcontrols2_windows=OFF -DFEATURE_quickcontrols2_ios=ON \
-        -DFEATURE_qml_debug=OFF -DFEATURE_qml_profiler=OFF -DFEATURE_qml_preview=OFF >/dev/null
-      ninja -C "$b" install >/dev/null ;;
+        -DFEATURE_qml_debug=OFF -DFEATURE_qml_profiler=OFF -DFEATURE_qml_preview=OFF
+      run ninja -C "$b" install ;;
   esac
   touch "$stamp"
   built+=("$name")

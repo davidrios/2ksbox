@@ -350,15 +350,20 @@ Intel until an Intel Mac has run the reference scene.
 
 ### The Intel build
 
-**Status (2026-09-23): plumbing in, not yet run.** The first version
-of this recipe needed an Intel Homebrew, and Homebrew's installer
-refuses one ("Homebrew on macOS is only supported on Apple Silicon
-processors!", Homebrew 7.0.6's `install.sh`); that is what ended the
-app's dependence on Homebrew ("The libraries" above). Now the Intel
-build needs no second package manager: its libraries and Qt come from
-`build-deps.sh --arch x86_64`, its Python from uv, its Rust from the
-same rustup. What is left is to run it end to end, then to find an
-Intel Mac for the reference scene.
+**Status (2026-09-24): builds and packages end to end on the Air.** The
+first version of this recipe needed an Intel Homebrew, and Homebrew's
+installer refuses one ("Homebrew on macOS is only supported on Apple
+Silicon processors!", Homebrew 7.0.6's `install.sh`); that is what
+ended the app's dependence on Homebrew ("The libraries" above). The
+Intel build needs no second package manager: its libraries and Qt come
+from `build-deps.sh --arch x86_64` (its meson builds get a cross file
+naming x86_64, with `subsystem`, `kernel` and the Objective-C compiler
+glib asks for), its Python from uv, its Rust from the same rustup. The
+staged app passes every packager check under Rosetta (every Mach-O
+x86_64, minimum macOS 12.0, the loader's images all inside the app, the
+offscreen window), and `scripts/test.sh` runs that as `package-x86_64`.
+What is left is an Intel Mac for the reference scene; the DMG stays
+"untested" until then.
 
 The Intel app is the community build and nothing else: macOS 12 (the
 floor), no App Store version, and **no Vulkan at all**, since KosmicKrisp
