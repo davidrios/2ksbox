@@ -305,6 +305,11 @@ to one subsystem lives in its design doc; pointers are at the end.
 
 ### Building
 
+- **A new flag in `configure-qemu.sh` reaches a build only through a
+  configure.** `build.sh` now reconfigures when that script is newer
+  than `build/qemu/build.ninja` (it used to watch only the meson files):
+  a checkout built before libpng and libjpeg were disabled kept linking
+  them, and `no-optionals` failed on a build that was right when made.
 - **Two builds must never share the `qemu/` tree at once.**
   `build-windows.sh` re-applies the patch queue while
   `package-flatpak.sh` copies the tree, and the copy fails deep in the

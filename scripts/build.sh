@@ -273,7 +273,11 @@ if want qemu; then
     # libslirp installed since the last configure: configure again, or
     # installing it would look like it had done nothing.
     [ -n "$slirp_pkg" ] && [ -z "$slirp_built" ] && [ -f "$QB/build.ninja" ] && needs_configure=1
-    for f in qemu/meson.build qemu/hw/3dfx/meson.build qemu/hw/mesa/meson.build; do
+    # And the configure script itself: a flag it gained since the last
+    # configure (a library disabled, say) is otherwise not applied until
+    # something else forces a configure, and the `no-optionals` check
+    # fails on a build that was made correctly at the time.
+    for f in qemu/meson.build qemu/hw/3dfx/meson.build qemu/hw/mesa/meson.build scripts/configure-qemu.sh; do
       if [ -f "$f" ] && [ -f "$QB/build.ninja" ] && [ "$f" -nt "$QB/build.ninja" ]; then
         needs_configure=1
       fi
