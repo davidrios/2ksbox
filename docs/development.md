@@ -218,14 +218,17 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
   Wayland's shortcut inhibitor, an X11 keyboard grab, or raw input with
   `RIDEV_NOHOTKEYS` on Windows (the two Windows keys, every Win+
   shortcut and Ctrl+Esc; Alt+Tab, Alt+F4, Ctrl+Alt+Del and Win+L are
-  system hotkeys no program gets). macOS has none. `Ctrl+Alt+K` toggles
+  system hotkeys no program gets), or the symbolic hot keys pushed off
+  on macOS (Cmd+Tab, Cmd+Space, Mission Control, the Spaces arrows, the
+  screenshot chords; the app menu's Cmd+H and Cmd+Q taken too, and
+  Cmd+Q asks before it closes, like Alt+F4). `Ctrl+Alt+K` toggles
   them between host and guest (the title says when they are the
   host's). `PLAYER_KEYBOARD_CAPTURE=0` starts with them the host's;
   `scripts/test.sh` sets it. `PLAYER_KEYBOARD_LOG=1` prints what the
-  Windows side did: whether the raw-input registration was accepted, and
-  what winit and Windows each thought about focus at every change. A
-  shortcut that still reaches the host is nearly always a window that
-  was not in front. The one known exception is the Flatpak on a wlroots
+  Windows or macOS side did: whether the raw-input registration or the
+  hot key mode was accepted, and what winit and the system each thought
+  about focus at every change. A shortcut that still reaches the host is
+  nearly always a window that was not in front. The one known exception is the Flatpak on a wlroots
   compositor, where the sandbox never sees the inhibit protocol (doc 03,
   "Flatpak" below). Design and measurements: doc 03 §"Input path",
   `player/src/kbcapture.rs`.

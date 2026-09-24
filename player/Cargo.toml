@@ -33,7 +33,8 @@ cpal = "0.18.2"
 shader-chain = { path = "../shader-chain" }
 
 # The host's shortcuts to the guest while focused (src/kbcapture.rs). All
-# three are what winit already links; the versions follow its own.
+# of them are what winit already links; the versions follow its own (the
+# macOS pair, objc2-app-kit and objc2-foundation, at the player's objc2).
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system"] }
@@ -50,5 +51,7 @@ windows-sys = { version = "0.52", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSWindow"] }
 objc2-metal = { version = "0.3", features = ["MTLDevice", "MTLTexture", "MTLPixelFormat", "objc2-io-surface"] }
 objc2-io-surface = { version = "0.3", features = ["IOSurfaceRef"] }

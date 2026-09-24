@@ -36,8 +36,36 @@
 //!   window's keys, so it is neither a Windows rule nor that window. What in
 //!   this process does it was never found, and `RIDEV_NOHOTKEYS` makes the
 //!   question moot. docs/03-display-pipeline.md, "Input path".
-//! - **macOS**: nothing. Cmd reaches the app already; Cmd+Tab would need an
-//!   event tap and the Accessibility permission.
+//! - **macOS**: the symbolic hot keys off while the app is frontmost
+//!   (`PushSymbolicHotKeyMode`, HIToolbox), which is the mode VirtualBox
+//!   pushes for its keyboard capture: Cmd+Tab, Cmd+Space, Mission Control,
+//!   the Spaces arrows, the screenshot chords and every other binding of
+//!   the Keyboard settings pane stay out of the way and the keys arrive at
+//!   the window as ordinary `keyDown:`s. The mode is only in effect while
+//!   this app is frontmost, so like Wayland's inhibitor it follows focus by
+//!   itself. The Universal Access chords are left on (`…ExceptUniversalAccess`):
+//!   accessibility is never the guest's. Cmd+H, Cmd+Opt+H and Cmd+Q are not
+//!   hot keys but the app menu's key equivalents (winit's menu), which the
+//!   menu would swallow before the window sees them; the capture blanks
+//!   them for its life and gives them back on drop. **A Cmd+Q that reaches
+//!   the window asks** (`main.rs`, like Alt+F4): a hand that meant Win+Q
+//!   loses nothing, one that meant Quit gets the prompt. The API is public
+//!   since 10.6 and still exported by every SDK's `HIToolbox.tbd`, but
+//!   current SDKs no longer declare it, so it is declared here. Not the
+//!   `NSApplicationPresentationOptions` route (`disableProcessSwitching`
+//!   wants the Dock hidden and covers only Cmd+Tab and Cmd+H), and not an
+//!   event tap (the Accessibility permission, and nothing in the App
+//!   Sandbox). What stays the host's: Cmd+Opt+Esc (Force Quit) and the
+//!   Touch Bar / fn media keys, which are not symbolic hot keys.
+//!
+//!   **Cmd+Q never `exit()`s under a live QEMU thread.** winit's Quit item
+//!   is `terminate:`, and its delegate answers no `applicationShouldTerminate:`,
+//!   so AppKit would `exit()` from inside the run loop while the QEMU thread
+//!   is alive (the atexit race `main.rs` joins the thread to avoid). The
+//!   player adds that method to winit's delegate class at start
+//!   (`quit_closes_window`): it closes the key window instead, which is the
+//!   title bar's close, and cancels the terminate. The Dock's Quit and the
+//!   menu's take the same road.
 //!
 //! **Ctrl+Alt+K** hands them back to the host and, pressed again, to the
 //! guest again. The player drops the `Capture` and builds a new one, so
@@ -51,7 +79,6 @@
 use qemu_embed::Qemu;
 #[cfg(all(unix, not(target_os = "macos")))]
 use winit::raw_window_handle::RawDisplayHandle;
-#[cfg(not(target_os = "macos"))]
 use winit::raw_window_handle::RawWindowHandle;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
@@ -63,6 +90,8 @@ pub enum Capture {
     X11(x11::Grab),
     #[cfg(windows)]
     Windows(win::NoHotkeys),
+    #[cfg(target_os = "macos")]
+    MacOS(mac::HotKeys),
 }
 
 /// Whether a run starts with the host's shortcuts going to the guest.
@@ -93,6 +122,8 @@ impl Capture {
             },
             #[cfg(windows)]
             (RawWindowHandle::Win32(w), _) => win::NoHotkeys::new(w.hwnd.get()).map(Capture::Windows),
+            #[cfg(target_os = "macos")]
+            (RawWindowHandle::AppKit(_), _) => mac::HotKeys::new().map(Capture::MacOS),
             _ => Err("nothing to do on this windowing system".into()),
         };
         match made {
@@ -115,7 +146,18 @@ impl Capture {
             Capture::X11(ref mut g) => g.set(focused),
             #[cfg(windows)]
             Capture::Windows(ref mut h) => h.set(focused),
+            #[cfg(target_os = "macos")]
+            Capture::MacOS(ref mut h) => h.set(focused),
         }
+    }
+}
+
+/// macOS: Cmd+Q (and the Dock's / the menu's Quit) closes the window
+/// instead of terminating the process. Once per run, before the capture.
+#[cfg(target_os = "macos")]
+pub fn quit_closes_window() {
+    if let Err(e) = mac::quit_closes_window() {
+        eprintln!("[keyboard] Cmd+Q keeps terminating the process: {e}");
     }
 }
 
@@ -343,6 +385,160 @@ mod win {
             return Err(format!("RegisterRawInputDevices failed ({})", unsafe {
                 GetLastError()
             }));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, Sel};
+    use objc2::{sel, MainThreadMarker, Message};
+    use objc2_app_kit::{NSApplication, NSMenuItem};
+    use objc2_foundation::{ns_string, NSString};
+    use std::ffi::c_void;
+
+    // HIToolbox, public since 10.6 and exported by every SDK's tbd, but
+    // absent from current headers; the signatures are the 10.6 ones.
+    #[link(name = "Carbon", kind = "framework")]
+    extern "C" {
+        fn PushSymbolicHotKeyMode(options: u32) -> *mut c_void;
+        fn PopSymbolicHotKeyMode(token: *mut c_void);
+        fn GetSymbolicHotKeyMode() -> u32;
+    }
+    /// `kHIHotKeyModeAllDisabledExceptUniversalAccess`: every binding of
+    /// the Keyboard settings pane off while this app is frontmost, the
+    /// accessibility ones kept.
+    const ALL_DISABLED_EXCEPT_UNIVERSAL_ACCESS: u32 = 1 << 1;
+
+    /// `NSApplicationTerminateReply`
+    const NS_TERMINATE_CANCEL: usize = 0;
+    const NS_TERMINATE_NOW: usize = 1;
+
+    /// The symbolic hot keys pushed off, and the app menu's key
+    /// equivalents blanked, for the capture's life.
+    pub struct HotKeys {
+        token: *mut c_void,
+        /// The menu items whose key equivalent was taken, with what to give back.
+        taken: Vec<(Retained<NSMenuItem>, Retained<NSString>)>,
+        trace: bool,
+    }
+
+    impl HotKeys {
+        pub fn new() -> Result<Self, String> {
+            let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
+            let trace = std::env::var("PLAYER_KEYBOARD_LOG").as_deref() == Ok("1");
+            let token = unsafe { PushSymbolicHotKeyMode(ALL_DISABLED_EXCEPT_UNIVERSAL_ACCESS) };
+            let mode = unsafe { GetSymbolicHotKeyMode() };
+            if mode != ALL_DISABLED_EXCEPT_UNIVERSAL_ACCESS {
+                unsafe { PopSymbolicHotKeyMode(token) };
+                return Err(format!("PushSymbolicHotKeyMode left the mode at {mode:#x}"));
+            }
+            // The menu's key equivalents (winit's app menu: Cmd+H, Cmd+Opt+H,
+            // Cmd+Q) are dispatched before the window's keyDown: and would
+            // never reach the guest. Blank every one the menu has.
+            let app = NSApplication::sharedApplication(mtm);
+            let mut taken = Vec::new();
+            if let Some(menu) = app.mainMenu() {
+                for top in menu.itemArray().iter() {
+                    let Some(sub) = top.submenu() else { continue };
+                    for item in sub.itemArray().iter() {
+                        let key = item.keyEquivalent();
+                        if key.len() == 0 {
+                            continue;
+                        }
+                        item.setKeyEquivalent(ns_string!(""));
+                        taken.push((item.retain(), key));
+                    }
+                }
+            }
+            if trace {
+                eprintln!(
+                    "[keyboard] symbolic hot keys off while frontmost (mode {mode:#x}), {} menu key equivalents taken",
+                    taken.len()
+                );
+            }
+            Ok(HotKeys { token, taken, trace })
+        }
+
+        /// Focus changes nothing here: the mode is applied by the system
+        /// to the frontmost app only. The line is worth printing because a
+        /// shortcut that still reached the host is nearly always a window
+        /// that was not in front when it was pressed.
+        pub fn set(&mut self, focused: bool) {
+            if self.trace {
+                let active = MainThreadMarker::new()
+                    .map(|mtm| NSApplication::sharedApplication(mtm).isActive())
+                    .unwrap_or(false);
+                eprintln!(
+                    "[keyboard] focus: winit says {focused}, the app is {}, hot key mode {:#x}",
+                    if active { "active" } else { "not active" },
+                    unsafe { GetSymbolicHotKeyMode() },
+                );
+            }
+        }
+    }
+
+    impl Drop for HotKeys {
+        fn drop(&mut self) {
+            for (item, key) in self.taken.drain(..) {
+                item.setKeyEquivalent(&key);
+            }
+            unsafe { PopSymbolicHotKeyMode(self.token) };
+        }
+    }
+
+    /// `applicationShouldTerminate:` for winit's delegate: close the key
+    /// window (winit turns `windowShouldClose:` into `CloseRequested`, the
+    /// title bar's close) and cancel the terminate, so the process never
+    /// `exit()`s under the QEMU thread. With no window left there is
+    /// nothing to stop and the terminate proceeds.
+    unsafe extern "C-unwind" fn should_terminate(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        _sender: *mut AnyObject,
+    ) -> usize {
+        let Some(mtm) = MainThreadMarker::new() else { return NS_TERMINATE_NOW };
+        let app = NSApplication::sharedApplication(mtm);
+        let window = app.keyWindow().or_else(|| app.windows().firstObject());
+        if std::env::var("PLAYER_KEYBOARD_LOG").as_deref() == Ok("1") {
+            eprintln!(
+                "[keyboard] terminate asked: {}",
+                if window.is_some() { "closing the window instead" } else { "no window, letting it" }
+            );
+        }
+        match window {
+            Some(w) => {
+                w.performClose(None);
+                NS_TERMINATE_CANCEL
+            }
+            None => NS_TERMINATE_NOW,
+        }
+    }
+
+    pub fn quit_closes_window() -> Result<(), String> {
+        let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
+        let app = NSApplication::sharedApplication(mtm);
+        let delegate = app.delegate().ok_or("the app has no delegate")?;
+        let object: &AnyObject = (*delegate).as_ref();
+        let class: &AnyClass = object.class();
+        let imp: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize = should_terminate;
+        // SAFETY: the IMP has the method's real signature, and the type
+        // encoding says so (NSUInteger, self, _cmd, id).
+        let added = unsafe {
+            objc2::ffi::class_addMethod(
+                class as *const AnyClass as *mut AnyClass,
+                sel!(applicationShouldTerminate:),
+                std::mem::transmute::<_, unsafe extern "C-unwind" fn()>(imp),
+                c"Q@:@".as_ptr(),
+            )
+        };
+        if !added.as_bool() {
+            return Err(format!("{} already answers applicationShouldTerminate:", class.name().to_string_lossy()));
+        }
+        if std::env::var("PLAYER_KEYBOARD_LOG").as_deref() == Ok("1") {
+            eprintln!("[keyboard] Cmd+Q and Quit close the window ({} answers applicationShouldTerminate:)", class.name().to_string_lossy());
         }
         Ok(())
     }

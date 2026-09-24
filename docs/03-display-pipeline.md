@@ -298,12 +298,54 @@ grab, so each windowing system gets its own:
   cause was never found; measurement ruled out `LowLevelHooksTimeout`,
   re-arming, the hook thread's timer, the window, a Windows rule,
   integrity levels and exploit mitigations.
-- **macOS.** Nothing is needed; Cmd reaches the app already (Cmd+Tab
-  would need an event tap and the Accessibility permission).
+- **macOS.** The symbolic hot keys are pushed off for the capture's life
+  (`PushSymbolicHotKeyMode(kHIHotKeyModeAllDisabledExceptUniversalAccess)`,
+  HIToolbox, the mode VirtualBox pushes for its keyboard capture). The
+  system applies the mode only while this app is frontmost, so it follows
+  focus by itself like Wayland's inhibitor. Off go Cmd+Tab, Cmd+Space,
+  Mission Control, the Spaces arrows (Ctrl+arrows, which a guest reads as
+  word movement), the screenshot chords and every other binding of the
+  Keyboard settings pane; the keys arrive at the window as ordinary
+  `keyDown:`s. The Universal Access chords stay the host's: accessibility
+  is never the guest's. Cmd+H, Cmd+Opt+H and Cmd+Q are not hot keys but
+  the app menu's key equivalents (winit's menu), which the menu would
+  swallow before the window sees them; the capture blanks them and gives
+  them back on drop. Cmd+Opt+Esc and the fn / Touch Bar media keys are
+  not symbolic hot keys and stay the host's. The API has been public
+  since 10.6 and every SDK's `HIToolbox.tbd` still exports it, but current
+  SDKs no longer declare it, so `kbcapture.rs` declares it. Not
+  `NSApplicationPresentationOptions` (`disableProcessSwitching` wants the
+  Dock hidden and covers only Cmd+Tab and Cmd+H) and not an event tap
+  (the Accessibility permission, nothing in the App Sandbox). **Untested
+  in the App Store build**: if review flags the symbol, the presentation
+  options are the fallback. `PLAYER_KEYBOARD_LOG=1` prints the mode
+  pushed, the equivalents taken, and every focus change with whether the
+  app is active.
+
+  **Cmd+Q asks, and never `exit()`s under the QEMU thread.** winit's Quit
+  item is `terminate:`, and its delegate answers no
+  `applicationShouldTerminate:`, so AppKit would `exit()` from inside the
+  run loop with the QEMU thread alive (the atexit race the player joins
+  the thread to avoid). The player adds that method to winit's delegate
+  class at start (`kbcapture::quit_closes_window`, verified with a quit
+  Apple event on the Air, 2026-09-24): it closes the key window instead
+  and cancels the terminate, so the menu's Quit, the Dock's and Cmd+Q
+  while the host has its shortcuts all end as the title bar's close does.
+  A `CloseRequested` with Cmd held is Cmd+Q from the keyboard and asks
+  like Alt+F4; while the guest has the shortcuts, Cmd+Q reaches the window
+  as a key and asks the same way (Win+Q means nothing to the guest, Quit
+  means everything to the hand); a second Cmd+Q is the answer.
 
 **Ctrl+Alt+K** toggles the capture for the rest of the run (off drops it
 outright, on builds a new one; the title bar says when the host has its
 shortcuts). `PLAYER_KEYBOARD_CAPTURE=0` starts a run with it off.
+
+**Checking it by hand** (there is no scripted test: posting keys to
+another app needs the Accessibility permission on macOS and a grab-aware
+harness elsewhere). Start any machine, click into it, press the Windows
+key (Cmd on a Mac): the *guest's* Start menu opens and the host's does
+not. Then Win+Tab / Cmd+Tab: the guest's task switcher, and the host's
+window stays in front. Ctrl+Alt+K, and the same keys go to the host.
 
 **The player's own chords.** Ctrl+Alt+Del is the host's everywhere, so
 **Ctrl+Alt+Shift+D** is the guest's (Shift let go, Delete pressed, and

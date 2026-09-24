@@ -3,6 +3,7 @@
 //! host's (Ctrl+Alt+K, or a host `kbcapture` can do nothing on), and pressed
 //! by a hand that meant the game it was in, it took the whole machine with
 //! it. A close with Alt held asks first; the title bar's button does not.
+//! On macOS Cmd+Q asks the same way, whichever side has the shortcuts.
 //!
 //! Drawn by the player rather than borrowed from a toolkit: the player has
 //! none, and Linux has no message box to call that also works inside the

@@ -1409,6 +1409,17 @@ impl App {
         p.hit(px - x as f64, py - y as f64)
     }
 
+    /// Whether a keyboard close is worth a question: the guest has drawn
+    /// something, so there may be work in it to lose.
+    fn can_lose_work(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|g| g.current().is_some()) && self.vm().is_some()
+    }
+
+    /// Cmd+Q, and only on macOS: Super+Q is the guest's Win+Q elsewhere.
+    fn mac_quit_chord(&self) -> bool {
+        cfg!(target_os = "macos") && self.modifiers.super_key()
+    }
+
     fn close_player(&mut self, event_loop: &ActiveEventLoop) {
         // before the VM handle goes: the Windows hook holds a copy
         self.kbd = None;
@@ -1693,6 +1704,8 @@ impl ApplicationHandler for App {
                 qmp_exec_done: false,
             }
         });
+        #[cfg(target_os = "macos")]
+        kbcapture::quit_closes_window();
         self.kbd_off = !kbcapture::on_at_start();
         if !self.kbd_off {
             self.capture_keyboard();
@@ -1715,11 +1728,12 @@ impl ApplicationHandler for App {
                 // A close with Alt held came from the keyboard (Alt+F4, a
                 // window manager's Alt binding) and may be a hand that meant
                 // the guest: ask, and take a second one while asking as the
-                // answer. The title bar's button is never an accident. A
-                // guest that has drawn nothing yet has nothing to lose.
-                let asked = self.confirm_close.is_some();
-                let drawn = self.gpu.as_ref().is_some_and(|g| g.current().is_some());
-                if self.modifiers.alt_key() && !asked && drawn && self.vm().is_some() {
+                // answer. On macOS the menu's Cmd+Q arrives here too
+                // (`kbcapture::quit_closes_window`), with Cmd held. The
+                // title bar's button is never an accident. A guest that has
+                // drawn nothing yet has nothing to lose.
+                let by_key = self.modifiers.alt_key() || (cfg!(target_os = "macos") && self.modifiers.super_key());
+                if by_key && self.confirm_close.is_none() && self.can_lose_work() {
                     self.ask_to_close();
                     return;
                 }
@@ -1738,14 +1752,27 @@ impl ApplicationHandler for App {
                 };
                 let down = event.state == ElementState::Pressed;
                 // the close prompt takes every key: Enter closes, Esc goes
-                // back (as the host keymap reads them: caps:escape's Esc)
+                // back (as the host keymap reads them: caps:escape's Esc);
+                // a second Cmd+Q on macOS is the answer, like a second Alt+F4
                 if self.confirm_close.is_some() {
                     if down && !event.repeat {
                         match keymap::as_host_reads(&event.logical_key, event.location).unwrap_or(code) {
                             KeyCode::Enter | KeyCode::NumpadEnter => self.close_player(event_loop),
+                            KeyCode::KeyQ if self.mac_quit_chord() => self.close_player(event_loop),
                             KeyCode::Escape => self.dismiss_prompt(),
                             _ => {}
                         }
+                    }
+                    return;
+                }
+                // macOS Cmd+Q, reaching the window because the capture took
+                // it from the menu: ask first, as Alt+F4 does (Win+Q means
+                // nothing to the guest, Quit means everything to the hand)
+                if down && !event.repeat && code == KeyCode::KeyQ && self.mac_quit_chord() {
+                    if self.can_lose_work() {
+                        self.ask_to_close();
+                    } else {
+                        self.close_player(event_loop);
                     }
                     return;
                 }
