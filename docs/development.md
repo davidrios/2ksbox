@@ -218,8 +218,8 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
   Wayland's shortcut inhibitor, an X11 keyboard grab, or raw input with
   `RIDEV_NOHOTKEYS` on Windows (the two Windows keys, every Win+
   shortcut and Ctrl+Esc; Alt+Tab, Alt+F4, Ctrl+Alt+Del and Win+L are
-  system hotkeys no program gets), or the symbolic hot keys pushed off
-  on macOS (Cmd+Tab, Cmd+Space, Mission Control, the Spaces arrows, the
+  system hotkeys no program gets), or the window server's hot keys off
+  on macOS (Cmd+Tab, Cmd+Space, Mission Control, Ctrl+arrows, the
   screenshot chords; the app menu's Cmd+H and Cmd+Q taken too, and
   Cmd+Q asks before it closes, like Alt+F4). `Ctrl+Alt+K` toggles
   them between host and guest (the title says when they are the

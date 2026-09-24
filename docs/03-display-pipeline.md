@@ -298,29 +298,39 @@ grab, so each windowing system gets its own:
   cause was never found; measurement ruled out `LowLevelHooksTimeout`,
   re-arming, the hook thread's timer, the window, a Windows rule,
   integrity levels and exploit mitigations.
-- **macOS.** The symbolic hot keys are pushed off for the capture's life
-  (`PushSymbolicHotKeyMode(kHIHotKeyModeAllDisabledExceptUniversalAccess)`,
-  HIToolbox, the mode VirtualBox pushes for its keyboard capture). The
-  system applies the mode only while this app is frontmost, so it follows
-  focus by itself like Wayland's inhibitor. Off go Cmd+Tab, Cmd+Space,
-  Mission Control, the Spaces arrows (Ctrl+arrows, which a guest reads as
-  word movement), the screenshot chords and every other binding of the
-  Keyboard settings pane; the keys arrive at the window as ordinary
-  `keyDown:`s. The Universal Access chords stay the host's: accessibility
-  is never the guest's. Cmd+H, Cmd+Opt+H and Cmd+Q are not hot keys but
-  the app menu's key equivalents (winit's menu), which the menu would
-  swallow before the window sees them; the capture blanks them and gives
-  them back on drop. Cmd+Opt+Esc and the fn / Touch Bar media keys are
-  not symbolic hot keys and stay the host's. The API has been public
-  since 10.6 and every SDK's `HIToolbox.tbd` still exports it, but current
-  SDKs no longer declare it, so `kbcapture.rs` declares it. Not
-  `NSApplicationPresentationOptions` (`disableProcessSwitching` wants the
-  Dock hidden and covers only Cmd+Tab and Cmd+H) and not an event tap
-  (the Accessibility permission, nothing in the App Sandbox). **Untested
-  in the App Store build**: if review flags the symbol, the presentation
-  options are the fallback. `PLAYER_KEYBOARD_LOG=1` prints the mode
-  pushed, the equivalents taken, and every focus change with whether the
-  app is active.
+- **macOS.** The window server's hot key operating mode is set to "all
+  disabled except Universal Access" while the window has focus and back
+  to enabled when it loses focus or the capture is dropped
+  (`CGSSetGlobalHotKeyOperatingMode`, SkyLight's private interface: the
+  call VirtualBox's `DarwinDisableGlobalHotKeys` and UTM's
+  `VMMetalView.captureMouse` make, and UTM ships it on the Mac App Store).
+  Off go Cmd+Tab, Cmd+Space, Mission Control and the Spaces arrows
+  (Ctrl+Up, which era games use), the screenshot chords and every other
+  binding of the Keyboard settings pane; the keys arrive at the window as
+  ordinary `keyDown:`s. The Universal Access chords stay the host's:
+  accessibility is never the guest's. Cmd+H, Cmd+Opt+H and Cmd+Q are not
+  hot keys but the app menu's key equivalents (winit's menu), which the
+  menu would swallow before the window sees them; the capture blanks them
+  and gives them back on drop. Cmd+Opt+Esc and the fn / Touch Bar media
+  keys are not hot keys of the pane and stay the host's. The user
+  confirmed Ctrl+Up and Cmd+Tab in a Win98 guest on the Air (2026-09-24).
+
+  **Two public roads were measured dead on macOS 26** (2026-09-24), so
+  don't go back to them. The Carbon `PushSymbolicHotKeyMode`, public
+  since 10.6 and still exported, is a stub: `GetSymbolicHotKeyMode` reads
+  back what was pushed while the window server's mode stays 0 and Cmd+Tab
+  keeps switching. An active HID-level `CGEventTap` with the Accessibility
+  permission granted, sandboxed or not, sees the modifier presses and
+  never the Ctrl+Up / Cmd+Tab / Cmd+Space key downs: the window server
+  acts on the chord before any tap. The private call works inside the App
+  Sandbox too (probed with an ad-hoc-signed sandboxed binary), so both
+  builds use it. `PLAYER_KEYBOARD_MAC=presentation` keeps the public
+  `NSApplicationPresentationOptions` route as the fallback should App
+  Store review ever refuse the symbol: `disableProcessSwitching` (Cmd+Tab)
+  and `disableHideApplication` (Cmd+H), which want the Dock auto-hidden
+  while the app is active and cover nothing else, Ctrl+Up included.
+  `PLAYER_KEYBOARD_LOG=1` prints the road taken, the equivalents taken,
+  and every focus change with the mode read back.
 
   **Cmd+Q asks, and never `exit()`s under the QEMU thread.** winit's Quit
   item is `terminate:`, and its delegate answers no

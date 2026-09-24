@@ -318,6 +318,12 @@ retries.
 | Direct3D | DXVK on KosmicKrisp | the same, plus the executor on Wine below Vulkan 1.3 |
 | Distribution | App Store | Developer ID DMG (`--community`) |
 
+Both send the host's shortcuts to the guest the same way, through the
+window server's private hot key mode (doc 03 "Input path"): UTM ships
+that symbol on the Mac App Store and it works inside the sandbox, so
+the App Store build is not held back to `PLAYER_KEYBOARD_MAC=presentation`
+(Cmd+Tab and Cmd+H only) unless review ever objects.
+
 Both come from the same script. `--community` adds
 `libd3dpt_exec_remote.dylib`, `wine/d3dpt_exec.dll` and
 `d3dpt-exec-host.exe`, built by `scripts/build-d3dpt-exec.sh --wine`

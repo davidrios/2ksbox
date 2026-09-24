@@ -36,27 +36,34 @@
 //!   window's keys, so it is neither a Windows rule nor that window. What in
 //!   this process does it was never found, and `RIDEV_NOHOTKEYS` makes the
 //!   question moot. docs/03-display-pipeline.md, "Input path".
-//! - **macOS**: the symbolic hot keys off while the app is frontmost
-//!   (`PushSymbolicHotKeyMode`, HIToolbox), which is the mode VirtualBox
-//!   pushes for its keyboard capture: Cmd+Tab, Cmd+Space, Mission Control,
-//!   the Spaces arrows, the screenshot chords and every other binding of
-//!   the Keyboard settings pane stay out of the way and the keys arrive at
-//!   the window as ordinary `keyDown:`s. The mode is only in effect while
-//!   this app is frontmost, so like Wayland's inhibitor it follows focus by
-//!   itself. The Universal Access chords are left on (`…ExceptUniversalAccess`):
-//!   accessibility is never the guest's. Cmd+H, Cmd+Opt+H and Cmd+Q are not
-//!   hot keys but the app menu's key equivalents (winit's menu), which the
-//!   menu would swallow before the window sees them; the capture blanks
-//!   them for its life and gives them back on drop. **A Cmd+Q that reaches
-//!   the window asks** (`main.rs`, like Alt+F4): a hand that meant Win+Q
-//!   loses nothing, one that meant Quit gets the prompt. The API is public
-//!   since 10.6 and still exported by every SDK's `HIToolbox.tbd`, but
-//!   current SDKs no longer declare it, so it is declared here. Not the
-//!   `NSApplicationPresentationOptions` route (`disableProcessSwitching`
-//!   wants the Dock hidden and covers only Cmd+Tab and Cmd+H), and not an
-//!   event tap (the Accessibility permission, and nothing in the App
-//!   Sandbox). What stays the host's: Cmd+Opt+Esc (Force Quit) and the
-//!   Touch Bar / fn media keys, which are not symbolic hot keys.
+//! - **macOS**: the window server's hot key operating mode set to "all
+//!   disabled except Universal Access" while the window has focus
+//!   (`CGSSetGlobalHotKeyOperatingMode`, SkyLight's private interface, the
+//!   call VirtualBox and UTM make for their keyboard capture; UTM ships it
+//!   on the Mac App Store, and it works inside the App Sandbox): Cmd+Tab,
+//!   Cmd+Space, Mission Control and the Spaces arrows (Ctrl+Up, which era
+//!   games use), the screenshot chords and every other binding of the
+//!   Keyboard settings pane stay out of the way and the keys arrive at the
+//!   window as ordinary `keyDown:`s. The mode does not follow focus by
+//!   itself, so the player sets it on focus and resets it on focus loss
+//!   and on drop. The Universal Access chords are left on: accessibility
+//!   is never the guest's. Two roads that do not work on macOS 26, both
+//!   measured: the public Carbon `PushSymbolicHotKeyMode` is a stub (its
+//!   own mode reads back as pushed while the window server's stays 0), and
+//!   an active HID event tap with the Accessibility permission never sees
+//!   these chords at all, sandboxed or not (the window server acts on them
+//!   before any tap). `PLAYER_KEYBOARD_MAC=presentation` picks the public
+//!   `NSApplicationPresentationOptions` instead, kept as the fallback
+//!   should App Store review ever refuse the symbol: `disableProcessSwitching`
+//!   (Cmd+Tab) and `disableHideApplication` (Cmd+H), which want the Dock
+//!   auto-hidden while the app is active and cover nothing else. Cmd+H,
+//!   Cmd+Opt+H and Cmd+Q are not hot keys but the app menu's key
+//!   equivalents (winit's menu), which the menu would swallow before the
+//!   window sees them; the capture blanks them for its life and gives them
+//!   back on drop. **A Cmd+Q that reaches the window asks** (`main.rs`,
+//!   like Alt+F4): a hand that meant Win+Q loses nothing, one that meant
+//!   Quit gets the prompt. What stays the host's: Cmd+Opt+Esc (Force Quit)
+//!   and the fn / Touch Bar media keys, which are not hot keys of the pane.
 //!
 //!   **Cmd+Q never `exit()`s under a live QEMU thread.** winit's Quit item
 //!   is `terminate:`, and its delegate answers no `applicationShouldTerminate:`,
@@ -395,50 +402,84 @@ mod mac {
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Sel};
     use objc2::{sel, MainThreadMarker, Message};
-    use objc2_app_kit::{NSApplication, NSMenuItem};
+    use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions as Opts, NSMenuItem};
     use objc2_foundation::{ns_string, NSString};
-    use std::ffi::c_void;
 
-    // HIToolbox, public since 10.6 and exported by every SDK's tbd, but
-    // absent from current headers; the signatures are the 10.6 ones.
-    #[link(name = "Carbon", kind = "framework")]
+    // The window server's hot key operating mode, SkyLight's private
+    // interface: the call VirtualBox (`DarwinDisableGlobalHotKeys`) and
+    // UTM (`VMMetalView.captureMouse`, on the Mac App Store) make for
+    // their keyboard capture. The public Carbon `PushSymbolicHotKeyMode`
+    // no longer reaches it: on macOS 26 its mode reads back as pushed
+    // while this one stays 0, and Cmd+Tab keeps switching. An event tap,
+    // Accessibility granted, never sees these chords at all: the window
+    // server acts on them first (both measured 2026-09-24).
+    #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
-        fn PushSymbolicHotKeyMode(options: u32) -> *mut c_void;
-        fn PopSymbolicHotKeyMode(token: *mut c_void);
-        fn GetSymbolicHotKeyMode() -> u32;
+        fn CGSMainConnectionID() -> i32;
+        fn CGSGetGlobalHotKeyOperatingMode(conn: i32, mode: *mut i32) -> i32;
+        fn CGSSetGlobalHotKeyOperatingMode(conn: i32, mode: i32) -> i32;
     }
-    /// `kHIHotKeyModeAllDisabledExceptUniversalAccess`: every binding of
-    /// the Keyboard settings pane off while this app is frontmost, the
-    /// accessibility ones kept.
-    const ALL_DISABLED_EXCEPT_UNIVERSAL_ACCESS: u32 = 1 << 1;
+    const HOT_KEYS_ENABLED: i32 = 0;
+    /// Every binding of the Keyboard settings pane off, the accessibility
+    /// ones kept.
+    const HOT_KEYS_DISABLED_EXCEPT_UNIVERSAL_ACCESS: i32 = 2;
 
     /// `NSApplicationTerminateReply`
     const NS_TERMINATE_CANCEL: usize = 0;
     const NS_TERMINATE_NOW: usize = 1;
 
-    /// The symbolic hot keys pushed off, and the app menu's key
-    /// equivalents blanked, for the capture's life.
+    enum Way {
+        /// The window server's mode, set while the window has focus and
+        /// reset when it loses it (the mode does not follow focus itself).
+        Cgs { conn: i32 },
+        /// The public route, kept in case App Store review ever refuses
+        /// the symbol (`PLAYER_KEYBOARD_MAC=presentation`):
+        /// `disableProcessSwitching` needs the Dock auto-hidden and covers
+        /// Cmd+Tab and Cmd+H only. AppKit applies presentation options
+        /// while the app is active.
+        Presentation { before: Opts },
+    }
+
+    /// The host's hot keys off for the capture's life, and the app menu's
+    /// key equivalents blanked.
     pub struct HotKeys {
-        token: *mut c_void,
+        way: Way,
         /// The menu items whose key equivalent was taken, with what to give back.
         taken: Vec<(Retained<NSMenuItem>, Retained<NSString>)>,
         trace: bool,
+    }
+
+    fn cgs_mode(conn: i32) -> i32 {
+        let mut mode = -1;
+        unsafe { CGSGetGlobalHotKeyOperatingMode(conn, &mut mode) };
+        mode
     }
 
     impl HotKeys {
         pub fn new() -> Result<Self, String> {
             let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
             let trace = std::env::var("PLAYER_KEYBOARD_LOG").as_deref() == Ok("1");
-            let token = unsafe { PushSymbolicHotKeyMode(ALL_DISABLED_EXCEPT_UNIVERSAL_ACCESS) };
-            let mode = unsafe { GetSymbolicHotKeyMode() };
-            if mode != ALL_DISABLED_EXCEPT_UNIVERSAL_ACCESS {
-                unsafe { PopSymbolicHotKeyMode(token) };
-                return Err(format!("PushSymbolicHotKeyMode left the mode at {mode:#x}"));
-            }
+            let app = NSApplication::sharedApplication(mtm);
+            let way = if std::env::var("PLAYER_KEYBOARD_MAC").as_deref() != Ok("presentation") {
+                let conn = unsafe { CGSMainConnectionID() };
+                let mode = cgs_mode(conn);
+                if mode != HOT_KEYS_ENABLED {
+                    // sleep, the screen saver, or another app's capture
+                    return Err(format!("the window server's hot key mode is {mode}, not enabled"));
+                }
+                Way::Cgs { conn }
+            } else {
+                let before = app.presentationOptions();
+                let mut want = before | Opts::DisableProcessSwitching | Opts::DisableHideApplication;
+                if !want.contains(Opts::HideDock) {
+                    want |= Opts::AutoHideDock;
+                }
+                app.setPresentationOptions(want);
+                Way::Presentation { before }
+            };
             // The menu's key equivalents (winit's app menu: Cmd+H, Cmd+Opt+H,
             // Cmd+Q) are dispatched before the window's keyDown: and would
             // never reach the guest. Blank every one the menu has.
-            let app = NSApplication::sharedApplication(mtm);
             let mut taken = Vec::new();
             if let Some(menu) = app.mainMenu() {
                 for top in menu.itemArray().iter() {
@@ -453,28 +494,37 @@ mod mac {
                     }
                 }
             }
+            let mut made = HotKeys { way, taken, trace };
             if trace {
                 eprintln!(
-                    "[keyboard] symbolic hot keys off while frontmost (mode {mode:#x}), {} menu key equivalents taken",
-                    taken.len()
+                    "[keyboard] {} while focused, {} menu key equivalents taken",
+                    match made.way {
+                        Way::Cgs { .. } => "the window server's hot keys off",
+                        Way::Presentation { .. } => "process switching and hiding off (presentation options)",
+                    },
+                    made.taken.len()
                 );
             }
-            Ok(HotKeys { token, taken, trace })
+            made.set(app.isActive());
+            Ok(made)
         }
 
-        /// Focus changes nothing here: the mode is applied by the system
-        /// to the frontmost app only. The line is worth printing because a
-        /// shortcut that still reached the host is nearly always a window
-        /// that was not in front when it was pressed.
         pub fn set(&mut self, focused: bool) {
+            if let Way::Cgs { conn } = self.way {
+                let want = if focused { HOT_KEYS_DISABLED_EXCEPT_UNIVERSAL_ACCESS } else { HOT_KEYS_ENABLED };
+                unsafe { CGSSetGlobalHotKeyOperatingMode(conn, want) };
+            }
             if self.trace {
                 let active = MainThreadMarker::new()
                     .map(|mtm| NSApplication::sharedApplication(mtm).isActive())
                     .unwrap_or(false);
+                let mode = match self.way {
+                    Way::Cgs { conn } => format!("hot key mode {}", cgs_mode(conn)),
+                    Way::Presentation { .. } => "presentation options".to_string(),
+                };
                 eprintln!(
-                    "[keyboard] focus: winit says {focused}, the app is {}, hot key mode {:#x}",
+                    "[keyboard] focus: winit says {focused}, the app is {}, {mode}",
                     if active { "active" } else { "not active" },
-                    unsafe { GetSymbolicHotKeyMode() },
                 );
             }
         }
@@ -485,7 +535,16 @@ mod mac {
             for (item, key) in self.taken.drain(..) {
                 item.setKeyEquivalent(&key);
             }
-            unsafe { PopSymbolicHotKeyMode(self.token) };
+            match self.way {
+                Way::Cgs { conn } => unsafe {
+                    CGSSetGlobalHotKeyOperatingMode(conn, HOT_KEYS_ENABLED);
+                },
+                Way::Presentation { before } => {
+                    if let Some(mtm) = MainThreadMarker::new() {
+                        NSApplication::sharedApplication(mtm).setPresentationOptions(before);
+                    }
+                }
+            }
         }
     }
 
