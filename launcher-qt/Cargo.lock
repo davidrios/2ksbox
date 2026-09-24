@@ -1005,6 +1005,7 @@ dependencies = [
  "directories",
  "flate2",
  "image",
+ "libc",
  "librashader",
  "pollster",
  "serde",
