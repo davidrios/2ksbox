@@ -117,7 +117,7 @@ if [ "$ARCH" = x86_64 ]; then COMMUNITY=1; fi
 # Absolute, whatever was typed: the checks below `cd /` before they run the
 # staged binaries, and a relative --out broke there.
 case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
-echo "arch           $ARCH${ROSETTA:+ (under Rosetta: the Intel app, from $QB and $TD)}${COMMUNITY:+, the community build}"
+echo "arch           $ARCH${ROSETTA:+ (under Rosetta: the Intel app, from $QB and $TD)}$([ "$COMMUNITY" = 1 ] && echo ", the community build")"
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP="$OUT/2ksbox.app"
@@ -136,6 +136,16 @@ MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}
 case "$MACOSX_DEPLOYMENT_TARGET" in *.*) ;; *) MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET.0" ;; esac
 export MACOSX_DEPLOYMENT_TARGET
 FLOOR=$MACOSX_DEPLOYMENT_TARGET
+
+# Our Qt (scripts/build-deps.sh), the one the launcher was built against,
+# and the one the build below must use: cxx-qt-build finds Qt through
+# QMAKE, else a qmake6 on PATH, and a Homebrew Qt there (6.11 on the Air,
+# 2026-09-24) compiled `qt_version_tag_6_11` into the launcher and the
+# link against our 6.9.3 frameworks failed. scripts/build.sh's qt stage
+# exports the same; this used to set it only after the build.
+QMAKE=${QMAKE:-$ROOT/build/deps/$ARCH/bin/qmake}
+command -v "$QMAKE" >/dev/null || { echo "package-macos.sh: no $QMAKE (scripts/build.sh deps); the launcher is Qt 6" >&2; exit 1; }
+export QMAKE
 
 if [ "$BUILD" = 1 ]; then
   cargo build --release -p player ${CT[@]+"${CT[@]}"}
@@ -251,9 +261,7 @@ write_plist "$FLOOR"
 # binary as a Qt resource, so the import scanner has nothing to read
 # unless it is pointed at the sources, and a bundle deployed without it
 # starts and then dies on `module "QtQuick" is not installed`.
-# Our Qt (scripts/build-deps.sh): the one the launcher was built against.
-QMAKE=${QMAKE:-$ROOT/build/deps/$ARCH/bin/qmake}
-command -v "$QMAKE" >/dev/null || { echo "package-macos.sh: no $QMAKE (scripts/build.sh deps); the launcher is Qt 6" >&2; exit 1; }
+# Our Qt (QMAKE, exported above the build).
 QT_BINS=$("$QMAKE" -query QT_HOST_BINS)
 QT_PLUGINS=$("$QMAKE" -query QT_INSTALL_PLUGINS)
 MACDEPLOYQT=${MACDEPLOYQT:-$QT_BINS/macdeployqt}

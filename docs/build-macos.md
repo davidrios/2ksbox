@@ -218,7 +218,12 @@ scripts/package-macos.sh --x86_64 --no-notarize # the Intel app, from scripts/bu
 ```
 
 `--no-build`, `--no-notarize`, `--identity`, `--keychain-profile` and
-`--out` are in the script's header. Notarization credentials, once:
+`--out` are in the script's header. The script's own `cargo build` of
+the launcher runs with `QMAKE` pointed at `build/deps/<arch>/bin/qmake`,
+as `build.sh`'s qt stage does; before 2026-09-24 it set `QMAKE` only
+after building, so a Homebrew Qt on `PATH` (6.11 on the Air) compiled a
+`qt_version_tag_6_11` into the launcher and the link against our 6.9.3
+frameworks failed. Notarization credentials, once:
 
 ```sh
 xcrun notarytool store-credentials 2ksbox-notary \

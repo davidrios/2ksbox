@@ -386,6 +386,11 @@ to one subsystem lives in its design doc; pointers are at the end.
 - **Never call `gl*` / `CGL*` / `IOSurface*` by link in the embed
   backend.** The symbol can bind to a GLX library that silently no-ops;
   `dlsym` from the OpenGL.framework handle.
+- **A launcher link failing on `_qt_version_tag_6_11` is a Homebrew Qt
+  on `PATH`.** cxx-qt-build takes `QMAKE`, else the first `qmake6` it
+  finds; every script that builds `launcher-qt` must export `QMAKE` to
+  `build/deps/<arch>/bin/qmake` first (`build.sh` and `package-macos.sh`
+  do). `build-macos.md` "The app".
 - **Only the window server's private hot key mode takes Cmd+Tab and
   Ctrl+Up from the host** (`CGSSetGlobalHotKeyOperatingMode`, what UTM
   and VirtualBox call). Carbon's public `PushSymbolicHotKeyMode` is a
