@@ -28,7 +28,7 @@ use crate::bundle::{
 };
 use crate::disc_library::DISC_FILTER;
 use crate::shader_library::{self, ProfileEntry};
-use crate::{host_gpu, library, player};
+use crate::{host_gpu, library, player, shader_source};
 use std::path::{Path, PathBuf};
 
 /// The shader picker's first row, and the "Shader" column's word for a
@@ -176,6 +176,8 @@ pub struct Form {
     pub extra_qemu_args: String,
     /// A shader profile id (`shader_library`), or `None` for the app
     /// default. Independent of `EditTarget::shader` (see `bundle::Machine`).
+    /// A new machine starts on the CRT Aperture profile when the library
+    /// has it (`default_shader_profile`).
     pub shader_profile: Option<String>,
     /// What the last `submit` failed with, for the form to show.
     pub error: Option<String>,
@@ -266,7 +268,7 @@ impl Default for Form {
             disk_path: String::new(),
             disk_size_gb: bundle::default_disk_size_gb(Family::Win98),
             install_media: String::new(),
-            shader_profile: None,
+            shader_profile: default_shader_profile(),
             error: None,
             saved_path: None,
             family: Family::Win98,
@@ -289,6 +291,21 @@ impl Default for Form {
             editing: None,
         }
     }
+}
+
+/// The profile a new machine starts on: the first starter profile
+/// (`shader_source::DEFAULT_PROFILES`, CRT Aperture, the Windows-era
+/// tube), when the library has one by that name and its preset is still
+/// there. `None` (the app default, unshaded) before the collection has
+/// been downloaded or after the profile was deleted; the picker's first
+/// row stays one pick away either way. Looked up by name, not by id: a
+/// profile the user re-created under the same name has a new slug.
+pub fn default_shader_profile() -> Option<String> {
+    let (name, _) = shader_source::DEFAULT_PROFILES.first()?;
+    shader_library::scan(&shader_library::default_dir())
+        .into_iter()
+        .find(|e| e.profile.name == *name && e.profile.preset.is_file())
+        .map(|e| shader_library::id_of(&e.path))
 }
 
 // --- opening -------------------------------------------------------

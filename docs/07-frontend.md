@@ -421,7 +421,14 @@ and runs without live control.
   longer exists, which is what the machine plays with), and
   `choose_shader_profile` / `reset_shader_profile` are the verbs. The
   Qt window rescans the library when a profile is saved or deleted
-  while the form is open (`refreshProfiles`).
+  while the form is open (`refreshProfiles`). **A new machine starts on
+  CRT Aperture** (`wizard::default_shader_profile`, user decision
+  2026-09-24): the first starter profile, found by name in the library
+  with its preset still on disk, so a launcher whose collection has not
+  been downloaded, or whose user deleted the profile, starts on the app
+  default as before. It is the form's initial value, not a family
+  default: the "(default)" row is one pick away and an edited machine
+  keeps whatever it had.
 - **Where presets come from** (`shader_source::presets_dir()`):
   `LAUNCHER_SHADERS_DIR` if set (then nothing else), else the checkout's
   `third_party/slang-shaders`, else a downloaded copy in the data

@@ -591,6 +591,18 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)"
   case "$o" in "(nothing to add"*) ;; *) echo "a second run added profiles again: $o"; rc=1;; esac
   [ "$(ls "$dir/profiles"/*.toml | wc -l)" -eq 3 ] || { echo "the profile library is not still three"; rc=1; }
+
+  # A new machine starts on CRT Aperture once the library has it
+  # (`wizard::default_shader_profile`), and on the app default before
+  # (the profile directory `empty` has none): the same form, the same
+  # verb, only the library differs.
+  mkdir -p "$dir/library"
+  o="$(LAUNCHER_LIBRARY_DIR="$dir/library" target/release/launcherx --wizard-new win98 Tube 1 2>/dev/null | tail -1)"
+  [ -f "$o" ] || { echo "--wizard-new made no bundle"; return 1; }
+  grep -q '^shader_profile = "crt-aperture"' "$o" || { echo "a new machine did not start on CRT Aperture:"; grep shader "$o"; rc=1; }
+  o="$(LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_SHADER_PROFILES_DIR="$dir/empty" target/release/launcherx --wizard-new win98 Bare 1 2>/dev/null | tail -1)"
+  [ -f "$o" ] || { echo "--wizard-new made no bundle (empty profile library)"; return 1; }
+  if grep -q '^shader_profile = ' "$o"; then echo "a new machine with no profile library got a profile:"; grep shader "$o"; rc=1; fi
   return $rc
 }
 qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
