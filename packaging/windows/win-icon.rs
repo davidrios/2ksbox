@@ -1,4 +1,4 @@
-// The application icon, inside the .exe.
+// The application icon and manifest, inside the .exe.
 //
 // `include!`d by the build script of every crate that produces a Windows
 // binary someone sees in Explorer (`launcher-qt`, `player`).
@@ -9,30 +9,39 @@
 // that never uses it.
 //
 // Explorer, the taskbar and Alt-Tab draw the *lowest-numbered* icon
-// resource, so the .rc names it `1`. The resource script holds nothing
-// else (no VERSIONINFO block; nobody maintains a version string yet).
+// resource, so the .rc names it `1`. The manifest
+// (`packaging/windows/app.manifest`) is resource 1 of type 24
+// (RT_MANIFEST), the one CreateProcess reads; with it present, mingw's
+// linker leaves out its default manifest, which declares no DPI
+// awareness and makes the Windows App Certification Kit warn about the
+// Store package. The resource script holds nothing else (no VERSIONINFO
+// block; nobody maintains a version string yet).
 //
 // Cross-built from Linux, so mingw's `windres` turns the .rc into a COFF
 // object and `rustc-link-arg-bins` hands it to the linker for every binary
 // of the crate. A host with no windres gets a warning and a binary with no
-// icon, not a failed build.
+// icon and the default manifest, not a failed build.
 #[allow(dead_code)]
-fn embed_windows_icon() {
+fn embed_windows_resources() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let ico = root.join("packaging/icon/2ksbox.ico");
+    let manifest = root.join("packaging/windows/app.manifest");
     // The icon set is generated (`scripts/gen-icons.sh`) but checked in,
     // so this is a plain file read at build time on any machine.
     println!("cargo:rerun-if-changed={}", ico.display());
+    println!("cargo:rerun-if-changed={}", manifest.display());
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     let rc = out.join("icon.rc");
     let obj = out.join("icon.o");
-    // The path goes into the .rc quoted, and a backslash there is an
+    // The paths go into the .rc quoted, and a backslash there is an
     // escape, so use forward slashes, which windres accepts everywhere.
-    let path = ico.display().to_string().replace('\\', "/");
-    if std::fs::write(&rc, format!("1 ICON \"{path}\"\n")).is_err() {
+    let ico_path = ico.display().to_string().replace('\\', "/");
+    let manifest_path = manifest.display().to_string().replace('\\', "/");
+    let script = format!("1 ICON \"{ico_path}\"\n1 24 \"{manifest_path}\"\n");
+    if std::fs::write(&rc, script).is_err() {
         println!("cargo:warning=could not write {}: the .exe gets no icon", rc.display());
         return;
     }

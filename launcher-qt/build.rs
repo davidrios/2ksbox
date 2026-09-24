@@ -13,9 +13,9 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 include!("../packaging/windows/win-icon.rs");
 
 fn main() {
-    // The icon Explorer shows for the launcher: this crate becomes
+    // The icon Explorer shows for the launcher and its manifest: this crate becomes
     // 2ksbox.exe in the Windows package.
-    embed_windows_icon();
+    embed_windows_resources();
     // On a Mac the Qt is ours (scripts/build-deps.sh, docs/build-macos.md
     // "The libraries"), under build/deps/<arch>, and cxx-qt-build finds
     // Qt through QMAKE or a qmake6 on PATH. A `cargo build` run by hand

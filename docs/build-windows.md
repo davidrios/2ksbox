@@ -347,12 +347,62 @@ checks the real thing from an installed package. `launcher.log` and
 directory is not a rename): copy its `machines`, `discs.toml` and
 `shader-profiles` into `%USERPROFILE%\2ksbox` by hand.
 
-**The submission**, once the package uploads: the listing's text and
-screenshots, the age-rating questionnaire, free pricing, a privacy-policy
-URL (mandatory because of `internetClient`; a page in the repository is
-enough), and, on the submission-options page, one sentence per
-restricted capability on why the app needs it (`runFullTrust`: a Win32
-launcher that starts a player process with an in-process emulator).
+**Certification, before the upload.** The Windows App Certification Kit
+(`appcert.exe`, in the Windows SDK) runs the checks certification runs,
+against a *signed* package, so the sideload's copy is the one to test:
+
+```powershell
+& 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\appcert.exe' test `
+  -appxpackagepath build\win\package\2ksbox-<version>-windows-x64-sideload.msix `
+  -reportoutputpath build\win\package\wack-report.xml     # elevates: one UAC prompt, ~5 min
+```
+
+The 2026-09-23 run of the development package: `OVERALL_RESULT=PASS`.
+Two *optional* tests fail by the package's nature and stay so (an
+optional FAIL does not change the overall result): "Archive files
+usage" (PE files inside an archive: the guest tools' EXEs and DLLs
+inside the ISO) and "Blocked executables" (references to process-launch
+APIs: the launcher starts the player). The first run was a WARNING for
+"DPI awareness", because neither executable's manifest declared it;
+`packaging/windows/app.manifest` (per-monitor v2, embedded by
+`packaging/windows/win-icon.rs` beside the icon, in place of mingw's
+default manifest) answers it, and the second run passed.
+
+**The submission**, step by step. Everything Partner Center asks for is
+written down in `packaging/windows/store-listing.md`, so a resubmission
+pastes the same words.
+
+1. A developer account at <https://partner.microsoft.com/dashboard>
+   (individual, a one-time fee), then *Apps and games → New product →
+   MSIX or PWA app* and reserve the name `2ksbox`.
+2. *Product management → Product identity* shows the three values;
+   pack with them (`--identity`, `--publisher`, `--publisher-display`).
+   **The version's first number cannot be 0** (the Store's rule, and
+   `package-msix.sh` refuses it for a Store identity), so the first
+   upload needs `Cargo.toml` at 1.0.0 or later, or `--version`; the
+   fourth number is 0.
+3. Sideload that exact package once (`win-sideload.ps1 -Check`) and run
+   the certification kit on its signed copy (above).
+4. In the submission: *Packages* takes the unsigned `.msix` (the Store
+   signs it); *Properties* takes the category, the privacy-policy URL
+   (mandatory because of `internetClient`; it is
+   `docs/privacy.md` on GitHub) and the system requirements;
+   *Age ratings* is the IARC questionnaire (all "no"); *Pricing* is
+   free; *Store listing* takes the text and at least one screenshot of
+   1366×768 or more (`scripts/store-screenshots.ps1` scales the player's
+   Ctrl+Alt+S shots up by a whole factor); *Submission options* takes
+   one sentence per restricted capability (`runFullTrust`, in the
+   listing file).
+5. Submit; certification takes up to a few days, and its report names
+   any failing test by the kit's name.
+
+An update is the same pack with a higher version, uploaded to a new
+submission; the Microsoft Store Developer CLI (`winget install
+"Microsoft Store Developer CLI"`, `msstore publish --inputFile
+<msix> --appId <productId>`) does that from a shell, but it signs in
+with an Entra ID tenant, not the Microsoft account, so it is for after
+the first submission has gone through the web form.
+
 Microsoft lets the listing carry the app's own licence terms, and its
 policy permits open-source apps; whether GPL-2 QEMU and 86Box go up
 under Store terms is the same question ADR-019 leaves to the user.
@@ -387,9 +437,13 @@ emulated regardless.
   wants one; QEMU's `mingw32-nsis` recipe is within the image's reach).
   The MSIX is one, but only through the Store or a trusted certificate.
 - **The Store package has not been uploaded.** It installs and runs on
-  the PC through `scripts/win-sideload.ps1` (2026-09-23); its packaged
-  library location has been checked with `LAUNCHER_PACKAGED=1`, not yet
-  read back from the installed package (`win-sideload.ps1 -Check`).
+  the PC through `scripts/win-sideload.ps1` (2026-09-23) and passes the
+  certification kit ("The Store package"); its
+  packaged library location has been checked with `LAUNCHER_PACKAGED=1`,
+  not yet read back from the installed package (`win-sideload.ps1
+  -Check`). What is left needs the user: the Partner Center account and
+  the name reservation (the identity triple), a version of 1.0.0 or
+  later, and screenshots of the games.
 - **No Windows check that boots a guest**, in the shape of
   `tools/xp-driver-test.sh`.
 

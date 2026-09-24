@@ -297,6 +297,10 @@ launcher is GPL-2.0-or-later. The licence text is in [COPYING](COPYING)
 and every third-party component is listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
+2ksbox collects nothing and connects to the internet only for the
+shader download you accept and for a machine whose network you turn on:
+[docs/privacy.md](docs/privacy.md).
+
 If you package or redistribute the player, read the licensing section of
 [docs/development.md](docs/development.md) first. Its dependency tree
 contains Apache-2.0 crates that GPLv2 cannot formally combine with.

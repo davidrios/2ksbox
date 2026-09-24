@@ -24,7 +24,10 @@ keeps scope, test loop, traps and open items. The design:
   `scripts/build-d3dpt-exec.sh`, `scripts/win-run.sh`,
   `packaging/windows/qmake-host.c`, `guest-tools/msys2-i686.sh`.
 - Package: `scripts/package-windows.sh`; the Store's MSIX: `scripts/package-msix.sh`,
-  `packaging/windows/AppxManifest.xml.in`, `packaging/windows/Assets/`.
+  `packaging/windows/AppxManifest.xml.in`, `packaging/windows/Assets/`,
+  `scripts/win-sideload.ps1`; the submission: `packaging/windows/store-listing.md`,
+  `docs/privacy.md`, `scripts/store-screenshots.ps1`; the executables'
+  manifest `packaging/windows/app.manifest` (with the icon, `win-icon.rs`).
 - The Qt reproducer `tools/qtmin/` (its README has the `__once_proxy`
   diagnosis); the fix is `launcher-qt/src/once_proxy.cpp`.
 - Windows branches of shared code: `embed/mglcntx_embed.c` (WGL) and

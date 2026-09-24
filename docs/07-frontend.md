@@ -831,9 +831,12 @@ PNGs. On Windows the `.ico` goes *inside* every .exe as a resource, the
 only thing Explorer reads: `packaging/windows/win-icon.rs` is
 `include!`d by the build scripts of `launcher-qt` and `player` (a
 build-dependency would have to be vendored into the Flatpak's offline
-sources), writes a one-line `.rc`, runs `x86_64-w64-mingw32-windres` and
-links the object. A host without windres gets a warning and an
-icon-less binary. The loose `.ico` ships too, for shortcuts.
+sources), writes a two-line `.rc` (the icon, and the application
+manifest `packaging/windows/app.manifest`, which declares per-monitor
+DPI awareness for the Store's certification kit), runs
+`x86_64-w64-mingw32-windres` and links the object. A host without
+windres gets a warning and an icon-less binary with mingw's default
+manifest. The loose `.ico` ships too, for shortcuts.
 
 **AppStream metadata** (`com._2ksbox.Launcher.metainfo.xml`, into
 `share/metainfo`) carries a deliberately **empty** OARS rating: it

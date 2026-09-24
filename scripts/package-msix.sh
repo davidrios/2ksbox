@@ -102,6 +102,16 @@ case "$VERSION" in
   *) bad=0; n=$(printf '%s' "$VERSION" | tr -cd . | wc -c); [ "$n" = 3 ] || bad=1 ;;
 esac
 [ "$bad" = 0 ] || { echo "package-msix.sh: an MSIX version is four numbers (A.B.C.D), not $VERSION" >&2; exit 2; }
+# The Store's own rule ("App package requirements", version numbering):
+# the first number cannot be 0, and the fourth must be 0. A development
+# package is bound by neither.
+if [ "$dev" = 0 ]; then
+  case "$VERSION" in
+    0.*) echo "package-msix.sh: the Store refuses a version whose first number is 0 ($VERSION): bump Cargo.toml's version to 1.0.0 or later, or pass --version" >&2; exit 2 ;;
+    *.0) ;;
+    *) echo "package-msix.sh: a Store upload's fourth number must be 0, not $VERSION (the Store keeps it for itself)" >&2; exit 2 ;;
+  esac
+fi
 NAME="2ksbox-${VERSION%.0}-windows-x64"
 
 # --- the layout -------------------------------------------------------

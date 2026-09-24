@@ -1,8 +1,8 @@
 include!("../packaging/windows/win-icon.rs");
 
 fn main() {
-    // The picture Explorer draws on 2ksbox-player.exe.
-    embed_windows_icon();
+    // The picture Explorer draws on 2ksbox-player.exe, and its manifest.
+    embed_windows_resources();
     let target = std::env::var("TARGET").unwrap_or_default();
     let unix = target.contains("apple") || target.contains("linux");
     // An installed player is `<prefix>/bin/2ksbox-player` with the

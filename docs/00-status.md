@@ -61,7 +61,7 @@ unmerged). The Mac pulls `main`.
 | Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`. No network card by default. Win98 is TCG with `hpet=off`; the BIOS date stamp makes it install ACPI. DOS paces with `-icount …,align=on`. |
 | Guest tools (`guest-tools/README.md`) | One ISO. `SETUP.EXE` installs what this Windows can use; every program logs to `C:\2KSBOX` (`BOXLOG=` overrides). |
 | Launcher (doc 07) | `launcher-qt` over `launcher-core` (also `launcherx`, `launcher-capi`). The machine form is a settings window, a page per section, every picker the style's own combo box over the model's rows; the Direct3D picker shows only what this host runs. Extra QEMU arguments, clone, first-run preset download. The snapshot window is a tree (2026-09-23): a qcow2 records no parent, so the launcher writes each take and restore to `snapshots.toml` beside the bundle and reconciles it against the disk on every read; snapshots it has no record of sit at the top level; its header and rows share one set of column widths, so they line up at any window size (`qt-snapshots`, user report 2026-09-23). Window text is short and plain (user rule). |
-| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair down to macOS 12; nothing in either from Homebrew since 2026-09-23, `scripts/build-deps.sh` builds QEMU's libraries and Qt 6.9.3 from source, `build-macos.md` "The libraries"; the community app for Intel Macs is plumbed, `scripts/build.sh --x86_64` + `package-macos.sh --x86_64`, not yet run end to end and untested on an Intel Mac, "The Intel build"), Windows zip (cross build; native MSYS2 build for debugging) and, from 2026-09-23, the same tree as a Microsoft Store MSIX (`scripts/package-msix.sh`, packed on the PC; not yet uploaded, `build-windows.md` "The Store package"). Every packager opens a real window offscreen. |
+| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair down to macOS 12; nothing in either from Homebrew since 2026-09-23, `scripts/build-deps.sh` builds QEMU's libraries and Qt 6.9.3 from source, `build-macos.md` "The libraries"; the community app for Intel Macs is plumbed, `scripts/build.sh --x86_64` + `package-macos.sh --x86_64`, not yet run end to end and untested on an Intel Mac, "The Intel build"), Windows zip (cross build; native MSYS2 build for debugging) and, from 2026-09-23, the same tree as a Microsoft Store MSIX (`scripts/package-msix.sh`, packed on the PC; passes the certification kit; not yet uploaded: the submission's steps, text and privacy policy are written, `build-windows.md` "The Store package", `packaging/windows/store-listing.md`, `docs/privacy.md`). Every packager opens a real window offscreen. |
 | Tests | `scripts/test.sh host` (~30 s) / `all` (+ XP and DOS guests). Integration only, local only; `docs/testing.md`. |
 | Guest images | Outside the repo, read-only for a session: `~/vms/win98.qcow2`, `winxp.qcow2`, `winxp-m7*.qcow2`, `scratch.img` (E: in XP), and the launcher library's machines (`~/.local/share/2ksbox/machines/`: `base98-br`, `base98-us`, `claude98`, `win98-2`, …). Boot an overlay or a copy. |
 
@@ -265,12 +265,17 @@ tracks, plus the items no track owns.
    (CPU-bound, not reproduced on Linux; M11 track doc) and the first
    clang-built QEMU there. The native MSYS2 build run (`scripts/win-run.sh
    launcher`, a machine, the Windows-built ISO in a guest). Live control
-   over Winsock AF_UNIX on a real PC. The Store upload (a Partner
-   Center identity; the packaged library at `%USERPROFILE%\2ksbox`,
-   2026-09-23, has been checked with `LAUNCHER_PACKAGED=1` only; the
-   package installs and runs on the PC through
-   `scripts/win-sideload.ps1`, whose `-Check` reads the location back
-   from the installed app) and an installer for users outside the
+   over Winsock AF_UNIX on a real PC. The Store upload: everything
+   but the user's part is done (2026-09-23: the package installs and
+   runs on the PC through `scripts/win-sideload.ps1`, the certification
+   kit passes it, the listing text, the privacy
+   policy and the screenshot tool exist; `build-windows.md` "The
+   submission"), and the user's part is the Partner Center account, the
+   name reservation, a version of 1.0.0 or later (the Store refuses a
+   first number of 0) and screenshots of the games; the packaged
+   library at `%USERPROFILE%\2ksbox` has been checked with
+   `LAUNCHER_PACKAGED=1` only (`win-sideload.ps1 -Check` reads it back
+   from the installed app). And an installer for users outside the
    Store. Zero-copy frames through a DXGI shared handle. A Windows check
    that boots a guest.
 7. **M14, Voodoo 2** (its track doc, "Open, in order"): the glitched
