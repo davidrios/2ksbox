@@ -647,6 +647,15 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 None => println!("(OS default)"),
             }
         }
+        "--picked" => {
+            // What a path a dialog handed back is kept as: a document
+            // portal path becomes the file's own (`browse::picked`), any
+            // other is printed as given. `package-flatpak.sh` asks this
+            // inside the sandbox with a file it exported through the
+            // portal first.
+            let path = args.next().expect("usage: --picked <path>");
+            println!("{}", browse::picked(Path::new(&path)).display());
+        }
         "--new-shader-profile" => {
             let usage = "usage: --new-shader-profile <name> <preset.slangp>";
             let name = args.next().expect(usage);

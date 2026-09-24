@@ -456,6 +456,18 @@ and runs without live control.
   default. A Qt dialog given an empty folder opens in the working
   directory, which is why the memory exists. `launcherx --browse-start`
   prints the answer.
+- **A path a dialog hands back goes through `browse::picked`** (the Qt
+  front end's `local_path`, and the disc library on load). Inside the
+  Flatpak the portal's dialog returns a document-portal path,
+  `$XDG_RUNTIME_DIR/doc/<id>/<name>`, even though the app can reach the
+  host: only the picked file is there, so a `.cue`'s tracks are not
+  beside it, and its FUSE filesystem answers QEMU's lock test with EIO
+  (user report, 2026-09-23: a disc inserted while the guest ran "failed"
+  with `Failed to get "consistent read" lock`). The portal's
+  `user.document-portal.host-path` attribute names the real file, which
+  is what is kept. `launcherx --picked` prints the answer and
+  `package-flatpak.sh` checks it in the sandbox with a file it exported
+  through the portal.
 - **The preview is the player's picture.** The scale is the player's
   `floor(min(area/image)).max(1.0)`, integer, letterboxed and cropped
   like a window smaller than the mode. The `.max(1.0)` is load-bearing:

@@ -65,7 +65,13 @@ impl ffi::Browse {
     }
 
     fn local_path(&self, url: &QUrl) -> QString {
-        url.to_local_file().unwrap_or_default()
+        let local = url.to_local_file().unwrap_or_default().to_string();
+        if local.is_empty() {
+            return QString::default();
+        }
+        // The core decides what a picked path becomes (a document-portal
+        // path is turned back into the file's own, `browse::picked`).
+        qs(browse::picked(Path::new(&local)).display())
     }
 
     fn file_url(&self, path: &QString) -> QUrl {

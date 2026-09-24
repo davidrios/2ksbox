@@ -126,6 +126,22 @@ smoke() {
       *) echo "package-flatpak.sh: $what is $path, outside /app" >&2; fail=1 ;;
     esac
   done <<< "$comp"
+  # A file picked in the portal's dialog arrives as a document-portal
+  # path, which QEMU cannot lock and which hides a disc image's companion
+  # files (doc 07, `browse::picked`). Export one the way the dialog
+  # would; the launcher in the sandbox must keep the file's own path.
+  echo "==> flatpak run $APPID --picked (a document-portal path)"
+  local real="$ROOT/packaging/icon/2ksbox.png" doc kept
+  if doc=$(flatpak document-export --app="$APPID" -r "$real" 2>/dev/null) && [ -n "$doc" ]; then
+    kept=$(flatpak run --user --command=2ksbox "$APPID//$BRANCH" --picked "$doc" 2>/dev/null || true)
+    flatpak document-unexport "$real" >/dev/null 2>&1 || true
+    echo "picked         $doc -> $kept"
+    if [ "$kept" != "$real" ]; then
+      echo "package-flatpak.sh: a document-portal path was kept as '$kept', not the file's own path" >&2; fail=1
+    fi
+  else
+    echo "package-flatpak.sh: flatpak document-export failed, so the picked-path check did not run" >&2; fail=1
+  fi
   # The data directory is the one thing a Flatpak deliberately moves: it
   # lands under ~/.var/app/<app-id>, not ~/.local/share.
   case "$out" in *"/.var/app/$APPID/"*) ;; *)

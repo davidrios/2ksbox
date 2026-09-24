@@ -105,6 +105,53 @@ pub fn last_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
+/// The path to keep for a file or folder a dialog handed back.
+///
+/// Inside a Flatpak the dialog is the XDG portal's, and what comes back
+/// is not the file but a copy of its name under the document portal's
+/// FUSE mount (`$XDG_RUNTIME_DIR/doc/<id>/<name>`), even for an app
+/// that can reach the whole host. That path fails two ways here: the
+/// portal exports the one file picked, so the `.bin` tracks behind a
+/// `.cue` (the `.mdf` behind a `.mds`, the `.img` behind a `.ccd`) are
+/// not beside it, and its filesystem answers QEMU's `F_OFD_GETLK` lock
+/// test with EIO ("Failed to get \"consistent read\" lock"). The
+/// portal records the real path on every exported file as the extended
+/// attribute `user.document-portal.host-path`; this returns that path
+/// when the file is reachable, which `--filesystem=host` makes it. Any
+/// other path comes back as it is. `launcherx --picked` prints the
+/// answer, and `package-flatpak.sh` asks it inside the sandbox.
+pub fn picked(path: &Path) -> PathBuf {
+    match host_path_of_portal_document(path) {
+        Some(real) if real.exists() => real,
+        _ => path.to_path_buf(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn host_path_of_portal_document(path: &Path) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
+    if !path.starts_with(Path::new(&runtime).join("doc")) {
+        return None;
+    }
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let name = c"user.document-portal.host-path";
+    let mut buf = vec![0u8; 4096];
+    // SAFETY: both strings are NUL-terminated and the buffer is as long as
+    // it says; getxattr writes at most that many bytes.
+    let n = unsafe { libc::getxattr(c_path.as_ptr(), name.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+    if n <= 0 {
+        return None;
+    }
+    buf.truncate(n as usize);
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf)))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn host_path_of_portal_document(_path: &Path) -> Option<PathBuf> {
+    None
+}
+
 /// A dialog handed back `picked` (a file, or a folder from a folder
 /// dialog). Remember the directory it was picked in, which is where the
 /// dialog was browsing. A failure to write is only a warning; the next

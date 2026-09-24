@@ -156,6 +156,13 @@ impl DiscLibrary {
             // older launcher wrote in the order discs were added) comes
             // up in order like any other.
             Ok(text) => toml::from_str::<DiscLibrary>(&text).map_err(std::io::Error::other).map(|mut l| {
+                // A shelf written by a launcher in a Flatpak before
+                // `browse::picked` holds document-portal paths; each
+                // becomes the file's own here and is saved so on the
+                // next change.
+                for d in &mut l.discs {
+                    d.path = crate::browse::picked(&d.path);
+                }
                 l.sort();
                 l
             }),

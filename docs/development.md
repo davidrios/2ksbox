@@ -488,6 +488,13 @@ builder (`--default-branch=stable`, Flathub's), so an older `master`
 build stays installed beside a new one until it is uninstalled; the
 script names the branch in every ref.
 
+**A file picked in the sandbox is kept by its real path.** The portal's
+dialog returns a document-portal path, which QEMU cannot lock and which
+hides a disc image's companion files; the launcher turns it back into
+the host path the portal records on the file (doc 07, `browse::picked`)
+and heals a shelf written before this on load. `launcherx --picked
+<path>` prints what is kept.
+
 **Host shortcuts stay the host's on sway** and other wlroots
 compositors, a documented limitation (user decision, 2026-09-23): the
 sandbox's Wayland socket carries a security context and sway hides the

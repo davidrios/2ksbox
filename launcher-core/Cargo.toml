@@ -16,6 +16,9 @@ description = "Everything the launcher does that is not drawing: bundles, the li
 # dma-buf import.
 ash = "0.38"
 directories = "6.0.0"
+# `getxattr`, for the document portal's host-path attribute on a file a
+# sandboxed dialog picked (`browse::picked`).
+libc = "0.2"
 serde = { version = "1.0.229", features = ["derive"] }
 # `qemu-img info --output=json` for the snapshot list (a stable interface;
 # `qemu-img snapshot -l`'s table is formatted for humans and doesn't
