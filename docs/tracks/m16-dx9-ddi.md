@@ -22,7 +22,44 @@ and executor. Read `docs/00-status.md` first for the track rules.
 
 ## State
 
-Opened 2026-09-25. Nothing built yet; step 0 is next.
+Opened 2026-09-25. Step 0 is built and run on today's driver; the rig's
+two baselines are the part left (they are the user's runs).
+
+- **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
+  test EXEs import only functions that XP's and Win98's own
+  `kernel32`, `user32`, `gdi32` and `msvcrt` export (checked against the
+  export tables of `~/vms/winxp.qcow2` and `~/vms/win98.qcow2`), so no
+  older tag was needed. `guest-tools/build-winetests.sh` builds
+  `d3d8_test.exe`, `d3d9_test.exe`, the runner `wtrun.exe` and the
+  rig's `RUNALL.BAT` into `build/winetest/out/`; two patches
+  (`patches/winetest/`) fence off Windows 10 and WoW64 code mingw cannot
+  compile. `tools/xp-driver-test.sh <image> winetest` runs them;
+  `tools/winetest-summary.py` compares.
+- **Today's driver** (`reference/winetest/xp-driver-dx8.txt`, the DX8
+  driver of `0c9d7b3` on `winxp-m7`, KVM):
+
+  | test file | executed | failures | state |
+  |---|---|---|---|
+  | d3d9 stateblock | 14738 | 182 | ran |
+  | d3d9 device | | 12 | crash in `test_update_volumetexture` |
+  | d3d9 visual | | 149 | crash in `test_updatetexture` |
+  | d3d9 d3d9ex | | | skipped (no `Direct3DCreate9Ex` on XP) |
+  | d3d8 device | | 4 | crash after device creation failed |
+  | d3d8 stateblock, visual | 67 | 0 | nearly all skipped: no device |
+
+  A crash ends a file, so the counts are floors.
+- **What it found on the first run:**
+  1. d3d8 creates no device: the tests ask for an A8R8G8B8 back buffer
+     on the X8R8G8B8 desktop, and the format list never gives A8R8G8B8
+     `D3DFORMAT_OP_SAME_FORMAT_UP_TO_ALPHA_RENDERTARGET` (0x20).
+  2. `UpdateTexture` crashes inside Microsoft's `d3d9.dll` on its first
+     call (both d3d9 crashes; withdrawing volume textures,
+     `ddflags=0x1000000`, does not move it).
+  3. Cube and volume textures of a non-power-of-two size are created
+     where real drivers refuse them (device.c:10178, 10194).
+  4. The stateblock failures are the DX9 work itself: pixel shader
+     integer and boolean constants refused (`D3DERR_INVALIDCALL`) by a
+     runtime that sees ps 1.4.
 
 Today the driver is a DirectX 8 driver (`DXVERSION` 0x802, `D3DCAPS8`,
 vs 1.1 / ps 1.4). Microsoft's `d3d9.dll` accepts it and shows a game
@@ -71,12 +108,13 @@ rig's GeForce 6200 (doc 09) is an SM3 card, so it answers for 3.0.
 ## The test loop
 
 **Wine's Direct3D test suites are the conformance check** (doc 14
-"Reference workloads and conformance"): `dlls/d3d9/tests/` and
-`dlls/d3d8/tests/`. `visual.c` draws and reads back pixels for fixed
-function, shaders 1.x to 3.0, fog, sRGB, float targets, multiple render
-targets and depth bias; `device.c`, `texture.c`, `surface.c`,
-`volume.c`, `query.c`, `stateblock.c` and `vertexdeclaration.c` check
-the API. Wine writes them to pass on real Windows drivers and marks
+"Reference workloads and conformance"): `dlls/d3d9/tests/` (`visual`,
+`device`, `stateblock`, `d3d9ex`) and `dlls/d3d8/tests/` (`visual`,
+`device`, `stateblock`). `visual.c` draws and reads back pixels for
+fixed function, shaders 1.x to 3.0, fog, sRGB, float targets, multiple
+render targets and depth bias; `device.c` checks the API (textures,
+surfaces, volumes, queries, declarations, lost devices), `stateblock.c`
+the state blocks. Wine writes them to pass on real Windows drivers and marks
 where real drivers differ with `broken()`. A failure on our driver is
 therefore most likely a driver bug. Run in the guest, they go through
 Microsoft's runtime into our DDI, so they test exactly the path this
@@ -84,8 +122,16 @@ track builds.
 
 - **The oracle is the rig**: the same binaries on the GeForce 6200 under
   XP and under Win98 give the pass list, per test file.
-- **The check** is "nothing fails here that passes on the rig", kept as
-  per-file failure counts in `reference/winetest/` that only go down.
+- **The check** is "nothing fails here that passes on the rig": a
+  baseline in `reference/winetest/` is one line per failing check, keyed
+  by its source line (stable for one pinned tag), and
+  `tools/winetest-summary.py --baseline` exits 1 on a key the baseline
+  lacks or one failing more often.
+- **The rig's run**: copy `build/winetest/out/` to the rig, run
+  `RUNALL.BAT` from inside it under XP and under Win98 (DirectX 9.0c),
+  bring back `C:\2KSBOX\WINETEST`, and save each with
+  `tools/winetest-summary.py <dir> --save reference/winetest/rig-xp.txt`
+  (`rig-98.txt`).
 - **The other oracles stay**: D3DGAME9 / D3DGAME8 / D3DFEAT9 against the
   rig golden and the native DXVK frame (doc 14 P0a), now through
   Microsoft's runtime instead of our DLLs, and the DX8 probes of doc 15
@@ -93,17 +139,11 @@ track builds.
 
 ## Steps
 
-0. **The suite in a guest.** Pick the Wine tag. Current Wine may no
-   longer run on XP: the tests reach newer APIs through `GetProcAddress`
-   fallbacks, but nobody has checked that path on XP for years, and an
-   older tag (5.x to 7.x) may be the pin. Build `d3d8_test.exe` and
-   `d3d9_test.exe` with the ISO's flags (mingw, msvcrt,
-   `-march=pentium3`), logs to `C:\2KSBOX` (`guestlog.h`). Tests that
-   need D3DX or `d3dcompiler` skip without the redistributable; note
-   which. Record three baselines: the rig's XP and Win98 (the user runs
-   them there), and today's DX8 driver in an XP guest, which is the
-   starting count. `visual.c` is long under TCG; time it and split the
-   run if it does not fit one guest boot.
+0. **The suite in a guest.** Done on 2026-09-25 except the rig's two
+   runs (State, above). Wine 11.0 loads on XP and 98; no test imports
+   D3DX or `d3dcompiler`. The first fixes, before step 1: the three
+   driver bugs the first run found, since the crashes hide everything
+   after them in a file.
 1. **The DX9 face.** `GetDriverInfo2` answers `DXVERSION` 0x900, the DDI
    version query, `GETD3DCAPS9` (a `D3DCAPS9` with vs/ps 3.0, the
    `VS20Caps` / `PS20Caps` and instruction-slot fields), the format list

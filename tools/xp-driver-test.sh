@@ -26,6 +26,11 @@
 #   tools/xp-driver-test.sh <image.qcow2> probes       # all eight in one boot, a verdict each
 #   tools/xp-driver-test.sh <image.qcow2> ebtest       # EBTEST: the DirectX 3 path (IDirect3D v1, execute buffers, texture
 #                                                       # handles, viewport Clear) on the HAL; PASS = "0 failed" in ebtest.log
+#   tools/xp-driver-test.sh <image.qcow2> winetest     # Wine's d3d8 / d3d9 conformance tests (M16) through XP's own runtime:
+#                                                       # guest-tools/build-winetests.sh first; a table per test file, and with
+#                                                       # WT_BASELINE=reference/winetest/<f>.txt a verdict (tools/winetest-summary.py).
+#                                                       # WT_TESTS="d3d9:visual" a subset, WT_CAP=s the cap per file (1200),
+#                                                       # WT_SAVE=<f> writes the run as a baseline
 #   tools/xp-driver-test.sh <image.qcow2> cmd 'D:\DRIVER\SETMODE.EXE'   # any guest command line
 #   tools/xp-driver-test.sh <image.qcow2> bat run.bat                   # a batch file, staged as E:\RUN.BAT (long command lines)
 #
@@ -70,7 +75,7 @@ if [ "$(uname -s)" = Darwin ]; then
     done
   fi
 fi
-IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|vesa|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|cmd|bat}"; shift 2
+IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|vesa|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|winetest|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 # DRIVER_ISO= another build's driver ISO: the A/B against an older driver
 # (built from `git archive <sha>` into a scratch tree, never over this one's)
@@ -120,6 +125,23 @@ if [ "$MODE" = d3dgame8 ]; then
   printf '%s\n' '@echo off' 'mkdir E:\G8' 'copy D:\TESTS\D3DGAME8.EXE E:\G8\ > nul' 'cd /d E:\G8' \
     'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy C:\2KSBOX\D3DGAME8.LOG E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
   stage_bat "$OUT/g8.bat"
+fi
+if [ "$MODE" = winetest ]; then
+  # Wine's d3d8 / d3d9 tests (guest-tools/build-winetests.sh) staged on the
+  # scratch disk with their runner; each test file runs in its own process
+  # under WTRUN's time cap, and the output lands on E:\WT\WINETEST
+  WT="${WT_DIR:-$ROOT/build/winetest/out}"
+  [ -f "$WT/wtrun.exe" ] || { echo "no $WT/wtrun.exe: run guest-tools/build-winetests.sh"; exit 1; }
+  mdel -i "$SCRATCH@@1048576" '::/WT/WINETEST/*' 2>/dev/null || true
+  mmd -i "$SCRATCH@@1048576" ::/WT 2>/dev/null || true
+  mcopy -o -i "$SCRATCH@@1048576" "$WT/wtrun.exe" "$WT/d3d8_test.exe" "$WT/d3d9_test.exe" ::/WT/
+  { printf '%s\n' '@echo off' 'set BOXLOG=E:\WT'
+    # WT_TESTS="d3d9:visual d3d8:device": a subset; the default is every file
+    for t in ${WT_TESTS:-d3d9:d3d9ex d3d9:device d3d9:stateblock d3d9:visual d3d8:device d3d8:stateblock d3d8:visual}; do
+      printf 'E:\\WT\\WTRUN.EXE %s E:\\WT\\%s_TEST.EXE %s\n' "${WT_CAP:-1200}" "$(echo "${t%%:*}" | tr a-z A-Z)" "${t#*:}"
+    done
+    printf '%s\n' 'echo WTALL > COM1'; } > "$OUT/winetest.bat"
+  stage_bat "$OUT/winetest.bat"
 fi
 PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST MGDTEST"
 if [ "$MODE" = probes ]; then
@@ -360,6 +382,14 @@ PY
     pull ebtest.log
     for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/EB$n.BMP" "$OUT/eb$n.bmp" 2>/dev/null || true; done
     if grep -q 'ebtest: [1-9][0-9]* cases, 0 failed' "$OUT/ebtest.log" 2>/dev/null; then echo "-- ebtest: PASS"; else echo "-- ebtest: FAIL (see $OUT/ebtest.log and the device log)"; fi ;;
+  winetest)
+    run 'E:\RUN.BAT'
+    gw_wait_log "$SER" WTALL "${CMD_WAIT:-14400}" || true
+    finish
+    echo "---- $SER (WTRUN's lines)"; tr -d '\r' < "$SER" | grep '^wtrun:'
+    rm -rf "$OUT/winetest"; mkdir -p "$OUT/winetest"
+    mcopy -n -i "$SCRATCH@@1048576" '::/WT/WINETEST/*' "$OUT/winetest/" 2>/dev/null || true
+    python3 "$ROOT/tools/winetest-summary.py" "$OUT/winetest" ${WT_SAVE:+--save "$WT_SAVE"} ${WT_BASELINE:+--baseline "$WT_BASELINE"} || true ;;
   cmd|bat)
     if [ "$MODE" = bat ]; then run 'E:\RUN.BAT'; else run "${1:?guest command line}"; fi
     if [ -n "${SHOTS:-}" ]; then

@@ -1,0 +1,53 @@
+diff --git dlls/d3d9/tests/device.c dlls/d3d9/tests/device.c
+index b782833..364e720 100644
+--- dlls/d3d9/tests/device.c
++++ dlls/d3d9/tests/device.c
+@@ -26,10 +26,13 @@
+ #include <d3d9.h>
+ #include "utils.h"
+ #include <initguid.h>
++#ifndef WINETEST_NO_D3D9ON12
+ #include <d3d9on12.h>
+ #include <dxgi1_4.h>
++#endif
+ 
+ static HMODULE d3d9_handle = 0;
++#ifndef WINETEST_NO_D3D9ON12
+ static HMODULE d3d12_handle = 0;
+ static HMODULE dxgi_handle = 0;
+ 
+@@ -37,6 +40,8 @@ static IDirect3D9 * (WINAPI *pDirect3DCreate9On12)(UINT sdk_version, D3D9ON12_AR
+ static HRESULT (WINAPI *pCreateDXGIFactory2)(UINT flags, REFIID iid, void **factory);
+ static HRESULT (WINAPI *pD3D12CreateDevice)(IUnknown *adapter, D3D_FEATURE_LEVEL feature_level, REFIID iid, void **device);
+ 
++#endif
++
+ DEFINE_GUID(IID_IDeadbeef, 0xdeadbeef, 0xdead, 0xbeef, 0xde, 0xad, 0xbe, 0xee, 0xee, 0xee, 0xee, 0xef);
+ 
+ struct vec3
+@@ -15061,6 +15066,7 @@ static void test_window_position(void)
+     IDirect3D9_Release(d3d);
+ }
+ 
++#ifndef WINETEST_NO_D3D9ON12
+ static BOOL init_d3d9on12_modules(void)
+ {
+     d3d9_handle = LoadLibraryA("d3d9.dll");
+@@ -15299,6 +15305,7 @@ static void test_d3d9on12(void)
+ out:
+     DestroyWindow(window);
+ }
++#endif
+ 
+ START_TEST(device)
+ {
+@@ -15436,7 +15443,9 @@ START_TEST(device)
+     test_creation_parameters();
+     test_cursor_clipping();
+     test_window_position();
++#ifndef WINETEST_NO_D3D9ON12
+     test_d3d9on12();
++#endif
+ 
+     UnregisterClassA("d3d9_test_wc", GetModuleHandleA(NULL));
+ }
