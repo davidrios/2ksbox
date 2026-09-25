@@ -265,8 +265,10 @@ tracks, plus the items no track owns.
    reference scene; nobody here has one. Homebrew's installer refuses
    Intel Macs, which on 2026-09-23 became the user's decision to drop
    Homebrew for everything the app carries: `scripts/build-deps.sh`
-   builds QEMU's libraries (static) and Qt 6.9.3 from source, and the
-   community build's floor is **macOS 12** (`build-macos.md` "The
+   builds QEMU's libraries (static) and Qt 6.9.3 from source (with our
+   patches from `patches/deps/`, since 2026-09-25: the Quick macOS
+   style's button labels, centred on macOS 26 only in Qt 6.10.1+), and
+   the community build's floor is **macOS 12** (`build-macos.md` "The
    libraries", "The floor"). The Intel build runs end to end on the Air
    since 2026-09-24 (`scripts/build.sh --x86_64`, then `package-macos.sh
    --x86_64`; every packager check passes under Rosetta). Left: the
@@ -419,6 +421,11 @@ to one subsystem lives in its design doc; pointers are at the end.
 - **Never call `gl*` / `CGL*` / `IOSurface*` by link in the embed
   backend.** The symbol can bind to a GLX library that silently no-ops;
   `dlsym` from the OpenGL.framework handle.
+- **Button labels sitting high on macOS 26 is Qt 6.9's Quick macOS
+  style**, not the QML: its push-button title margins were 5 pt top /
+  9 pt bottom for the pre-Tahoe bevel. Fixed upstream in 6.10.1, never
+  on the closed 6.9 branch; `patches/deps/qtdeclarative/` carries the
+  two commits, applied by `build-deps.sh` (`patches/deps/README.md`).
 - **A launcher link failing on `_qt_version_tag_6_11` is a Homebrew Qt
   on `PATH`.** cxx-qt-build takes `QMAKE`, else the first `qmake6` it
   finds; every script that builds `launcher-qt` must export `QMAKE` to

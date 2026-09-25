@@ -16,7 +16,10 @@
 #   scripts/build-deps.sh --arch x86_64   the Intel build's (build/deps/x86_64)
 #   scripts/build-deps.sh --clean         from scratch (a recipe changed for
 #                                         the same version: the stamps are
-#                                         name, version and floor)
+#                                         name, version, patch set and floor)
+#
+# patches/deps/<name>/*.patch are applied to a package's unpacked tree
+# (patches/deps/README.md); a changed set rebuilds that package alone.
 #
 # Why not Homebrew's (docs/build-macos.md, "The libraries", user decision
 # 2026-09-23): Homebrew builds every library for the macOS it runs on and
@@ -73,16 +76,40 @@ qttools 6.9.3 qttools-everywhere-src-6.9.3.tar.xz 0cf7ab0e975fc57f5ce1375576a0a7
 qtimageformats 6.9.3 qtimageformats-everywhere-src-6.9.3.tar.xz 4fb26bdbfbd4b8e480087896514e11c33aba7b6b39246547355ea340c4572ffe https://download.qt.io/official_releases/qt/6.9/6.9.3/submodules/qtimageformats-everywhere-src-6.9.3.tar.xz
 '
 
-fetch() { # tarball sha256 url -> the unpacked source directory
-  local tar=$1 sha=$2 url=$3 dir
+# Our patches on a package: patches/deps/<name>/*.patch (git-format
+# diffs, filename order; patches/deps/README.md). The set is named by a
+# hash of the files, in the unpacked tree (`.patches`) and in the build
+# stamp, so a changed set unpacks the tarball again and rebuilds that
+# package alone. Empty when the package has none.
+patchset() { # name -> hash or ""
+  ls "$ROOT/patches/deps/$1"/*.patch >/dev/null 2>&1 || return 0
+  cat "$ROOT/patches/deps/$1"/*.patch | shasum -a 256 | cut -c1-8
+}
+
+fetch() { # name tarball sha256 url -> the unpacked, patched source directory
+  local name=$1 tar=$2 sha=$3 url=$4 dir set p
   if [ ! -f "$SRC/$tar" ]; then
-    echo "==> fetch $url"
+    echo "==> fetch $url" >&2
     curl -fsSL -o "$SRC/$tar.part" "$url" && mv "$SRC/$tar.part" "$SRC/$tar"
   fi
   [ "$(shasum -a 256 "$SRC/$tar" | cut -d' ' -f1)" = "$sha" ] || {
     echo "build-deps.sh: $tar does not match its pinned sha256 ($sha); delete it to fetch again" >&2; exit 1; }
   dir=$(tar -tf "$SRC/$tar" | head -1 | cut -d/ -f1)
-  [ -d "$SRC/$dir" ] || tar -xf "$SRC/$tar" -C "$SRC"
+  set=$(patchset "$name")
+  if [ -d "$SRC/$dir" ] && [ "$(cat "$SRC/$dir/.patches" 2>/dev/null)" != "$set" ]; then
+    echo "==> $name: the patch set changed; unpacking $tar again" >&2
+    rm -rf "$SRC/$dir"
+  fi
+  if [ ! -d "$SRC/$dir" ]; then
+    tar -xf "$SRC/$tar" -C "$SRC"
+    for p in "$ROOT/patches/deps/$name"/*.patch; do
+      [ -f "$p" ] || continue
+      echo "==> $name: patch ${p##*/}" >&2
+      patch -p1 -s -N --no-backup-if-mismatch -d "$SRC/$dir" < "$p" >&2 || {
+        echo "build-deps.sh: $name: ${p##*/} does not apply to $dir" >&2; exit 1; }
+    done
+    printf '%s\n' "$set" > "$SRC/$dir/.patches"
+  fi
   echo "$SRC/$dir"
 }
 
@@ -157,9 +184,10 @@ QTCMAKE=(cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREF
 built=()
 while read -r name ver tar sha url; do
   [ -n "$name" ] || continue
-  stamp="$PREFIX/.built-$name-$ver-$T"
-  if [ -f "$stamp" ]; then echo "    $name $ver built for macOS $T $ARCH"; continue; fi
-  src=$(fetch "$tar" "$sha" "$url")
+  set=$(patchset "$name")
+  stamp="$PREFIX/.built-$name-$ver${set:+-p$set}-$T"
+  if [ -f "$stamp" ]; then echo "    $name $ver${set:+ (patched $set)} built for macOS $T $ARCH"; continue; fi
+  src=$(fetch "$name" "$tar" "$sha" "$url")
   b="$WORK/$name"; : > "$WORK/$name.log"
   # A meson directory is set up once; Qt's cmake ones are kept, so a
   # changed option reconfigures and rebuilds only what it touches.
@@ -241,6 +269,7 @@ while read -r name ver tar sha url; do
         -DFEATURE_qml_debug=OFF -DFEATURE_qml_profiler=OFF -DFEATURE_qml_preview=OFF
       run ninja -C "$b" install ;;
   esac
+  rm -f "$PREFIX/.built-$name-$ver"*"-$T"   # the version's stamp with another patch set
   touch "$stamp"
   built+=("$name")
 done <<< "$PKGS"

@@ -479,6 +479,16 @@ a recipe change for the same version wants `--clean`.
   rpath once `macdeployqt` has copied the frameworks. `build.sh`'s `qt`
   stage and the packager name this Qt through `QMAKE`; a `qmake6` on
   `PATH` is never used on a Mac.
+- **Our patches on a package** live in `patches/deps/<name>/` and are
+  applied to the unpacked tarball (`patches/deps/README.md`). Today,
+  qtdeclarative carries two upstream 6.10.1 commits: the Quick Controls
+  macOS style's push-button title margins were 5 pt top / 9 pt bottom,
+  tuned for the pre-Tahoe bevel, and on macOS 26's symmetric capsule
+  every button label sat 2 pt high. The open-source 6.9 branch closed
+  after 6.9.3 and never got the fix; qtbase 6.9.3 already has the
+  Liquid Glass check, so the patch is the Quick style alone. Each
+  package's build stamp carries a hash of its patch set: editing one
+  rebuilds that package on the next `build.sh`, nothing else.
 
 Linux and the Flatpak keep the distribution's libraries; the script
 refuses to run there. What the closure once was, for the record: 43 Qt

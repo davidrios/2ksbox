@@ -19,7 +19,8 @@ Glide.
 - `docs/01` to `23`: design docs. Decisions/ADRs in `docs/10`, roadmap
   in `08`.
 - `patches/qemu/README.md`: every QEMU patch, what it does, when to drop
-  it.
+  it. `patches/deps/README.md`: the same for the libraries
+  `scripts/build-deps.sh` builds (macOS).
 - `docs/build-macos.md`, `docs/build-windows.md`: platform specifics.
   The M1 Air is the Apple test machine, the reference rig (doc 09) the
   oracle, the user's own PC the only Windows test machine.

@@ -217,11 +217,12 @@ if want deps; then
     skip deps "needs meson, ninja and pkg-config" || true
   else
     say "deps: glib, pixman, libslirp, zstd and Qt 6 ($(uname -m), macOS $MACOSX_DEPLOYMENT_TARGET)"
-    # The script's own stamps (name, version, floor) skip what is built;
-    # a recipe change for the same version wants `build-deps.sh --clean`
-    # by hand, since a clean here would rebuild Qt (an hour) on every
-    # edit to the script.
-    if stamp_stale "deps-$(uname -m)" scripts/build-deps.sh \
+    # The script's own stamps (name, version, patch set, floor) skip what
+    # is built, so a patch edit rebuilds its package alone; a recipe
+    # change for the same version wants `build-deps.sh --clean` by hand,
+    # since a clean here would rebuild Qt (an hour) on every edit to the
+    # script.
+    if stamp_stale "deps-$(uname -m)" scripts/build-deps.sh patches/deps \
        || [ ! -f "build/deps/$(uname -m)/lib/pkgconfig/glib-2.0.pc" ] \
        || [ ! -x "build/deps/$(uname -m)/bin/qmake" ] \
        || ! ls "build/deps/$(uname -m)"/.built-glib-*-"$MACOSX_DEPLOYMENT_TARGET" >/dev/null 2>&1 \
