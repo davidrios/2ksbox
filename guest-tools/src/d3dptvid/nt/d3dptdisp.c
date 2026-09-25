@@ -1077,57 +1077,13 @@ static const GUID guid_stereomode = {
     0xf828169c, 0xa8e8, 0x11d2, { 0xa1, 0xf2, 0x00, 0xa0, 0xc9, 0x83, 0xea, 0xf6 }
 };
 
-/* The DX8 runtime's GetDriverInfo2 queries. The answer goes into the same
- * buffer. The size that counts is the one inside the GDI2 header.
- * d3d8.dll leaves the outer dwExpectedSize at the previous query's 24
- * bytes and rejects the driver unless dwActualSize equals the inner one
- * (found by disassembling d3d8.dll). */
+/* The runtime's GetDriverInfo2 queries: the core answers (core_caps.c) */
 static void gdi2_answer(PPDEV p, PDD_GETDRIVERINFODATA d)
 {
-    DD_GETDRIVERINFO2DATA_ *g = (DD_GETDRIVERINFO2DATA_ *)d->lpvData;
-    ULONG want = g->dwExpectedSize, n;
+    ULONG actual;
 
-    dbg_hex(&p->core, "d3dptdisp: gdi2 type ", g->dwType);
-    dbg_hex(&p->core, " expected ", want);
-    dbg_puts(&p->core, "\n");
-    switch (g->dwType) {
-    case D3DGDI2_TYPE_GETD3DCAPS8_:
-        n = sizeof(d3d_caps8);
-        if (n > want) n = want;
-        memcpy(d->lpvData, &d3d_caps8, n);
-        d->dwActualSize = n;
-        d->ddRVal = DD_OK;
-        break;
-    case D3DGDI2_TYPE_GETFORMATCOUNT_: {
-        DD_GETFORMATCOUNTDATA_ *c = (DD_GETFORMATCOUNTDATA_ *)g;
-        if (want < sizeof(*c)) { d->ddRVal = DDERR_CURRENTLYNOTAVAIL; break; }
-        c->dwFormatCount = d3d_fmt8_n;
-        d->dwActualSize = sizeof(*c);
-        d->ddRVal = DD_OK;
-        break;
-    }
-    case D3DGDI2_TYPE_GETFORMAT_: {
-        DD_GETFORMATDATA_ *f = (DD_GETFORMATDATA_ *)g;
-        if (want < sizeof(*f) || f->dwFormatIndex >= d3d_fmt8_n) { d->ddRVal = DDERR_CURRENTLYNOTAVAIL; break; }
-        f->format = d3d_fmt8[f->dwFormatIndex];
-        d->dwActualSize = sizeof(*f);
-        d->ddRVal = DD_OK;
-        break;
-    }
-    case D3DGDI2_TYPE_DXVERSION_: {
-        DD_DXVERSION_ *v = (DD_DXVERSION_ *)g;
-        if (want >= sizeof(*v)) {
-            dbg_hex(&p->core, "d3dptdisp: runtime DirectX version ", v->dwDXVersion);
-            dbg_puts(&p->core, "\n");
-        }
-        d->dwActualSize = sizeof(*v) <= want ? sizeof(*v) : want;
-        d->ddRVal = DD_OK;
-        break;
-    }
-    default:
-        d->ddRVal = DDERR_CURRENTLYNOTAVAIL;
-        break;
-    }
+    d->ddRVal = core_gdi2_answer(&p->core, d->lpvData, &actual);
+    d->dwActualSize = actual;
 }
 
 static void info_copy(PDD_GETDRIVERINFODATA d, const void *src, ULONG n)
@@ -1235,6 +1191,7 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     }
     d3d_callbacks_init();       /* the NT layer's half: which functions dxg calls */
     p->core.gamma = !(ddflags(&p->core) & DDF_NO_GAMMA);   /* DrvIcmSetDeviceGammaRamp (v5): D3D8's FULLSCREENGAMMA */
+    p->core.dx9 = TRUE;                                     /* the DirectX 9 face (M16): d3d9.dll's GETDDIVERSION / GETD3DCAPS9 */
     d3d_init(&p->core);
     *pdwNumHeaps = 1;
     /* The FOURCC surfaces DirectDraw may create at all. It checks this list

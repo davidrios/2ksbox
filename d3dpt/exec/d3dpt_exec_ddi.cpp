@@ -72,6 +72,14 @@ enum {
     DP2_SETPIXELSHADER = 56, DP2_SETPIXELSHADERCONST = 57, DP2_CLIPPEDTRIANGLEFAN = 58, DP2_DRAWPRIMITIVE2 = 59,
     DP2_DRAWINDEXEDPRIMITIVE2 = 60, DP2_DRAWRECTPATCH = 61, DP2_DRAWTRIPATCH = 62, DP2_VOLUMEBLT = 63,
     DP2_BUFFERBLT = 64, DP2_MULTIPLYTRANSFORM = 65, DP2_ADDDIRTYRECT = 66, DP2_ADDDIRTYBOX = 67,
+    /* DX9 (protocol v14, M16): declarations and shader code apart, integer
+     * and boolean constants, the scissor. The driver consumes
+     * SETVERTEXSHADERDECL (a draw carries it), SETSTREAMSOURCE2 and the
+     * target tokens, and drops the ones it does not walk yet */
+    DP2_CREATEVERTEXSHADERDECL = 71, DP2_DELETEVERTEXSHADERDECL = 72, DP2_SETVERTEXSHADERDECL = 73,
+    DP2_CREATEVERTEXSHADERFUNC = 74, DP2_DELETEVERTEXSHADERFUNC = 75, DP2_SETVERTEXSHADERFUNC = 76,
+    DP2_SETVERTEXSHADERCONSTI = 77, DP2_SETSCISSORRECT = 79, DP2_SETVERTEXSHADERCONSTB = 83,
+    DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
 };
 #define D3DERR_COMMAND_UNPARSED_ 0x88760BB8u
 
@@ -160,13 +168,24 @@ struct VShader8 {
 struct Ctx {
     uint32_t rt = 0, z = 0;
     D3DVIEWPORT9 vp = { 0, 0, 0, 0, 0.0f, 1.0f };
-    /* the DX8 shaders by the runtime's handle (per device = per context) */
+    /* the DX8 shaders by the runtime's handle (per device = per context);
+     * a DX9 declaration (CREATEVERTEXSHADERDECL) is one of these with no
+     * function, in the same handle space */
     std::unordered_map<uint32_t, VShader8> vshaders;
     std::unordered_map<uint32_t, IDirect3DPixelShader9 *> pshaders;
+    /* DX9 vertex shader code (CREATEVERTEXSHADERFUNC) and the current one
+     * (SETVERTEXSHADERFUNC; 0 = the fixed function). A context that has
+     * set one is a DX9 context: apply_vs puts the function over whatever
+     * declaration or FVF a draw carries */
+    std::unordered_map<uint32_t, IDirect3DVertexShader9 *> vfuncs;
+    uint32_t vfunc = 0;
+    bool dx9 = false;
     void release_shaders() {
         for (auto &kv : vshaders) kv.second.release();
         for (auto &kv : pshaders) if (kv.second) kv.second->Release();
-        vshaders.clear(); pshaders.clear();
+        for (auto &kv : vfuncs) if (kv.second) kv.second->Release();
+        vshaders.clear(); pshaders.clear(); vfuncs.clear();
+        vfunc = 0;
     }
 };
 
@@ -975,6 +994,7 @@ struct Dp2 {
     const uint8_t *cmd, *cmd_end, *vtx;
     uint32_t stride, nverts, fvf_;
     uint32_t cur_vs = ~0u;      /* the SETVERTEXSHADER value last applied (FVF or shader handle); ~0 = unknown */
+    uint32_t cur_vfunc = ~0u;   /* the DX9 function applied with it (Ctx::vfunc); ~0 = unknown */
     uint32_t pos = 0;           /* offset of the current token, for dwErrorOffset */
     HRESULT hr = S_OK;
 
@@ -1080,7 +1100,7 @@ struct Dp2 {
      * handle (bit 0): its declaration, its function or none (the fixed
      * function on the declaration), its declaration constants */
     void apply_vs(uint32_t h) {
-        if (h == cur_vs) return;
+        if (h == cur_vs && (!c.dx9 || c.vfunc == cur_vfunc)) return;
         auto it = c.vshaders.find(h);
         if (it != c.vshaders.end()) {
             VShader8 &s = it->second;
@@ -1095,6 +1115,78 @@ struct Dp2 {
             return;
         }
         cur_vs = h;
+        if (c.dx9) {
+            /* DX9: the declaration (or FVF) above, the current function over it */
+            auto f = c.vfuncs.find(c.vfunc);
+            x.dev->SetVertexShader(f != c.vfuncs.end() ? f->second : nullptr);
+            cur_vfunc = c.vfunc;
+        }
+    }
+    /* CREATEVERTEXSHADERDECL (DX9): the elements as they are (END added if
+     * the runtime's count leaves it out), each checked against d3d9's
+     * ranges before DXVK sees it; what each stream's vertex must cover, for
+     * the draw's checks and the interleaving of several streams */
+    void create_vdecl(uint32_t handle, const uint8_t *e, uint32_t n) {
+        static const uint8_t type_bytes[17] = { 4, 8, 12, 16, 4, 4, 4, 8, 4, 4, 8, 4, 8, 4, 4, 4, 8 };
+        delete_vshader(handle);
+        VShader8 s;
+        std::vector<D3DVERTEXELEMENT9> el;
+        for (uint32_t i = 0; i < n; i++) {
+            D3DVERTEXELEMENT9 v;
+            memcpy(&v, e + 8 * i, sizeof v);
+            if (v.Stream == 0xff) break;                /* D3DDECL_END */
+            if (v.Stream >= D3DPT_DRAW8_MAX_STREAMS || v.Type > 16 || v.Method > 6 || v.Usage > 13 || v.UsageIndex > 15 || v.Offset > 1024) {
+                if (d.warn_once(0xc1010)) x.log("ddi: dp2: vertex declaration 0x%x: element %u out of range (stream %u offset %u type %u method %u usage %u.%u), refused",
+                                                handle, i, v.Stream, v.Offset, v.Type, v.Method, v.Usage, v.UsageIndex);
+                return;
+            }
+            el.push_back(v);
+            uint32_t end = v.Offset + type_bytes[v.Type];
+            if (end > s.stream_bytes[v.Stream]) s.stream_bytes[v.Stream] = end;
+            s.streams |= 1u << v.Stream;
+        }
+        el.push_back(D3DDECL_END());
+        HRESULT hr = x.dev->CreateVertexDeclaration(el.data(), &s.decl);
+        if (FAILED(hr) || !s.decl) {
+            if (d.warn_once(0xc1011)) x.log("ddi: dp2: vertex declaration 0x%x: CreateVertexDeclaration 0x%08x (%zu elements)", handle, (unsigned)hr, el.size() - 1);
+            return;
+        }
+        tr("vertex declaration 0x%x created: %zu elements, streams 0x%x, %u bytes on stream 0", handle, el.size() - 1, s.streams, s.stream_bytes[0]);
+        s.el = el;
+        c.vshaders[handle] = s;
+    }
+    /* CREATEVERTEXSHADERFUNC (DX9): vs 1.1 to 3.0 as they are. 1.x is
+     * checked as ever; 2.0 and 3.0 get the version and END checks only
+     * (no SM2/3 validator for v1, user decision) */
+    void create_vfunc(uint32_t handle, const uint8_t *code, uint32_t codebytes) {
+        delete_vfunc(handle);
+        uint32_t ver = codebytes >= 4 ? u32(code) : 0;
+        if (!handle || codebytes < 8 || codebytes % 4 || codebytes > (256u << 10) || ver >> 16 != 0xfffe ||
+            (ver & 0xffff) > 0x0300 || u32(code + codebytes - 4) != 0x0000ffffu) {
+            if (d.warn_once(0xc1012)) x.log("ddi: dp2: vertex shader function 0x%x refused: version 0x%08x, %u bytes", handle, ver, codebytes);
+            return;
+        }
+        std::vector<uint32_t> g(codebytes / 4);
+        memcpy(g.data(), code, codebytes);
+        if ((ver & 0xff00) < 0x0200 && !sm1_valid(g.data(), g.size(), true)) {
+            if (d.warn_once(0xc1013)) x.log("ddi: dp2: vertex shader function 0x%x is not valid vs 1.x (version 0x%08x), refused", handle, ver);
+            return;
+        }
+        IDirect3DVertexShader9 *vs = nullptr;
+        HRESULT hr = x.dev->CreateVertexShader((const DWORD *)g.data(), &vs);
+        if (FAILED(hr) || !vs) {
+            if (d.warn_once(0xc1014)) x.log("ddi: dp2: vertex shader function 0x%x: CreateVertexShader 0x%08x (version 0x%08x, %u bytes)", handle, (unsigned)hr, ver, codebytes);
+            return;
+        }
+        tr("vertex shader function 0x%x created: version 0x%08x, %u bytes", handle, ver, codebytes);
+        c.vfuncs[handle] = vs;
+    }
+    void delete_vfunc(uint32_t h) {
+        auto it = c.vfuncs.find(h);
+        if (it == c.vfuncs.end()) return;
+        if (h == cur_vfunc) { x.dev->SetVertexShader(nullptr); cur_vs = ~0u; cur_vfunc = ~0u; }
+        if (it->second) it->second->Release();
+        c.vfuncs.erase(it);
     }
     /* CREATEVERTEXSHADER: handle, the declaration tokens, the function (may be empty) */
     void create_vshader(uint32_t handle, const uint8_t *decl, uint32_t declbytes, const uint8_t *code, uint32_t codebytes) {
@@ -1153,13 +1245,15 @@ struct Dp2 {
     void create_pshader(uint32_t handle, const uint8_t *code, uint32_t codebytes) {
         auto old = c.pshaders.find(handle);
         if (old != c.pshaders.end()) { if (old->second) old->second->Release(); c.pshaders.erase(old); }
-        if (!handle || codebytes < 8 || codebytes % 4 || codebytes > (256u << 10) || u32(code) >> 16 != 0xffff || u32(code + codebytes - 4) != 0x0000ffffu) {
+        if (!handle || codebytes < 8 || codebytes % 4 || codebytes > (256u << 10) || u32(code) >> 16 != 0xffff ||
+            (u32(code) & 0xffff) > 0x0300 || u32(code + codebytes - 4) != 0x0000ffffu) {
             if (d.warn_once(0xc1004)) x.log("ddi: dp2: pixel shader 0x%x refused: %u bytes", handle, codebytes);
             return;
         }
         std::vector<uint32_t> f(codebytes / 4);
         memcpy(f.data(), code, codebytes);
-        if (!sm1_valid(f.data(), f.size(), false)) {
+        /* ps 2.0 / 3.0 (the DX9 face, M16): the checks above only */
+        if ((u32(code) & 0xff00) < 0x0200 && !sm1_valid(f.data(), f.size(), false)) {
             if (d.warn_once(0xc1009)) x.log("ddi: dp2: pixel shader 0x%x is not valid ps 1.x (version 0x%08x, %u bytes), refused", handle, u32(code), codebytes);
             return;
         }
@@ -2107,6 +2201,80 @@ struct Dp2 {
             case DP2_ADDDIRTYBOX:
                 need = count * 28u;
                 if (need > left) return fail("truncated ADDDIRTYBOX");
+                break;
+            case DP2_CREATEVERTEXSHADERDECL:                     /* handle, n, n D3DVERTEXELEMENT9 */
+                need = 0;
+                for (uint32_t i = 0; i < count; i++) {
+                    if (left < need + 8) return fail("truncated CREATEVERTEXSHADERDECL");
+                    const uint8_t *e = q + need;
+                    uint32_t n = u32(e + 4);
+                    if (n > 64) return fail("CREATEVERTEXSHADERDECL with more than 64 elements");
+                    need += 8 + (size_t)n * 8;
+                    if (need > left) return fail("truncated CREATEVERTEXSHADERDECL elements");
+                    create_vdecl(u32(e), e + 8, n);
+                }
+                break;
+            case DP2_CREATEVERTEXSHADERFUNC:                     /* handle, code size, code */
+                need = 0;
+                for (uint32_t i = 0; i < count; i++) {
+                    if (left < need + 8) return fail("truncated CREATEVERTEXSHADERFUNC");
+                    const uint8_t *e = q + need;
+                    size_t cs = u32(e + 4);
+                    need += 8 + cs;
+                    if (need > left) return fail("truncated CREATEVERTEXSHADERFUNC code");
+                    create_vfunc(u32(e), e + 8, (uint32_t)cs);
+                }
+                break;
+            case DP2_DELETEVERTEXSHADERDECL: case DP2_SETVERTEXSHADERDECL: case DP2_DELETEVERTEXSHADERFUNC: case DP2_SETVERTEXSHADERFUNC:
+                need = count * 4u;
+                if (need > left) return fail("truncated DX9 shader handle token");
+                for (uint32_t i = 0; i < count; i++) {
+                    uint32_t h = u32(q + 4 * i);
+                    if (op == DP2_DELETEVERTEXSHADERDECL) { tr("delete vertex declaration 0x%x", h); delete_vshader(h); }
+                    else if (op == DP2_DELETEVERTEXSHADERFUNC) { tr("delete vertex shader function 0x%x", h); delete_vfunc(h); }
+                    else if (op == DP2_SETVERTEXSHADERDECL) { tr("vertex declaration 0x%x", h); apply_vs(h); }
+                    else {
+                        if (h && !c.vfuncs.count(h) && d.warn_once(0xc1015)) x.log("ddi: dp2: vertex shader function 0x%x unknown (the fixed function instead)", h);
+                        tr("vertex shader function 0x%x", h);
+                        c.dx9 = true;
+                        c.vfunc = c.vfuncs.count(h) ? h : 0;
+                    }
+                }
+                break;
+            case DP2_SETVERTEXSHADERCONSTI: case DP2_SETPIXELSHADERCONSTI:
+            case DP2_SETVERTEXSHADERCONSTB: case DP2_SETPIXELSHADERCONSTB: {
+                /* register, count, then count int4s (I) or BOOLs (B); d3d9
+                 * has 16 of each, per stage */
+                bool ints = op == DP2_SETVERTEXSHADERCONSTI || op == DP2_SETPIXELSHADERCONSTI;
+                bool vsc = op == DP2_SETVERTEXSHADERCONSTI || op == DP2_SETVERTEXSHADERCONSTB;
+                need = 0;
+                for (uint32_t i = 0; i < count; i++) {
+                    if (left < need + 8) return fail("truncated shader constants");
+                    const uint8_t *e = q + need;
+                    uint32_t reg = u32(e), cnt = u32(e + 4);
+                    if (cnt > 256) return fail("shader constant count out of range");
+                    need += 8 + (size_t)cnt * (ints ? 16 : 4);
+                    if (need > left) return fail("truncated shader constants");
+                    bool ok = cnt && (uint64_t)reg + cnt <= 16;
+                    tr("%s %s constants %u.. x%u%s", vsc ? "vertex shader" : "pixel shader", ints ? "integer" : "boolean", reg, cnt, ok ? "" : " (dropped)");
+                    if (!ok) { if (cnt && d.warn_once(0xc1016 | (op << 16))) x.log("ddi: dp2: %s constants %u x%u out of range, dropped", ints ? "integer" : "boolean", reg, cnt); continue; }
+                    std::vector<int> v((size_t)cnt * (ints ? 4 : 1));
+                    memcpy(v.data(), e + 8, v.size() * 4);
+                    if (ints && vsc) x.dev->SetVertexShaderConstantI(reg, v.data(), cnt);
+                    else if (ints) x.dev->SetPixelShaderConstantI(reg, v.data(), cnt);
+                    else if (vsc) x.dev->SetVertexShaderConstantB(reg, (const BOOL *)v.data(), cnt);
+                    else x.dev->SetPixelShaderConstantB(reg, (const BOOL *)v.data(), cnt);
+                }
+                break;
+            }
+            case DP2_SETSCISSORRECT:
+                need = count * 16u;
+                if (need > left) return fail("truncated SETSCISSORRECT");
+                if (count) {
+                    RECT r; memcpy(&r, q + 16 * (count - 1), sizeof r);
+                    tr("scissor %ld,%ld..%ld,%ld", (long)r.left, (long)r.top, (long)r.right, (long)r.bottom);
+                    if (r.left <= r.right && r.top <= r.bottom) x.dev->SetScissorRect(&r);
+                }
                 break;
             default:
                 return fail_token(op, count);

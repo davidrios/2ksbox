@@ -23,6 +23,7 @@
 D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 D3DCAPS8_ d3d_caps8;                        /* the DX8 DDI's caps (GetDriverInfo2) */
+D3DCAPS9_ d3d_caps9;                        /* the DX9 DDI's (M16): the DX8 ones, shader model 3.0 and the DX9 fields */
 DDPIXELFORMAT d3d_fmt8[32];                 /* its format list */
 ULONG d3d_fmt8_n;
 struct d3dpt_zformats d3d_zformats;
@@ -487,8 +488,10 @@ void d3d_caps_init(d3dpt_core *p)
          * blt, and this driver has no blitter. With them claimed, d3d8.dll
          * made the device and Present drew nothing (no DdBlt, no readback).
          * A flip needs nothing new: its readback goes through the host's
-         * resolve */
-        const ULONG ms = (1u << (2 - 1)) | (1u << (4 - 1));
+         * resolve. Bit 0 is DX9's NONMASKABLE: d3d9.dll refuses a DX9
+         * driver whose format claims sample counts without it (the last
+         * check of its caps validation, M16); DX8 has no type 1 */
+        const ULONG ms = 1u | (1u << (2 - 1)) | (1u << (4 - 1));
 
         for (i = 0; i < d3d_fmt8_n; i++) {
             ULONG f = d3d_fmt8[i].dwFourCC;
@@ -497,5 +500,183 @@ void d3d_caps_init(d3dpt_core *p)
                 d3d_fmt8[i].dwGBitMask = ms;
             }
         }
+    }
+
+    /* the DX9 DDI's caps (M16): the device of the DX8 ones, with shader
+     * model 3.0 as a GeForce 6 claims it (the reference rig's card, doc
+     * 09), or 2.0 as a Radeon 9700 does (DDF_SM2, the A/B). The shader
+     * bytecode goes to the host as it is and DXVK compiles every version,
+     * so the claim is these fields; the DP2 tokens are the work (core_dp2.c).
+     * d3d8.dll never sees them: it asks for GETD3DCAPS8 */
+    for (i = 0; i < sizeof(d3d_caps9) / 4; i++) ((ULONG *)&d3d_caps9)[i] = 0;
+    d3d_caps9.c8 = *c8;
+    if (!(ddflags(p) & DDF_NO_SHADERS)) {
+        BOOL sm3 = !(ddflags(p) & DDF_SM2);
+
+        d3d_caps9.c8.VertexShaderVersion = sm3 ? D3DVS_VERSION_(3, 0) : D3DVS_VERSION_(2, 0);
+        d3d_caps9.c8.MaxVertexShaderConst = 256;
+        d3d_caps9.c8.PixelShaderVersion = sm3 ? D3DPS_VERSION_(3, 0) : D3DPS_VERSION_(2, 0);
+        d3d_caps9.VS20Caps.Caps = sm3 ? 1 : 0;                         /* D3DVS20CAPS_PREDICATION */
+        d3d_caps9.VS20Caps.DynamicFlowControlDepth = sm3 ? 24 : 0;
+        d3d_caps9.VS20Caps.NumTemps = sm3 ? 32 : 12;
+        d3d_caps9.VS20Caps.StaticFlowControlDepth = sm3 ? 4 : 1;
+        /* arbitrary swizzle, gradients, predication, no dependent-read
+         * and no texture-instruction limit */
+        d3d_caps9.PS20Caps.Caps = sm3 ? 0x1f : 0;
+        d3d_caps9.PS20Caps.DynamicFlowControlDepth = sm3 ? 24 : 0;
+        d3d_caps9.PS20Caps.NumTemps = sm3 ? 32 : 12;
+        d3d_caps9.PS20Caps.StaticFlowControlDepth = sm3 ? 4 : 0;
+        d3d_caps9.PS20Caps.NumInstructionSlots = sm3 ? 512 : 96;
+        d3d_caps9.MaxVShaderInstructionsExecuted = 65535;
+        d3d_caps9.MaxPShaderInstructionsExecuted = sm3 ? 65535 : 96;
+        d3d_caps9.MaxVertexShader30InstructionSlots = sm3 ? 512 : 0;
+        d3d_caps9.MaxPixelShader30InstructionSlots = sm3 ? 512 : 0;
+    }
+    /* What d3d9.dll's check of a DX9 driver's caps demands (XP SP3's
+     * d3d9.dll at 0x4fcf6d20, read in its disassembly and confirmed under
+     * the QEMU gdbstub; a driver that fails it gets the runtime's DX7-level
+     * caps: no T&L, no streams, no shaders). The render states behind them
+     * reach DXVK as they are (rs_passthrough in the executor): scissor
+     * enable 174, depth bias 175 / 195, two-sided stencil 185..188, blend
+     * factor 193. Every DX9 driver: scissor. vs / ps 2.0 and up: FOGINFVF.
+     * ps 3.0: depth bias, the blend factor, two-sided stencil, texture
+     * repeat in texels. vs 3.0: a guard band of at least 8192 each way and
+     * point-sampled vertex textures. The DX8 caps stay as they were */
+    d3d_caps9.c8.RasterCaps |= D3DPRASTERCAPS_SCISSORTEST_ | D3DPRASTERCAPS_SLOPESCALEDEPTHBIAS_ | D3DPRASTERCAPS_DEPTHBIAS_;
+    d3d_caps9.c8.PrimitiveMiscCaps |= D3DPMISCCAPS_FOGINFVF_;
+    d3d_caps9.c8.SrcBlendCaps |= D3DPBLENDCAPS_BLENDFACTOR_;
+    d3d_caps9.c8.DestBlendCaps |= D3DPBLENDCAPS_BLENDFACTOR_;
+    d3d_caps9.c8.StencilCaps |= D3DSTENCILCAPS_TWOSIDED_;
+    d3d_caps9.c8.TextureCaps |= D3DPTEXTURECAPS_TEXREPEATNOTSCALEDBYSIZE_;
+    d3d_caps9.c8.GuardBandLeft = -8192.0f;
+    d3d_caps9.c8.GuardBandTop = -8192.0f;
+    d3d_caps9.c8.GuardBandRight = 8192.0f;
+    d3d_caps9.c8.GuardBandBottom = 8192.0f;
+    if (d3d_caps9.MaxVertexShader30InstructionSlots) {
+        d3d_caps9.VertexTextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MAGFPOINT;
+    }
+    /* SETSTREAMSOURCE2's offset is the walker's (core_dp2.c) */
+    d3d_caps9.DevCaps2 = D3DDEVCAPS2_STREAMOFFSET_ | D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET_;
+    d3d_caps9.DeclTypes = 0x3ff;                /* UBYTE4 .. FLOAT16_4: DXVK reads every one */
+    d3d_caps9.NumSimultaneousRTs = 1;           /* SETRENDERTARGET2 beyond index 0 is not walked yet */
+    d3d_caps9.NumberOfAdaptersInGroup = 1;
+}
+
+/* The GetDriverInfo2 queries (DX8 DDI, and DX9's since M16). The answer
+ * goes into the same buffer; the size that counts is the one inside the
+ * GDI2 header. d3d8.dll leaves the outer dwExpectedSize at the previous
+ * query's 24 bytes and rejects the driver unless dwActualSize equals the
+ * inner one (found by disassembling d3d8.dll, doc 15). A DX9 query is
+ * answered only where the layer offers the DX9 face (c->dx9) and
+ * DDF_NO_DX9 is clear; refused, d3d9.dll treats the driver as a DX8 one,
+ * which it was before M16. */
+HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
+{
+    DD_GETDRIVERINFO2DATA_ *g = (DD_GETDRIVERINFO2DATA_ *)data;
+    ULONG want = g->dwExpectedSize, n, i;
+    BOOL dx9 = c->dx9 && !(ddflags(c) & DDF_NO_DX9);
+
+    dbg_hex(c, "d3dptdisp: gdi2 type ", g->dwType);
+    dbg_hex(c, " expected ", want);
+    dbg_puts(c, "\n");
+    *actual = 0;
+    switch (g->dwType) {
+    case D3DGDI2_TYPE_GETD3DCAPS8_:
+        n = sizeof(d3d_caps8);
+        if (n > want) n = want;
+        memcpy(data, &d3d_caps8, n);
+        *actual = n;
+        return DD_OK;
+    case D3DGDI2_TYPE_GETD3DCAPS9_:
+        if (!dx9) return DDERR_CURRENTLYNOTAVAIL;
+        n = sizeof(d3d_caps9);
+        if (n > want) n = want;
+        memcpy(data, &d3d_caps9, n);
+        *actual = n;
+        return DD_OK;
+    case D3DGDI2_TYPE_GETFORMATCOUNT_: {
+        DD_GETFORMATCOUNTDATA_ *f = (DD_GETFORMATCOUNTDATA_ *)g;
+        if (want < sizeof(*f)) return DDERR_CURRENTLYNOTAVAIL;
+        f->dwFormatCount = d3d_fmt8_n;
+        *actual = sizeof(*f);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETFORMAT_: {
+        DD_GETFORMATDATA_ *f = (DD_GETFORMATDATA_ *)g;
+        if (want < sizeof(*f) || f->dwFormatIndex >= d3d_fmt8_n) return DDERR_CURRENTLYNOTAVAIL;
+        f->format = d3d_fmt8[f->dwFormatIndex];
+        *actual = sizeof(*f);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_DXVERSION_: {
+        DD_DXVERSION_ *v = (DD_DXVERSION_ *)g;
+        if (want >= sizeof(*v)) {
+            dbg_hex(c, "d3dptdisp: runtime DirectX version ", v->dwDXVersion);
+            dbg_puts(c, "\n");
+        }
+        *actual = sizeof(*v) <= want ? sizeof(*v) : want;
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETDDIVERSION_: {
+        /* the question that makes d3d9.dll a DX9 runtime to us: from here
+         * on it sends the DX9 tokens (vertex declarations and shader code
+         * apart, SETSTREAMSOURCE2, SETRENDERTARGET2, ...) */
+        DD_GETDDIVERSIONDATA_ *v = (DD_GETDDIVERSIONDATA_ *)g;
+        if (want >= sizeof(*v)) {
+            dbg_hex(c, "d3dptdisp: ddi version asked, runtime ", v->dwDXVersion);
+            dbg_hex(c, " dx9 face ", dx9);
+            dbg_puts(c, "\n");
+        }
+        /* the runtime's major version here: 9 (measured on XP's d3d9.dll,
+         * whose DXVERSION notice says 0x902) */
+        if (!dx9 || want < sizeof(*v) || v->dwDXVersion < 9) return DDERR_CURRENTLYNOTAVAIL;
+        v->dwDDIVersion = DX9_DDI_VERSION_;
+        *actual = sizeof(*v);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETEXTENDEDMODECOUNT_: {
+        DD_GETEXTENDEDMODECOUNTDATA_ *m = (DD_GETEXTENDEDMODECOUNTDATA_ *)g;
+        if (!dx9 || want < sizeof(*m)) return DDERR_CURRENTLYNOTAVAIL;
+        m->dwModeCount = 0;                     /* no A2R10G10B10 desktop */
+        *actual = sizeof(*m);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETADAPTERGROUP_: {
+        DD_GETADAPTERGROUPDATA_ *a = (DD_GETADAPTERGROUPDATA_ *)g;
+        if (!dx9 || want < sizeof(*a)) return DDERR_CURRENTLYNOTAVAIL;
+        a->ulUniqueAdapterGroupId = (ULONG_PTR)c;   /* one head, its own group */
+        *actual = sizeof(*a);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETMULTISAMPLEQUALITYLEVELS_: {
+        /* one quality level per sample count the format list gives the
+         * format (its dwGBitMask slot, bit n - 1); NONMASKABLE has one level
+         * per such count */
+        DD_MULTISAMPLEQUALITYLEVELSDATA_ *m = (DD_MULTISAMPLEQUALITYLEVELSDATA_ *)g;
+        ULONG ms = 0, t;
+        if (!dx9 || want < sizeof(*m)) return DDERR_CURRENTLYNOTAVAIL;
+        for (i = 0; i < d3d_fmt8_n; i++) {
+            if (d3d_fmt8[i].dwFourCC == m->Format) ms = d3d_fmt8[i].dwGBitMask & 0xffff;
+        }
+        t = m->MSType;
+        if (t == 1) {
+            for (n = 0, ms &= ~1u; ms; ms &= ms - 1) n++;   /* bit 0 is NONMASKABLE itself */
+            m->QualityLevels = n;
+        } else {
+            m->QualityLevels = (t >= 2 && t <= 16 && (ms & (1u << (t - 1)))) ? 1 : 0;
+        }
+        *actual = sizeof(*m);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETD3DQUERYCOUNT_: {
+        /* no query types yet: RESPONSEQUERY is M16 step 2's */
+        DD_GETD3DQUERYCOUNTDATA_ *q = (DD_GETD3DQUERYCOUNTDATA_ *)g;
+        if (!dx9 || want < sizeof(*q)) return DDERR_CURRENTLYNOTAVAIL;
+        q->dwNumQueries = 0;
+        *actual = sizeof(*q);
+        return DD_OK;
+    }
+    default:
+        return DDERR_CURRENTLYNOTAVAIL;
     }
 }

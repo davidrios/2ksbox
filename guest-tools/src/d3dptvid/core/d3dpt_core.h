@@ -58,6 +58,9 @@
 #define DDF_NO_MSAA            0x8000000 /* the A/B: no multisample types in the DX8 format list, as before protocol v13 */
 #define DDF_NO_GAMMA           0x10000000 /* the A/B: no gamma ramp (DrvIcmSetDeviceGammaRamp refuses, no DirectDraw / D3D8 gamma caps) */
 #define DDF_TEX_256            0x20000000 /* the A/B: textures of 256x256 at most (aspect 256), as a Voodoo 2's */
+#define DDF_NO_DX9             0x40000000 /* the A/B: no DirectX 9 face (GETDDIVERSION / GETD3DCAPS9 refused: d3d9.dll sees the DX8 driver, M16) */
+#define DDF_SM2                0x80000000 /* the A/B: the DX9 face claims vs / ps 2.0, not 3.0 (M16). The last free bit: the next
+                                           * flag needs a second property */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -134,6 +137,8 @@ typedef struct _DP2STREAM {
     ULONG bytes, stride;
     ULONG handle;               /* the buffer's surface handle (0: the DP2 call's own vertex buffer, or nothing bound) */
     BOOL vram;                  /* the buffer lives in VRAM (v9): a draw names it instead of copying it */
+    ULONG off;                  /* SETSTREAMSOURCE2's offset (DX9, M16): mem and bytes start there already; a VRAM
+                                 * buffer's draw reference adds it */
 } DP2STREAM;
 
 /* the surface table's entries (DX8 DDI): every surface the OS told us
@@ -186,6 +191,7 @@ typedef struct _D3DCTX {
     ULONG st_handle[D3D_MAX_STREAMS], ib_handle;    /* the bound buffers (their memory can move between calls: a
                                  * Lock with DISCARD gives a buffer new memory, CreateSurfaceEx again) */
     ULONG st_stride[D3D_MAX_STREAMS], ib_stride;
+    ULONG st_off[D3D_MAX_STREAMS];   /* SETSTREAMSOURCE2's offsets (DX9, M16) */
 } D3DCTX;
 
 /* The device, as the core sees it. The per-OS layer's own device object
@@ -216,6 +222,8 @@ typedef struct d3dpt_core {
      * (D3DOP_PROCESSVERTICES and friends) on the legacy path (doc 15) */
     HRESULT (APIENTRY *parse_unknown)(PVOID cmd, PVOID *next);
     BOOL gamma;                 /* the layer loads gamma ramps into the adapter (NT: DrvIcmSetDeviceGammaRamp) */
+    BOOL dx9;                   /* the layer offers the DirectX 9 face (M16; NT first, 9x at M16 step 5) */
+    ULONG dx9_unwalked;         /* bit op - 64: a DX9 token the walker drops was reported (M16) */
 } d3dpt_core;
 
 /* the core whose Direct3D is on (the primary display) */
@@ -281,12 +289,17 @@ BOOL d3d_init(d3dpt_core *c);
 extern D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 extern D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 extern D3DCAPS8_ d3d_caps8;
+extern D3DCAPS9_ d3d_caps9;
 extern DDPIXELFORMAT d3d_fmt8[32];
 extern ULONG d3d_fmt8_n;
 extern DDSURFACEDESC d3d_texformats[11];
 extern ULONG d3d_texformats_n;
 extern struct d3dpt_zformats { DWORD count; DDPIXELFORMAT pf[3]; } d3d_zformats;
 void d3d_caps_init(d3dpt_core *c);
+/* a GetDriverInfo2 query (data: the buffer, its DD_GETDRIVERINFO2DATA
+ * first): the answer written in place, *actual its size; returns the
+ * ddRVal. Both layers' GetDriverInfo route the D3DGDI2 magic here. */
+HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual);
 ULONG pf_format(const DDPIXELFORMAT *f);
 void pf_rgb(DDPIXELFORMAT *f, ULONG bits, ULONG r, ULONG g, ULONG b, ULONG a);
 

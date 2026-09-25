@@ -12,8 +12,9 @@ specifics). The track's loop and open work are in
 
 The driver came in three stages, which still name the parts: **M7a** the
 framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
-(a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L). The
-register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v13**
+(a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L, and
+since M16 a DirectX 9 DDI with shader model 3.0). The
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v14**
 (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
 GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
@@ -1282,6 +1283,62 @@ or FAIL.
 | `MSAATEST` | full-screen multisampling on and off | PASS, 2 |
 | `MGDTEST` | `UpdateTexture`, a managed texture and a managed vertex buffer changed between two draws | PASS, 3 (doc 19 §32) |
 
+## The DirectX 9 DDI (M16)
+
+Track M16 (`docs/tracks/m16-dx9-ddi.md`, ADR-021). To XP's `d3d9.dll`
+the driver is a DirectX 9 driver with vs / ps 3.0; `d3d8.dll` still sees
+the DX8 driver above (it asks for `GETD3DCAPS8`, never the DX9 queries).
+Both OS layers route `GetDriverInfo2` to `core_gdi2_answer`
+(`core/core_caps.c`); the NT layer turns the DX9 face on (`core.dx9`),
+the 9x layer not yet.
+
+- **The queries.** `d3d9.dll` asks, in this order: `DXVERSION` (0x902),
+  `GETD3DCAPS9` (304 bytes), `GETDDIVERSION` (its `dwDXVersion` is **9**,
+  not 0x900; the answer is `DX9_DDI_VERSION`, 4), `GETFORMATCOUNT` /
+  `GETFORMAT`, `GETEXTENDEDMODECOUNT` (0), `GETADAPTERGROUP`,
+  `GETD3DQUERYCOUNT` (0 for now). Each answer needs `DD_OK`, the exact
+  `dwActualSize` and its field set, or the runtime falls back.
+- **The runtime's caps check.** An answered `D3DCAPS9` still goes through
+  `d3d9.dll`'s validation (XP SP3's at 0x4fcf6d20, read in the
+  disassembly and followed under the QEMU gdbstub, `-gdb tcp::N` and a
+  hardware breakpoint, since `d3d9.dll` loads at its preferred base in
+  every process). A driver that fails it gets the runtime's DX7-level
+  caps: no T&L, no streams, no shaders, `MaxStreamStride` 255, with
+  `GetDeviceCaps` succeeding, so the symptom looks like a caps bug and
+  not a refusal. What it demands, beyond the DX8 caps:
+  - every DX9 driver: `D3DCAPS2_DYNAMICTEXTURES`,
+    `D3DPRASTERCAPS_SCISSORTEST`, `NumSimultaneousRTs` 1..4, and every
+    format with multisample types must also claim NONMASKABLE (bit 0 of
+    the flip / blt words);
+  - vs or ps 2.0: `D3DPMISCCAPS_FOGINFVF`, no `LINEPATTERNREP`,
+    `MaxStreams` of 8 or more, NONPOW2CONDITIONAL beside POW2, the
+    `VS20Caps` / `PS20Caps` fields inside d3d9caps.h's ranges;
+  - vs 3.0: 512..32768 instruction slots, predication, a guard band of
+    at least 8192 each way, point-sampled vertex textures in
+    `VertexTextureFilterCaps`, `D3DFVFCAPS_PSIZE`,
+    `D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET`, the declaration
+    types 0x30f;
+  - ps 3.0: 4096² textures, repeat 8192, anisotropy 16, depth bias and
+    slope-scaled depth bias, the blend factor on both blends, two-sided
+    stencil, `TEXREPEATNOTSCALEDBYSIZE`, full compare and filter caps.
+  The executor already honours the render states these claim
+  (`rs_passthrough`).
+- **The tokens.** Declarations and vertex shader code arrive apart.
+  `SETVERTEXSHADERDECL` shares DX8's handle space (bit 0 set: a
+  declaration, else an FVF), so the walker consumes it as it does DX8's
+  `SETVERTEXSHADER` and a `DRAW8` carries it; the host turns a
+  `CREATEVERTEXSHADERDECL` into a vertex declaration and applies the
+  context's current `SETVERTEXSHADERFUNC` over it (0 = fixed function).
+  `SETSTREAMSOURCE2`'s offset is the walker's. `SETRENDERTARGET2`
+  (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair.
+  Integer / boolean constants and the scissor go to the host. BLT,
+  COLORFILL, SURFACEBLT, the query tokens, GENERATEMIPSUBLEVELS and
+  SETSTREAMSOURCEFREQ are dropped with a `dx9 token N not walked yet`
+  line (M16 step 2).
+- **Shaders.** vs / ps 2.0 and 3.0 reach DXVK with the version and END
+  checks only (no SM2/3 validator for v1, user decision); 1.x keeps
+  `sm1_valid`.
+
 ## The ddflags bits
 
 `-device d3dpt-vga,ddflags=N` (the adapter's DDFLAGS register; `DDFLAGS=`
@@ -1316,6 +1373,8 @@ own are `D9F_*` (doc 19).
 | 0x8000000 | `DDF_NO_MSAA` | no multisampling |
 | 0x10000000 | `DDF_NO_GAMMA` | no gamma ramp |
 | 0x20000000 | `DDF_TEX_256` | textures of 256² at most, as a Voodoo 2's (doc 19) |
+| 0x40000000 | `DDF_NO_DX9` | no DirectX 9 face: `d3d9.dll` sees the DX8 driver (M16) |
+| 0x80000000 | `DDF_SM2` | the DX9 face claims vs / ps 2.0 (M16). The last free bit |
 
 ## Debugging the driver
 

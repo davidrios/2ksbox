@@ -23,7 +23,16 @@ and executor. Read `docs/00-status.md` first for the track rules.
 ## State
 
 Opened 2026-09-25. Step 0 is built and run on today's driver; the rig's
-two baselines are the part left (they are the user's runs).
+two baselines are the part left (they are the user's runs). Step 1 is
+done: XP's `d3d9.dll` takes the driver as a DirectX 9 device with vs /
+ps 3.0, 256 vertex constants, 16 streams and hardware vertex processing
+(`DX9CAPS.EXE`), and `d3d8.dll` still sees the DX8 driver (the ten DX8
+probes and SHTEST pass). Doc 15 "The DirectX 9 DDI" has the queries, the
+runtime's caps check (the hard part: a failed check gives DX7-level caps,
+not an error) and the tokens. Step 2 has begun: declarations, shader code,
+integer / boolean constants, scissor, SETSTREAMSOURCE2 and the target
+tokens reach the host (protocol v14); the blits, queries, mip generation
+and instancing are dropped with a log line.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
@@ -154,7 +163,7 @@ track builds.
    D3DX or `d3dcompiler`. The first fixes, before step 1: the three
    driver bugs the first run found, since the crashes hide everything
    after them in a file.
-1. **The DX9 face.** `GetDriverInfo2` answers `DXVERSION` 0x900, the DDI
+1. *Done 2026-09-25.* **The DX9 face.** `GetDriverInfo2` answers `DXVERSION` 0x900, the DDI
    version query, `GETD3DCAPS9` (a `D3DCAPS9` with vs/ps 3.0, the
    `VS20Caps` / `PS20Caps` and instruction-slot fields), the format list
    with the DX9 `D3DFORMAT_OP_*` bits, the query types and the

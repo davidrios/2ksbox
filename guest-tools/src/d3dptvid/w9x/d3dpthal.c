@@ -1147,45 +1147,14 @@ static void info_copy(DDHAL_GETDRIVERINFODATA *d, const void *src, ULONG n)
     d->ddRVal = DD_OK;
 }
 
+/* the runtime's GetDriverInfo2 queries: the core answers (core_caps.c;
+ * core.dx9 stays off here until M16's Win98 step) */
 static void gdi2_answer(d3dpt_core *p, DDHAL_GETDRIVERINFODATA *d)
 {
-    DD_GETDRIVERINFO2DATA_ *g = (DD_GETDRIVERINFO2DATA_ *)d->lpvData;
-    ULONG want = g->dwExpectedSize, n;
+    ULONG actual;
 
-    switch (g->dwType) {
-    case D3DGDI2_TYPE_GETD3DCAPS8_:
-        n = sizeof(d3d_caps8);
-        if (n > want) n = want;
-        memcpy(d->lpvData, &d3d_caps8, n);
-        d->dwActualSize = n;
-        d->ddRVal = DD_OK;
-        break;
-    case D3DGDI2_TYPE_GETFORMATCOUNT_: {
-        DD_GETFORMATCOUNTDATA_ *c = (DD_GETFORMATCOUNTDATA_ *)g;
-        if (want < sizeof(*c)) { d->ddRVal = DDERR_CURRENTLYNOTAVAIL; break; }
-        c->dwFormatCount = d3d_fmt8_n;
-        d->dwActualSize = sizeof(*c);
-        d->ddRVal = DD_OK;
-        break;
-    }
-    case D3DGDI2_TYPE_GETFORMAT_: {
-        DD_GETFORMATDATA_ *f = (DD_GETFORMATDATA_ *)g;
-        if (want < sizeof(*f) || f->dwFormatIndex >= d3d_fmt8_n) { d->ddRVal = DDERR_CURRENTLYNOTAVAIL; break; }
-        f->format = d3d_fmt8[f->dwFormatIndex];
-        d->dwActualSize = sizeof(*f);
-        d->ddRVal = DD_OK;
-        break;
-    }
-    case D3DGDI2_TYPE_DXVERSION_: {
-        DD_DXVERSION_ *v = (DD_DXVERSION_ *)g;
-        d->dwActualSize = sizeof(*v) <= want ? sizeof(*v) : want;
-        d->ddRVal = DD_OK;
-        break;
-    }
-    default:
-        d->ddRVal = DDERR_CURRENTLYNOTAVAIL;
-        break;
-    }
+    d->ddRVal = core_gdi2_answer(p, d->lpvData, &actual);
+    d->dwActualSize = actual;
 }
 
 static DWORD __stdcall GetDriverInfo32(DDHAL_GETDRIVERINFODATA *d)

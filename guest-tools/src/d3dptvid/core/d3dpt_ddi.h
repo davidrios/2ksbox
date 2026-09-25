@@ -241,6 +241,59 @@ typedef struct _DD_DXVERSION_ {
   DWORD dwReserved;
 } DD_DXVERSION_;
 
+/* --- the DirectX 9 DDI's GetDriverInfo2 queries (d3dhal.h of the DX9 DDK;
+ * the values and layouts as ReactOS's ddk/d3dhal.h and Microsoft's DDI
+ * reference give them, M16) --- */
+#define D3DGDI2_TYPE_GETD3DCAPS9_                 0x00000010
+#define D3DGDI2_TYPE_GETEXTENDEDMODECOUNT_        0x00000011
+#define D3DGDI2_TYPE_GETEXTENDEDMODE_             0x00000012
+#define D3DGDI2_TYPE_GETADAPTERGROUP_             0x00000013
+#define D3DGDI2_TYPE_GETMULTISAMPLEQUALITYLEVELS_ 0x00000016
+#define D3DGDI2_TYPE_DEFERRED_AGP_AWARE_          0x00000018
+#define D3DGDI2_TYPE_FREE_DEFERRED_AGP_           0x00000019
+#define D3DGDI2_TYPE_DEFER_AGP_FREES_             0x00000020
+#define D3DGDI2_TYPE_GETD3DQUERYCOUNT_            0x00000021
+#define D3DGDI2_TYPE_GETD3DQUERY_                 0x00000022
+#define D3DGDI2_TYPE_GETDDIVERSION_               0x00000023
+#define DX9_DDI_VERSION_                          4
+
+typedef struct _DD_GETDDIVERSIONDATA_ {
+  DD_GETDRIVERINFO2DATA_ gdi2;
+  DWORD dwDXVersion;              /* in: the runtime's */
+  DWORD dwDDIVersion;             /* out: DX9_DDI_VERSION for a DX9 driver */
+} DD_GETDDIVERSIONDATA_;
+
+typedef struct _DD_GETEXTENDEDMODECOUNTDATA_ {
+  DD_GETDRIVERINFO2DATA_ gdi2;
+  DWORD dwModeCount;
+  DWORD dwReserved;
+} DD_GETEXTENDEDMODECOUNTDATA_;
+
+typedef struct _DD_GETADAPTERGROUPDATA_ {
+  DD_GETDRIVERINFO2DATA_ gdi2;
+  ULONG_PTR ulUniqueAdapterGroupId;
+  DWORD dwReserved1;
+  DWORD dwReserved2;
+} DD_GETADAPTERGROUPDATA_;
+
+typedef struct _DD_MULTISAMPLEQUALITYLEVELSDATA_ {
+  DD_GETDRIVERINFO2DATA_ gdi2;
+  DWORD Format;                   /* a D3DFORMAT */
+  DWORD bFlip : 1;
+  DWORD MSType : 31;              /* a D3DMULTISAMPLE_TYPE */
+  DWORD QualityLevels;            /* out */
+} DD_MULTISAMPLEQUALITYLEVELSDATA_;
+
+typedef struct _DD_GETD3DQUERYCOUNTDATA_ {
+  DD_GETDRIVERINFO2DATA_ gdi2;
+  DWORD dwNumQueries;
+} DD_GETD3DQUERYCOUNTDATA_;
+
+typedef struct _DD_GETD3DQUERYDATA_ {
+  DD_GETDRIVERINFO2DATA_ gdi2;
+  DWORD dwQueryIndex;             /* in; out: the D3DQUERYTYPE in the same slot */
+} DD_GETD3DQUERYDATA_;
+
 typedef struct _D3DCAPS8_ {
   DWORD DeviceType;
   DWORD AdapterOrdinal;
@@ -297,6 +350,28 @@ typedef struct _D3DCAPS8_ {
   float MaxPixelShaderValue;
 } D3DCAPS8_;
 
+/* D3DCAPS9 (d3d9caps.h): D3DCAPS8's fields in the same order, then these
+ * (304 bytes in all) */
+typedef struct _D3DCAPS9_ {
+  D3DCAPS8_ c8;                   /* MaxPixelShaderValue is PixelShader1xMaxValue here */
+  DWORD DevCaps2;
+  float MaxNpatchTessellationLevel;
+  DWORD Reserved5;
+  DWORD MasterAdapterOrdinal;
+  DWORD AdapterOrdinalInGroup;
+  DWORD NumberOfAdaptersInGroup;
+  DWORD DeclTypes;
+  DWORD NumSimultaneousRTs;
+  DWORD StretchRectFilterCaps;
+  struct { DWORD Caps; LONG DynamicFlowControlDepth, NumTemps, StaticFlowControlDepth; } VS20Caps;
+  struct { DWORD Caps; LONG DynamicFlowControlDepth, NumTemps, StaticFlowControlDepth, NumInstructionSlots; } PS20Caps;
+  DWORD VertexTextureFilterCaps;
+  DWORD MaxVShaderInstructionsExecuted;
+  DWORD MaxPShaderInstructionsExecuted;
+  DWORD MaxVertexShader30InstructionSlots;
+  DWORD MaxPixelShader30InstructionSlots;
+} D3DCAPS9_;
+
 /* the DX8 format list: DDPIXELFORMAT with DDPF_D3DFORMAT, the D3DFORMAT in
  * dwFourCC and these in the dwRBitMask slot (dwOperations) */
 #define DDPF_D3DFORMAT_                        0x00200000
@@ -344,6 +419,15 @@ typedef struct _D3DCAPS8_ {
 #define D3DPS_VERSION_0               0xFFFF0000
 #define D3DVS_VERSION_(major, minor)  (0xFFFE0000 | ((major) << 8) | (minor))
 #define D3DPS_VERSION_(major, minor)  (0xFFFF0000 | ((major) << 8) | (minor))
+#define D3DDEVCAPS2_STREAMOFFSET_     0x00000001   /* d3d9caps.h */
+#define D3DPRASTERCAPS_SCISSORTEST_   0x01000000   /* d3d9caps.h: the DX9 caps d3d9.dll requires (core_caps.c) */
+#define D3DPRASTERCAPS_SLOPESCALEDEPTHBIAS_ 0x02000000
+#define D3DPRASTERCAPS_DEPTHBIAS_     0x04000000
+#define D3DPMISCCAPS_FOGINFVF_        0x00002000
+#define D3DPBLENDCAPS_BLENDFACTOR_    0x00002000
+#define D3DSTENCILCAPS_TWOSIDED_      0x00000100
+#define D3DPTEXTURECAPS_TEXREPEATNOTSCALEDBYSIZE_ 0x00000040
+#define D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET_ 0x00000040
 #define D3DDEVTYPE_HAL_               1
 
 /* the DX8 DP2 tokens the driver rewrites or drops (D3DHAL_DP2OPERATION) */

@@ -152,6 +152,26 @@ static void stream_bind(DP2STREAM *s, ULONG handle, ULONG stride)
     s->stride = stride;
     s->handle = handle;
     s->vram = t && t->buffer && !t->sysmem;
+    s->off = 0;
+}
+
+/* SETSTREAMSOURCE2 (DX9): the same binding from a byte offset on. An
+ * offset past the buffer leaves nothing bound, so every draw from it is
+ * skipped as out of range */
+static void stream_bind_off(DP2STREAM *s, ULONG handle, ULONG off, ULONG stride)
+{
+    stream_bind(s, handle, stride);
+    s->off = 0;
+    if (!off || !s->mem) {
+        return;
+    }
+    if (off >= s->bytes) {
+        s->bytes = 0;
+        return;
+    }
+    s->mem += off;
+    s->bytes -= off;
+    s->off = off;
 }
 
 /* a stream bound to the DP2 call's own vertex buffer (SETSTREAMSOURCEUM) */
@@ -164,6 +184,7 @@ static void stream_bind_um(DP2WALK *w, ULONG n, ULONG stride)
     s->stride = stride;
     s->handle = 0;
     s->vram = FALSE;
+    s->off = 0;
     w->st_um |= 1u << n;
 }
 
@@ -175,7 +196,7 @@ static void walk_stream_data(DP2WALK *w, const DP2STREAM *s, ULONG off, ULONG by
 
     if (s->vram) {
         ref.a = s->handle;
-        ref.b = off;
+        ref.b = s->off + off;
         walk_put(w, &ref, sizeof(ref));
     } else {
         walk_put(w, (const void *)(s->mem + off), bytes);
@@ -638,6 +659,46 @@ static ULONG walk_body_size(ULONG op, ULONG count, const UCHAR *q, ULONG left, U
     case 65: return count * 68;                                 /* MULTIPLYTRANSFORM */
     case 66: return count * 20;                                 /* ADDDIRTYRECT */
     case 67: return count * 28;                                 /* ADDDIRTYBOX */
+    /* DX9 (M16; d3dhal.h of the DX9 DDK, Microsoft's DDI reference) */
+    case 71:                                                    /* CREATEVERTEXSHADERDECL: handle, n, n D3DVERTEXELEMENT9 */
+        sz = 0;
+        for (i = 0; i < count; i++) {
+            if (left < sz + 8) return ~0u;
+            n = ((const ULONG *)(q + sz))[1];
+            if (n > 64) return ~0u;
+            sz += 8 + n * 8;
+        }
+        return sz;
+    case 72: case 73: case 75: case 76: return count * 4;       /* DELETE / SET VERTEXSHADERDECL, DELETE / SET ...FUNC */
+    case 74:                                                    /* CREATEVERTEXSHADERFUNC: handle, code size, code */
+        sz = 0;
+        for (i = 0; i < count; i++) {
+            if (left < sz + 8) return ~0u;
+            sz += 8 + ((const ULONG *)(q + sz))[1];
+            if (sz > left) return ~0u;
+        }
+        return sz;
+    case 77: case 93:                                           /* SET{VERTEX,PIXEL}SHADERCONSTI: register, count, count * 4 ints */
+    case 83: case 94:                                           /* ...CONSTB: register, count, count BOOLs */
+        sz = 0;
+        for (i = 0; i < count; i++) {
+            if (left < sz + 8) return ~0u;
+            n = ((const ULONG *)(q + sz))[1];
+            if (n > 256) return ~0u;
+            sz += 8 + n * (op == 77 || op == 93 ? 16 : 4);
+        }
+        return sz;
+    case 79: return count * 16;                                 /* SETSCISSORRECT: a RECT */
+    case 80: return count * 16;                                 /* SETSTREAMSOURCE2: stream, handle, offset, stride */
+    case 81: case 96: return count * 52;                        /* BLT / SURFACEBLT: src, RECTL, level, dst, RECTL, level, flags */
+    case 82: return count * 24;                                 /* COLORFILL: surface, RECTL, colour */
+    case 84: return count * 8;                                  /* CREATEQUERY: id, type */
+    case 85: return count * 8;                                  /* SETRENDERTARGET2: index, target */
+    case 86: return count * 4;                                  /* SETDEPTHSTENCIL: z buffer */
+    case 89: return count * 8;                                  /* GENERATEMIPSUBLEVELS: surface, filter */
+    case 90: return count * 4;                                  /* DELETEQUERY: id */
+    case 91: return count * 8;                                  /* ISSUEQUERY: id, flags */
+    case 95: return count * 8;                                  /* SETSTREAMSOURCEFREQ: stream, divider */
     default: return ~0u;
     }
 }
@@ -882,6 +943,70 @@ static BOOL walk(DP2WALK *w)
             break;
         case 61: case 62: case 66: case 67:                    /* patches, dirty rects */
             break;
+        case 73:                                                /* SETVERTEXSHADERDECL (DX9): an FVF, or a declaration handle (bit 0) */
+            /* the same namespace as DX8's SETVERTEXSHADER: the draws carry
+             * it (DRAW8's fvf); the declaration itself went to the host with
+             * CREATEVERTEXSHADERDECL, the shader code with ...FUNC */
+            for (i = 0; i < count; i++) {
+                ULONG h = ((const ULONG *)q)[i];
+                w->fvf = h;
+                w->shader = (h & 1) != 0;
+            }
+            break;
+        case 80:                                                /* SETSTREAMSOURCE2 (DX9): stream, handle, offset, stride */
+            for (i = 0; i < count; i++) {
+                const ULONG *e = (const ULONG *)(q + i * 16);
+                if (e[0] < D3D_MAX_STREAMS) {
+                    stream_bind_off(&w->st[e[0]], e[1], e[2], e[3]);
+                    w->st_um &= ~(1u << e[0]);
+                }
+            }
+            break;
+        case 85: case 86: {                                     /* SETRENDERTARGET2 (index, target) / SETDEPTHSTENCIL (z) */
+            /* DX9 sets the two apart; the host takes DX7's pair, so each
+             * becomes a SETRENDERTARGET with the other half as it stands.
+             * A target past index 0 (multiple render targets) is dropped:
+             * the caps say one */
+            D3DHAL_DP2COMMAND_ h;
+            ULONG pair[2];
+            BOOL any = FALSE;
+
+            for (i = 0; i < count; i++) {
+                if (op == 86) {
+                    w->z = ((const ULONG *)q)[i];
+                    any = TRUE;
+                } else if (((const ULONG *)(q + i * 8))[0] == 0) {
+                    w->rt = ((const ULONG *)(q + i * 8))[1];
+                    any = TRUE;
+                } else if (!w->out && w->p->parse_lines < 8) {
+                    w->p->parse_lines++;
+                    dbg_hex(w->p, "d3dptdisp: render target index ", ((const ULONG *)(q + i * 8))[0]);
+                    dbg_puts(w->p, " dropped (one target claimed)\n");
+                }
+            }
+            if (any) {
+                w->rt_set = TRUE;
+                h.bCommand = 41;
+                h.bReserved = 0;
+                h.wPrimitiveCount = 1;
+                pair[0] = w->rt;
+                pair[1] = w->z;
+                walk_put(w, &h, sizeof(h));
+                walk_put(w, pair, sizeof(pair));
+            }
+            break;
+        }
+        case 81: case 82: case 84: case 89: case 90: case 91: case 95: case 96:
+            /* DX9 tokens not walked yet (M16 step 2): blits, colour fill,
+             * queries (none are offered), mip generation, instancing. Said
+             * once each, dropped */
+            if (!w->out && !(w->p->dx9_unwalked & (1u << (op - 64))) && w->p->parse_lines < 64) {
+                w->p->dx9_unwalked |= 1u << (op - 64);
+                w->p->parse_lines++;
+                dbg_hex(w->p, "d3dptdisp: dx9 token ", op);
+                dbg_puts(w->p, " not walked yet, dropped\n");
+            }
+            break;
         default:                                                /* the DX7 state tokens and the shader tokens (45, 46, 48, 54..57) */
             walk_put(w, c, 4 + size);
             break;
@@ -932,11 +1057,13 @@ static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, UL
     w0.shader = c->shader;
     w0.one_stream = (ddflags(p) & DDF_ONE_STREAM) != 0;
     w0.dx8_filters = c->iface >= 4;
+    w0.rt = c->rt;
+    w0.z = c->z;
     for (i = 0; i < D3D_MAX_STREAMS; i++) {
         if (c->st_um & (1u << i)) {
             stream_bind_um(&w0, i, c->st_stride[i]);
         } else {
-            stream_bind(&w0.st[i], c->st_handle[i], c->st_stride[i]);
+            stream_bind_off(&w0.st[i], c->st_handle[i], c->st_off[i], c->st_stride[i]);
         }
     }
     stream_bind(&w0.ib, c->ib_handle, c->ib_stride);
@@ -983,6 +1110,7 @@ static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, UL
         for (i = 0; i < D3D_MAX_STREAMS; i++) {
             c->st_handle[i] = w.st[i].handle;
             c->st_stride[i] = w.st[i].stride;
+            c->st_off[i] = w.st[i].off;
         }
         c->ib_handle = w.ib.handle;
         c->ib_stride = w.ib.stride;
