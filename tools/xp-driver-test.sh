@@ -7,6 +7,8 @@
 #   tools/xp-driver-test.sh <image.qcow2> install      # DRVINST from the ISO, reboot, desktop on the driver
 #   tools/xp-driver-test.sh <image.qcow2> ddtest       # DDTEST 640x480x8 (palette) / x16 / x32 / windowed, logs + BMP
 #   tools/xp-driver-test.sh <image.qcow2> modes        # SETMODE 1024x768x32@85, 800x600x16@75, list
+#   tools/xp-driver-test.sh <image.qcow2> vesa         # the inbox VGA driver's VESA mode change (no driver installed): SETMODE
+#                                                       # 800x600x32 on vga.sys, then the screen must be 800x600 and not black; PASS/FAIL
 #   tools/xp-driver-test.sh <image.qcow2> d3d7         # D3D7TEST: the DX7 HAL scene, diffed against the host test's frame
 #   tools/xp-driver-test.sh <image.qcow2> d3dgame8     # D3DGAME8 through XP's own d3d8.dll on the DX8 DDI (no wrapper DLL),
 #                                                       # its frame diffed against the native d3d9 oracle of scripts/test.sh
@@ -68,7 +70,7 @@ if [ "$(uname -s)" = Darwin ]; then
     done
   fi
 fi
-IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|cmd|bat}"; shift 2
+IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|vesa|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 # DRIVER_ISO= another build's driver ISO: the A/B against an older driver
 # (built from `git archive <sha>` into a scratch tree, never over this one's)
@@ -237,6 +239,29 @@ case "$MODE" in
     run_until MODESDONE "${CMD_WAIT:-180}" 'D:\DRIVER\SETMODE.EXE 1024 768 32 85 & D:\DRIVER\SETMODE.EXE 800 600 16 75 & D:\DRIVER\SETMODE.EXE 1024 768 32 85 & D:\DRIVER\SETMODE.EXE > E:\modes.log'
     finish
     pull modes.log ;;
+  vesa)
+    # The inbox VGA driver (a fresh install, no driver of ours) changes to a
+    # VESA mode through the VGA BIOS: XP resets to text mode 3 and sets the
+    # mode with int10 4F02h, each an int10 call from V86 mode around a mov
+    # cr3. Patch 44's retired TLB table came back across the VGA window's
+    # topology flush and left the screen black or in an empty text mode
+    # (2026-09-24, the user's fresh basexp-us). The command is typed until
+    # the guest confirms it on COM1: a fresh install's Found New Hardware
+    # wizard takes the first tries' keys. VGA=std is the control.
+    ok=0
+    for try in 1 2 3; do
+      run "D:\\DRIVER\\SETMODE.EXE 800 600 32 > COM1 & echo VESADONE$try > COM1"
+      if gw_wait_log "$SER" "VESADONE$try" 45; then ok=1; break; fi
+    done
+    sleep 6; Q screendump "$OUT/vesa.png"
+    geom=$(head -c 20 "$OUT/vesa.png.ppm" | sed -n 2p)
+    lit=$(tail -c +16 "$OUT/vesa.png.ppm" | LC_ALL=C tr -d '\0' | wc -c | tr -d ' ')
+    if [ "$ok" = 1 ] && [ "$geom" = "800 600" ] && [ "$lit" -gt 100000 ]; then
+      echo "-- vesa: PASS (800x600, $lit non-black bytes)"
+    else
+      echo "-- vesa: FAIL (confirmed=$ok screen=$geom non-black=$lit; the A/B is QEMU_EXTRA='-accel tcg,tlb-retire=off')"
+    fi
+    finish ;;
   d3d7)
     run 'D:\DRIVER\D3D7TEST.EXE 640 480 32 300 & copy C:\2KSBOX\D3D7TEST.LOG E:\d3d7.log & copy C:\2KSBOX\D3D7TEST.BMP E:\d3d7.bmp & echo D3D7DONE > COM1'
     sleep 8; Q screendump "$OUT/d3d7-fullscreen.png"

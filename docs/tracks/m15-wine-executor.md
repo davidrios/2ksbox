@@ -132,10 +132,12 @@ search order).
   adapter. XP falls back to VGA, D3DGAME8 dies in a modal box, and the
   killed guest loses its unflushed logs. The mode-set line after the
   restart proves the install.
-- **XP with its display driver refused shows a black screen** on the
-  adapter while BIOS text and mode 13h render: the VGA core sits in a
-  chained 256-colour 800×600 mode (`sr4=0a gr5=50`) that draws nothing.
-  Every screendump of a failed install run is black; read COM1.
+- **XP with its display driver refused showed a black screen** on the
+  adapter (the VGA core in a chained 256-colour 800×600 mode, `sr4=0a
+  gr5=50`, drawing nothing). That was patch 44's retired TLB table
+  revived across the VGA window's topology flush, fixed 2026-09-24; the
+  inbox driver's VESA desktop renders now. COM1 is still the record of
+  an install that stalls.
 - **wined3d's first batch stalls the vCPU** while it compiles shaders,
   so the child makes its device at probe time (doc 14). A 3.5 s stall
   inside an MMIO read reset the Win98 machine, and let patch 65 raise a

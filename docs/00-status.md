@@ -510,6 +510,15 @@ to one subsystem lives in its design doc; pointers are at the end.
   and refuses a newer adapter, and `*DisplayFallback=0` leaves no VGA.
   Boot on the Cirrus, run the ISO's `SETUP /ALL`, switch back. Newer
   drivers accept any later register set (doc 15).
+- **A fresh XP on the inbox VGA driver goes black (or to an empty text
+  mode) when the resolution is changed, and at our driver's install**,
+  which restarts the display the same way. Not the adapter: QEMU's own
+  `-vga std` did it too, and KVM did not. Patch 44's retired TLB table
+  was dropped in name only and came back at the next `mov cr3` (the VGA
+  window's topology flush, then XP's int10 call), fixed 2026-09-24.
+  `tools/xp-driver-test.sh <image> vesa` is the check; `-accel
+  tcg,tlb-retire=off` the A/B. A black screen on a mode change is a TCG
+  switch before it is a device.
 - **`ExitWindowsEx` from a console program never returns on 9x** and
   holds the Win16Mutex; a worker thread makes it worse. Call it from a
   process with no console: `SETUP` re-execs itself detached as `SETUP

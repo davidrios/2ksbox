@@ -165,10 +165,10 @@ The rules are in doc 15; these are the ones a session meets first.
 
 ## Next steps
 
-1. **An XP whose driver is refused shows black**: the VGA core sits in a
-   chained 256-colour 800×600 mode (`sr4=0a gr5=50`) that renders
-   nothing, while BIOS text and mode 13h render. Every headless look at
-   a failed install is blind (M15 track, "Traps").
+1. ~~An XP whose driver is refused shows black~~: it was patch 44's
+   retired TLB table coming back across the VGA window's topology flush
+   (fixed 2026-09-24; `xp-driver-test.sh vesa`). The inbox driver's VESA
+   desktop renders on the adapter; a failed install is no longer blind.
 2. **A `driver` stage in `scripts/test.sh`**: boot on `d3dpt-vga`, run
    `d3d7` + `shtest` + `probes` from a snapshot, as the XP D3D stage
    does. Until then `tools/xp-driver-test.sh` is the check.

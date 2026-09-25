@@ -559,7 +559,12 @@ drops the tables, `invlpg` its page. 95 % of Win98's refills are reused;
 within noise on the Ryzen, kept for hosts where a walk is not cheap. The
 filled-slot list must be `uint32_t`: a `uint16_t` wrapped past 65,536
 entries and killed Win98 a few seconds into `SETUP.EXE`, a different
-victim each time. `info jit` prints refills
+victim each time. A flush for any other reason must drop the table's
+*contents*, not only its flag: the next retiring flush set the flag back
+and revived every older entry, and Windows XP's VESA mode change on the
+inbox VGA driver (a VGA window topology flush, then the int10 call's own
+`mov cr3`) ended black or in an empty text mode (2026-09-24;
+`tools/xp-driver-test.sh <image> vesa`). `info jit` prints refills
 and reuses. **Switch:** `tlb-retire`. **Drop:** upstream's TLB keeps
 state across CR3 writes.
 

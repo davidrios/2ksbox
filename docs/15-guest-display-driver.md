@@ -39,8 +39,10 @@ The sources are in `guest-tools/src/d3dptvid/`. The NT layer `nt/`
 
 - **The adapter is a real VGA**: QEMU's standard VGA core with the Bochs
   VBE ports. SeaBIOS' `vgabios-stdvga.bin` boots it (the ROM takes BAR 0
-  as the LFB for any vendor id), and XP's inbox `vga.sys` runs the
-  desktop at 800×600×4 before our driver is installed. Blue screens and
+  as the LFB: it patches the ROM's PCI ids to ours), and XP's inbox
+  `vga.sys` runs the desktop in the ROM's VESA modes before our driver is
+  installed (a fresh install at 640×480×32; `xp-driver-test.sh vesa`
+  changes it to 800×600×32). Blue screens and
   shutdown text work because `HwResetHw` returns FALSE and videoprt's
   int10 puts the core back into mode 3. The id is 1234:3d00 (the
   QEMU/Bochs pseudo vendor, our device id), matched as
