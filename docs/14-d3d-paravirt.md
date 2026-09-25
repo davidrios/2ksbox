@@ -84,7 +84,10 @@ guest (XP / Win98)                      host (QEMU process)
 
 On XP the display driver's DX8 DDI (doc 15) replaced per-game DLLs; the
 DLLs remain the Win98 per-game path and the executor's test harness
-(`D3DGAME9`, `D3DGAME8`, `D3DFEAT9`).
+(`D3DGAME9`, `D3DGAME8`, `D3DFEAT9`). ADR-021 retires them: once the
+driver is a DirectX 9 driver (track M16), those programs run through
+Microsoft's runtime on the driver and the DLLs leave the ISO. Fix what a
+title needs in the driver, not here.
 
 - **Identity and lifetime (D3D8).** Real D3D8 keeps device- and
   texture-owned objects (surfaces, levels) alive at refcount 0 and hands

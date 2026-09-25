@@ -1,4 +1,4 @@
-# 0. Status and how to resume (updated 2026-09-23)
+# 0. Status and how to resume (updated 2026-09-25)
 
 The handoff for a new session: the tracks and what each owns, where each
 area stands, the everyday commands, open threads, next steps and the
@@ -28,6 +28,7 @@ is the index.
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
 | **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Steps 1–7 done: the community app passed on a real macOS 15, WineD3D-in-guest was removed, and the Flatpak's Wine add-on `com._2ksbox.Launcher.Wine` was built and checked in the sandbox (2026-09-23) · a game through the add-on on a below-floor host; the spike's host tests on the rig's Linux Wine |
+| **M16** DirectX 9 driver, no custom DLLs | `tracks/m16-dx9-ddi.md` | the DX9 DDI in `guest-tools/src/d3dptvid/` (with M10 / M7's files), its decoder cases in `d3dpt/exec/d3dpt_exec_ddi.cpp`, the Wine test suites' build, runner and baselines, doc 15's DX9 section | Opened 2026-09-25 (ADR-021) · step 0: Wine's d3d8/d3d9 tests in a guest, the rig's baselines |
 | Everything else (M2's leftovers) | "Next steps" below | | as listed |
 
 Rules: work on `main` or on a branch `track/<name>-<topic>` off it,
@@ -251,7 +252,13 @@ live in its track doc; fixed things leave this list.
 Each track's own order is in its track doc. This is the order across
 tracks, plus the items no track owns.
 
-1. **M15, the Direct3D fallback on Wine** (ADR-018,
+1. **M16, the DirectX 9 driver** (ADR-021, `tracks/m16-dx9-ddi.md`
+   "Steps"). Microsoft's `d3d9.dll` on the driver with SM3, XP then
+   Win98, checked against Wine's d3d8/d3d9 test suites on the rig; then
+   the `D3DPT\` Direct3D DLLs and `OPENGL32.DLL` (as an ICD) leave the
+   ISO. Step 0 first: the suites built for the guest and the rig's
+   pass lists, which the user runs there.
+2. **M15, the Direct3D fallback on Wine** (ADR-018,
    `tracks/m15-wine-executor.md` "Steps"). Steps 1–7 are done: the
    packaged community app on a real macOS 15 (the floor, `build-macos.md`)
    runs the game through the Wine executor, user-confirmed on 2026-09-23
@@ -275,7 +282,7 @@ tracks, plus the items no track owns.
    since 2026-09-24 (`scripts/build.sh --x86_64`, then `package-macos.sh
    --x86_64`; every packager check passes under Rosetta). Left: the
    reference scene on a real Intel Mac.
-2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
+3. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
    Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %
    and +15 % on the Air). Helper reach on x86-64, where it is the
@@ -285,20 +292,20 @@ tracks, plus the items no track owns.
    removed / hardwired on / switchable) to price the switches; later,
    "all off plus one switch". Not worth chasing: `bl` reach on the Mac
    (2 %).
-3. **Patch 21 (`pinned-regs`)** crashes XP under Super PI with seven or
+4. **Patch 21 (`pinned-regs`)** crashes XP under Super PI with seven or
    eight registers pinned (a bugcheck with auto-restart;
    `tools/specbench/run.sh <image> pinned` reproduces it; doc 18 open
    item 1). It is off and not in the machine form (user decision,
    2026-09-16: 1.1–1.2x at best), so fixing it is optional.
-4. **OpenGL pass-through (M3, doc 12).** Fence-based sync instead of
+5. **OpenGL pass-through (M3, doc 12).** Fence-based sync instead of
    `glFinish`, and a game on a Windows host (GLQuake). The Glide
    pass-through is gone (ADR-020, 2026-09-23); a Glide game on the DOS
    family runs on the Voodoo 2 and has not been tried.
-5. **Display (M2, doc 03).** An answer for presets with no resolution
+6. **Display (M2, doc 03).** An answer for presets with no resolution
    override. XP's mode table fed from the player and a present
    signal in phase with its swapchain (M7). The player's own overlay
    controls (pause, snapshot, disc swap; doc 07).
-6. **Windows host (M11's leftovers).** Moto Racer's speed on the PC
+7. **Windows host (M11's leftovers).** Moto Racer's speed on the PC
    (CPU-bound, not reproduced on Linux; M11 track doc) and the first
    clang-built QEMU there. The native MSYS2 build run (`scripts/win-run.sh
    launcher`, a machine, the Windows-built ISO in a guest). Live control
@@ -316,25 +323,25 @@ tracks, plus the items no track owns.
    from the installed app). And an installer for users outside the
    Store. Zero-copy frames through a DXGI shared handle. A Windows check
    that boots a guest.
-7. **M14, Voodoo 2** (its track doc, "Open, in order"): the glitched
+8. **M14, Voodoo 2** (its track doc, "Open, in order"): the glitched
    second Glide game, a client resuming on a dead ring, DxDiag's
    Direct3D 7 `GetDC` failure, the Air and the Windows build, Diablo II's
    numbers, patches 64 and 71 upstream.
-8. **M10, Win98 driver** (its track doc, "Next steps"): the
+9. **M10, Win98 driver** (its track doc, "Next steps"): the
    command-window lock (§36), the ACPI standby resume (§41).
-9. **M12, music.** One dxdiag music run on Win98 with
+10. **M12, music.** One dxdiag music run on Win98 with
    `LIBSYNTH_MIDI_LOG` and `LIBSYNTH_OPL_LOG` set (doc 20 §7.2). Then
    "MPU-401 Compatible" from Add New Hardware, the step Win98 needs
    before it plays MIDI to the port, and a host MIDI port (doc 20 §8).
-10. **M6, launcher and packages.** An AppImage (6b′), the Windows
+11. **M6, launcher and packages.** An AppImage (6b′), the Windows
     installer (6d; the MSIX covers the Store, above), the shader preview as a `QQuickRhiItem` (doc 07),
     screenshots for a Flathub submission, `CDSHELF.EXE`'s Win98 (ASPI)
     run.
-11. **M5, CD-ROM.** Triage FIFA 2002's no-match. Age of Mythology disc 1
+12. **M5, CD-ROM.** Triage FIFA 2002's no-match. Age of Mythology disc 1
     as a second SafeDisc 2 title. SecuROM (needs DPM in `mds.rs`).
     Multisession. CHD. Win98's CD Player by ear. M5g: a guest-side check
     of the stale-file rule.
-12. **The finished tracks' leftovers.** M4: a D3D8/9 game by hand on the
+13. **The finished tracks' leftovers.** M4: a D3D8/9 game by hand on the
     DLL path, its stubs, a decoder thread. M7: a shader title, a
     split-stream title, 3DMark2001's Nature for cubes, StarCraft / Age of
     Empires on 8 bpp, a driver stage in `scripts/test.sh`, something

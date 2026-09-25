@@ -28,6 +28,7 @@ The roadmap is doc 08.
 | 018 | Below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest retired | accepted, retirement done 2026-09-23 |
 | 019 | Two macOS builds: App Store 26+, community at Homebrew's floor | accepted |
 | 020 | The Glide pass-through is removed; the Voodoo 2 is the only Glide | accepted |
+| 021 | The driver is a DirectX 9 driver; no per-game graphics DLLs | accepted, work in M16 |
 
 ## ADR-001: QEMU as the base (2026-08-31)
 
@@ -670,3 +671,42 @@ Keeping the OpenGLide checkout for its Glide SDK header alone:
 `DITHTEST.EXE`, the Voodoo 2's dither probe, now compiles against
 `guest-tools/src/glide2sdk.h`, a subset of the Glide 2.4 ABI written from
 the public reference.
+
+## ADR-021: The display driver becomes a DirectX 9 driver; no per-game graphics DLLs (2026-09-25)
+
+**Decision** (user decision: "let's start the holy grail, our native
+directx 9 driver. no more custom dlls anywhere"). The `d3dpt-vga`
+driver answers Microsoft's `d3d9.dll` as a DirectX 9 driver with shader
+model 3.0, on XP and Win98, through the same core, protocol and executor
+as its DirectX 8 DDI. When it does, the ISO's per-game graphics DLLs go:
+`D3D8.DLL`, `D3D9.DLL` and `DDRAW.DLL` (`D3DPT\`), then `OPENGL32.DLL`
+(`OPENGL\`), which an OpenGL ICD installed by the driver's INF replaces.
+The SysBus `-device d3dpt` and the device mapper leave with the last DLL
+that uses them. `DINPUT.DLL` is input, not graphics, and stays per game
+(user: "leave dinput for now"). A component Windows loads because the
+driver's INF installed it (the display DLL, the 9x HAL, the ICD) is part
+of the driver, not a custom DLL. The work is track M16
+(`docs/tracks/m16-dx9-ddi.md`); Wine's `d3d8` / `d3d9` test suites,
+run on the reference rig and in the guest, are its conformance check.
+
+**Why.** The DLLs bypass the runtime, so every API corner the runtime
+would have handled is ours to write, and doc 14's stub list is what
+remained unwritten. They are copied per game, which a user must know to
+do. On 9x a DLL beside a game reaches only the session's first
+DirectDraw program (doc 19 §42). The DX8 DDI already showed the other
+route works: XP's `d3d8.dll` runs Vice City and Max Payne with no DLL.
+SM3 rather than SM2 first: the bytecode passes through to DXVK, so the
+claimed version is caps, and SM3's additions (vertex texture fetch,
+instancing) sit beside the SM2 work rather than changing it. A flag caps
+the claim at 2.0 for A/B.
+
+**Amends** ADR-006 and ADR-008: the paravirtual device and its executor
+stand, and the guest DLLs that ADR-008 staged the driver after are
+retired rather than kept as the 9x per-game path (doc 14 "The guest
+DLLs").
+
+**Rejected.** Claiming SM2 first and SM3 in a later milestone (the same
+DDI work, tested twice). Keeping the DLLs as a fallback beside the
+driver: two paths to keep equal, and the DLL path is the one with the
+stubs. An OpenGL wrapper that stays per game after the Direct3D DLLs go:
+the point is a game folder nobody touches.

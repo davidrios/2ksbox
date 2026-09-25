@@ -80,6 +80,12 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
   `d3dpt/d3dpt_proto.h` is the one header for guest, device and executor.
   **Bump `D3DPT_PROTO_VERSION` on any change.** The reference workload is
   `guest-tools/src/d3dgame9.c` / `d3dgame8.c`, golden on the rig first.
+- **The display driver becomes a DirectX 9 driver, and no custom DLLs**
+  (ADR-021, track M16): Microsoft's `d3d9.dll` / `d3d8.dll` on the
+  driver's DDI with SM3, on XP and Win98. The `D3DPT\` Direct3D DLLs and
+  `OPENGL32.DLL` are being retired (the GL one as an ICD the driver's INF
+  installs); don't add features to them or add a new per-game DLL.
+  `DINPUT.DLL` stays per game (user decision).
 - **DXVK is the executor's default and the only rasteriser goldens are
   compared against. Below its Vulkan 1.3 floor the same executor runs on
   another D3D9**: one decoder, four D3D9s (ADR-007 + second amendment,
