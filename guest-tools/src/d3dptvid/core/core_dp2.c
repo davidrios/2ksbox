@@ -60,6 +60,7 @@ typedef struct _DP2WALK {
     BOOL split;                 /* the walk stopped at stop, before a blit, for the next record to go on from */
     BOOL rt_set;                /* a SETRENDERTARGET was walked: rt / z are the context's target from here on */
     ULONG rt, z;
+    ULONG_PTR ctx;              /* the call's context: DX9 query ids are per context */
 } DP2WALK;
 
 static ULONG prim_verts(ULONG prim, ULONG n)
@@ -465,6 +466,8 @@ static void walk_volumeblt(DP2WALK *w, const ULONG *b)
 
 /* TEXBLT: system memory -> the VRAM texture, every level (a cube's every
  * face, v11), then VRAM_DIRTY */
+static void blt_log(d3dpt_core *p, const char *what, const ULONG *b, ULONG n);
+
 static void walk_texblt(DP2WALK *w, const ULONG *b)
 {
     d3dpt_core *p = w->p;
@@ -506,6 +509,12 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
     }
     if (sl < 0 || st < 0 || sr <= sl || sb <= st || dx < 0 || dy < 0) {
         return;
+    }
+    {
+        ULONG v[7];
+        v[0] = b[0]; v[1] = b[1]; v[2] = dst->levels; v[3] = src->levels;
+        v[4] = (dst->cube ? 2 : 0) | (src->cube ? 1 : 0); v[5] = (b[4] << 16) | (b[5] & 0xffff); v[6] = (b[6] << 16) | (b[7] & 0xffff);
+        blt_log(p, "texblt (dst, src, levels dst/src, cubes, rect):", v, 7);
     }
     levels = dst->levels < src->levels ? dst->levels : src->levels;
     if (levels > 16) {
@@ -584,6 +593,300 @@ static void walk_bufferblt(DP2WALK *w, const ULONG *b)
     if (!dst->sysmem) {
         d3d_dirty_range(p, b[0], doff, len);
     }
+}
+
+/* The DX9 blits (M16): BLT (StretchRect), SURFACEBLT (UpdateSurface) and
+ * COLORFILL, done here in pass 1 on the surfaces' memory as TEXBLT is. A
+ * video-memory surface the host may have drawn into is read back first
+ * (d3d_readback; nothing happens when the host has not), and one written
+ * gets VRAM_DIRTY, so the host re-reads it before it next samples or draws
+ * into it. walk splits the record before any of them that follows other
+ * tokens, so the host has run those by then. */
+
+/* level lv of a surface: its memory, pitch and size; FALSE for a cube,
+ * a volume, a buffer or a level it lacks */
+static BOOL blt_level(const SURF *t, ULONG lv, ULONG_PTR *mem, ULONG *pitch, ULONG *w, ULONG *h)
+{
+    if (!t || !t->mem || t->buffer || t->cube || t->depth || !t->fmt || lv >= t->levels || lv > 15) {
+        return FALSE;
+    }
+    *mem = lv ? t->lv[lv - 1].mem : t->mem;
+    *pitch = lv ? t->lv[lv - 1].pitch : t->pitch;
+    *w = t->w >> lv ? t->w >> lv : 1;
+    *h = t->h >> lv ? t->h >> lv : 1;
+    return *mem != 0;
+}
+
+/* a RECTL (l, t, r, b) inside w x h, not empty */
+static BOOL blt_rect_ok(const LONG *r, ULONG w, ULONG h)
+{
+    return r[0] >= 0 && r[1] >= 0 && r[0] < r[2] && r[1] < r[3] && (ULONG)r[2] <= w && (ULONG)r[3] <= h;
+}
+
+/* D3DCOLOR in fmt's layout, each channel rounded as a float conversion
+ * rounds it (what the host's fill would write); 0 bytes for a format with
+ * no RGB fill here */
+static ULONG fill_pack(ULONG fmt, ULONG c, ULONG *v)
+{
+    ULONG a = c >> 24, r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+#define CH(x, bits) (((x) * ((1u << (bits)) - 1) + 127) / 255)
+    switch (fmt) {
+    case D3DFMT_X8R8G8B8_: case D3DFMT_A8R8G8B8_: *v = c; return 4;
+    case D3DFMT_R5G6B5_: *v = CH(r, 5) << 11 | CH(g, 6) << 5 | CH(b, 5); return 2;
+    case D3DFMT_X1R5G5B5_: case D3DFMT_A1R5G5B5_: *v = CH(a, 1) << 15 | CH(r, 5) << 10 | CH(g, 5) << 5 | CH(b, 5); return 2;
+    case D3DFMT_A4R4G4B4_: case D3DFMT_X4R4G4B4_: *v = CH(a, 4) << 12 | CH(r, 4) << 8 | CH(g, 4) << 4 | CH(b, 4); return 2;
+    case D3DFMT_A8_: *v = a; return 1;
+    default: return 0;
+    }
+#undef CH
+}
+
+static void blt_log(d3dpt_core *p, const char *what, const ULONG *b, ULONG n)
+{
+    static ULONG lines;
+    ULONG i;
+
+    if (p->reg_lines >= 4096 || lines >= 48) {
+        return;
+    }
+    p->reg_lines++;
+    lines++;
+    dbg_puts(p, "d3dptdisp: ");
+    dbg_puts(p, what);
+    for (i = 0; i < n; i++) dbg_hex(p, " ", b[i]);
+    dbg_puts(p, "\n");
+}
+
+/* COLORFILL: surface, RECTL, D3DCOLOR */
+static void walk_colorfill(DP2WALK *w, const ULONG *b)
+{
+    d3dpt_core *p = w->p;
+    SURF *t = surf_slot(b[0], FALSE);
+    ULONG_PTR mem;
+    ULONG pitch, sw, sh, v = 0, bpp, x, y;
+    const LONG *r = (const LONG *)(b + 1);
+
+    if (!blt_level(t, 0, &mem, &pitch, &sw, &sh) || !blt_rect_ok(r, sw, sh) || !(bpp = fill_pack(t->fmt, b[5], &v))) {
+        blt_log(p, "colorfill refused:", b, 6);
+        return;
+    }
+    blt_log(p, "colorfill", b, 6);
+    if (!t->sysmem) d3d_readback(p, b[0]);
+    for (y = (ULONG)r[1]; y < (ULONG)r[3]; y++) {
+        UCHAR *row = (UCHAR *)(mem + y * pitch) + r[0] * bpp;
+        for (x = 0; x < (ULONG)(r[2] - r[0]); x++) {
+            if (bpp == 4) ((ULONG *)row)[x] = v;
+            else if (bpp == 2) ((USHORT *)row)[x] = (USHORT)v;
+            else row[x] = (UCHAR)v;
+        }
+    }
+    if (!t->sysmem) d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[0]);
+}
+
+/* BLT (StretchRect) and SURFACEBLT (UpdateSurface): source, RECTL, level,
+ * destination, RECTL, level, flags. Same-size rectangles copy (DXT in
+ * whole blocks); StretchRect's scaled ones take the nearest texel, as the
+ * host's point filter does. Formats of one texel size copy as they are. */
+static void walk_blt9(DP2WALK *w, const ULONG *b, BOOL stretch)
+{
+    d3dpt_core *p = w->p;
+    SURF *src = surf_slot(b[0], FALSE), *dst = surf_slot(b[6], FALSE);
+    const LONG *sr = (const LONG *)(b + 1), *dr = (const LONG *)(b + 7);
+    ULONG_PTR smem, dmem;
+    ULONG spitch, dpitch, sw, sh, dw, dh, sfmt, bpp, x, y, cw, ch, dxt;
+
+    sfmt = src ? (src->nopf && dst ? dst->fmt : src->fmt) : 0;
+    if (!blt_level(src, b[5], &smem, &spitch, &sw, &sh) || !blt_level(dst, b[11], &dmem, &dpitch, &dw, &dh) ||
+        !blt_rect_ok(sr, sw, sh) || !blt_rect_ok(dr, dw, dh) || fmt_row_bytes(sfmt, 1) != fmt_row_bytes(dst->fmt, 1) ||
+        ((fmt_is_dxt(sfmt) || fmt_is_dxt(dst->fmt)) && sfmt != dst->fmt)) {
+        blt_log(p, stretch ? "blt refused:" : "surfaceblt refused:", b, 13);
+        return;
+    }
+    blt_log(p, stretch ? "blt" : "surfaceblt", b, 13);
+    cw = (ULONG)(dr[2] - dr[0]);
+    ch = (ULONG)(dr[3] - dr[1]);
+    if (!src->sysmem) d3d_readback(p, b[0]);
+    if (!dst->sysmem) d3d_readback(p, b[6]);
+    dxt = fmt_is_dxt(sfmt);
+    if (dxt) {
+        ULONG block = fmt_row_bytes(sfmt, 4), rows, rowbytes;
+
+        if (cw != (ULONG)(sr[2] - sr[0]) || ch != (ULONG)(sr[3] - sr[1])) {
+            blt_log(p, "blt refused, a scaled DXT rectangle:", b, 13);
+            return;
+        }
+        rows = (sr[1] + ch + 3) / 4 - sr[1] / 4;
+        rowbytes = ((sr[0] + cw + 3) / 4 - sr[0] / 4) * block;
+        smem += (sr[1] / 4) * spitch + (sr[0] / 4) * block;
+        dmem += (dr[1] / 4) * dpitch + (dr[0] / 4) * block;
+        for (y = 0; y < rows; y++) {
+            memcpy((void *)(dmem + y * dpitch), (const void *)(smem + y * spitch), rowbytes);
+        }
+    } else if (cw == (ULONG)(sr[2] - sr[0]) && ch == (ULONG)(sr[3] - sr[1])) {
+        bpp = fmt_row_bytes(sfmt, 1);
+        for (y = 0; y < ch; y++) {
+            memcpy((void *)(dmem + (dr[1] + y) * dpitch + dr[0] * bpp),
+                    (const void *)(smem + (sr[1] + y) * spitch + sr[0] * bpp), cw * bpp);
+        }
+    } else {
+        ULONG scw = (ULONG)(sr[2] - sr[0]), sch = (ULONG)(sr[3] - sr[1]);
+
+        bpp = fmt_row_bytes(sfmt, 1);
+        for (y = 0; y < ch; y++) {
+            const UCHAR *srow = (const UCHAR *)(smem + (sr[1] + ((2 * y + 1) * sch) / (2 * ch)) * spitch);
+            UCHAR *drow = (UCHAR *)(dmem + (dr[1] + y) * dpitch) + dr[0] * bpp;
+            for (x = 0; x < cw; x++) {
+                memcpy(drow + x * bpp, srow + (sr[0] + ((2 * x + 1) * scw) / (2 * cw)) * bpp, bpp);
+            }
+        }
+    }
+    if (!dst->sysmem) d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[6]);
+}
+
+/* The DX9 queries (M16): event and occlusion. The runtime names a query by
+ * a per-context id (CREATEQUERY, DELETEQUERY) and ISSUEQUERY begins or ends
+ * it. It learns a result from a response the driver writes at the start of
+ * the command buffer, dwErrorOffset bytes of them on a successful call
+ * (d3d9.dll's parser at 0x4fd75950: RESPONSEQUERY, the block's bytes, then
+ * {id, size, data} per query). An occlusion query is the host's; ending one
+ * waits for its count, which the host has the moment it has run the draws
+ * before it (walk ends the record before an ISSUEQUERY, and every record
+ * runs before the doorbell returns). An event is done by then too. */
+
+static ULONG query_find(d3dpt_core *p, ULONG ctx, ULONG id)
+{
+    ULONG i;
+
+    for (i = 0; i < D3D_MAX_QUERIES; i++) {
+        if (p->queries[i].type && p->queries[i].ctx == ctx && p->queries[i].id == id) {
+            return i;
+        }
+    }
+    return ~0u;
+}
+
+static void query_release(d3dpt_core *p, ULONG i)
+{
+    if (p->queries[i].host) {
+        d3d_handle_op(p, D3DPT_OP_RELEASE, p->queries[i].host);
+    }
+    p->queries[i].type = 0;
+    p->queries[i].host = 0;
+}
+
+/* a context's queries, when the runtime destroys it (a process that never
+ * deleted them) */
+void query_forget_ctx(d3dpt_core *p, ULONG_PTR ctx)
+{
+    ULONG i;
+
+    for (i = 0; i < D3D_MAX_QUERIES; i++) {
+        if (p->queries[i].type && p->queries[i].ctx == (ULONG)ctx) {
+            query_release(p, i);
+        }
+    }
+}
+
+/* CREATEQUERY: id, D3DQUERYTYPE */
+static void walk_query_create(DP2WALK *w, const ULONG *b)
+{
+    d3dpt_core *p = w->p;
+    ULONG i = query_find(p, (ULONG)w->ctx, b[0]), off, h = 0;
+    d3dpt_create_query *a;
+
+    if (i != ~0u) {
+        query_release(p, i);                /* an id the runtime reuses */
+    }
+    for (i = 0; i < D3D_MAX_QUERIES && p->queries[i].type; i++) {
+    }
+    if (i == D3D_MAX_QUERIES || (b[1] != 8 && b[1] != 9)) {
+        blt_log(p, "query refused:", b, 2);
+        return;
+    }
+    if (b[1] == 9) {                        /* D3DQUERYTYPE_OCCLUSION: the host counts */
+        h = 0x51000000u | (++p->query_host_next & 0xffffffu);
+        off = d3dpt_enc_ret(&p->enc, 0);
+        a = (d3dpt_create_query *)d3dpt_enc_cmd(&p->enc, D3DPT_OP_CREATE_QUERY, sizeof(*a), 0);
+        if (!a) {
+            return;
+        }
+        a->handle = h;
+        a->ret_off = off;
+        a->type = b[1];
+        a->pad = 0;
+        d3dpt_enc_flush(&p->enc);
+        if (p->enc.last_status || d3dpt_enc_result(&p->enc, off)->hr != 0) {
+            blt_log(p, "query refused by the host:", b, 2);
+            return;
+        }
+    }
+    p->queries[i].ctx = (ULONG)w->ctx;
+    p->queries[i].id = b[0];
+    p->queries[i].type = b[1];
+    p->queries[i].host = h;
+}
+
+/* a response entry: the query's id and one dword of data */
+static void resp_add(d3dpt_core *p, ULONG id, ULONG value)
+{
+    if (p->resp_len + 3 > D3D_RESP_DWORDS - 2) {
+        blt_log(p, "query response dropped, the buffer is full:", &id, 1);
+        return;
+    }
+    p->resp[2 + p->resp_len++] = id;
+    p->resp[2 + p->resp_len++] = 4;
+    p->resp[2 + p->resp_len++] = value;
+    p->resp_n++;
+}
+
+/* ISSUEQUERY: id, flags (D3DISSUE_END 1, D3DISSUE_BEGIN 2) */
+static void walk_query_issue(DP2WALK *w, const ULONG *b)
+{
+    d3dpt_core *p = w->p;
+    ULONG i = query_find(p, (ULONG)w->ctx, b[0]), n, off;
+    d3dpt_query_get *a;
+    d3dpt_ret *r;
+
+    if (i == ~0u) {
+        blt_log(p, "issue of an unknown query:", b, 2);
+        return;
+    }
+    blt_log(p, "issuequery", b, 2);
+    if (p->queries[i].type == 8) {          /* an event: every command before it has run */
+        if (b[1] & 1) resp_add(p, b[0], 1);
+        return;
+    }
+    d3dpt_enc_u32x2(&p->enc, D3DPT_OP_QUERY_ISSUE, p->queries[i].host, b[1] & 3);
+    if (!(b[1] & 1)) {
+        return;
+    }
+    for (n = 0; n < 100000; n++) {
+        off = d3dpt_enc_ret(&p->enc, 4);
+        a = (d3dpt_query_get *)d3dpt_enc_cmd(&p->enc, D3DPT_OP_QUERY_GET_DATA, sizeof(*a), 0);
+        if (!a) {
+            return;
+        }
+        a->handle = p->queries[i].host;
+        a->ret_off = off;
+        a->flags = 1;                       /* D3DGETDATA_FLUSH */
+        a->size = 4;
+        d3dpt_enc_flush(&p->enc);
+        r = d3dpt_enc_result(&p->enc, off);
+        if (p->enc.last_status || (r->hr != 0 && r->hr != 1)) {
+            break;
+        }
+        if (r->hr == 0) {
+            ULONG v[3];
+            v[0] = b[0];
+            v[1] = *(const ULONG *)(r + 1);
+            v[2] = n;
+            blt_log(p, "occlusion query result (id, count, polls):", v, 3);
+            resp_add(p, b[0], v[1]);
+            return;
+        }
+    }
+    blt_log(p, "occlusion query without a result, answered 0:", b, 2);
+    resp_add(p, b[0], 0);
 }
 
 /* the body size of a token, ~0 when unknown or truncated; the IMM tokens'
@@ -815,6 +1118,15 @@ static BOOL walk(DP2WALK *w)
             w->stop = pos;
             return TRUE;
         }
+        /* The DX9 blits read and write render targets as well, which a
+         * clear or a target switch changes as much as a draw does, and an
+         * ISSUEQUERY must fall between the draws it counts and the ones it
+         * does not: anything before one in the record goes to the host first */
+        if ((op == 81 || op == 82 || op == 91 || op == 96) && w->outlen && pos > w->start && w->can_split) {
+            w->split = TRUE;
+            w->stop = pos;
+            return TRUE;
+        }
         switch (op) {
         case 8:                                                 /* RENDERSTATE: mirrored for the runtime */
             if (w->rstates && !w->out) {
@@ -1008,10 +1320,37 @@ static BOOL walk(DP2WALK *w)
             }
             break;
         }
-        case 81: case 82: case 84: case 89: case 90: case 91: case 95: case 96:
-            /* DX9 tokens not walked yet (M16 step 2): blits, colour fill,
-             * queries (none are offered), mip generation, instancing. Said
-             * once each, dropped */
+        case 81: case 96:                                       /* BLT / SURFACEBLT: done here, in pass 1 (M16) */
+            if (!w->out) {
+                for (i = 0; i < count; i++) walk_blt9(w, (const ULONG *)(q + i * 52), op == 81);
+            }
+            break;
+        case 82:                                                /* COLORFILL: done here, in pass 1 (M16) */
+            if (!w->out) {
+                for (i = 0; i < count; i++) walk_colorfill(w, (const ULONG *)(q + i * 24));
+            }
+            break;
+        case 84:                                                /* CREATEQUERY: id, type (M16) */
+            if (!w->out) {
+                for (i = 0; i < count; i++) walk_query_create(w, (const ULONG *)(q + i * 8));
+            }
+            break;
+        case 90:                                                /* DELETEQUERY: id (M16) */
+            if (!w->out) {
+                for (i = 0; i < count; i++) {
+                    ULONG k = query_find(w->p, (ULONG)w->ctx, ((const ULONG *)q)[i]);
+                    if (k != ~0u) query_release(w->p, k);
+                }
+            }
+            break;
+        case 91:                                                /* ISSUEQUERY: id, flags (M16) */
+            if (!w->out) {
+                for (i = 0; i < count; i++) walk_query_issue(w, (const ULONG *)(q + i * 8));
+            }
+            break;
+        case 89: case 95:
+            /* DX9 tokens not walked yet (M16 step 2): mip generation,
+             * instancing. Said once each, dropped */
             if (!w->out && !(w->p->dx9_unwalked & (1u << (op - 64))) && w->p->parse_lines < 64) {
                 w->p->dx9_unwalked |= 1u << (op - 64);
                 w->p->parse_lines++;
@@ -1055,6 +1394,7 @@ static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, UL
     memset(&w0, 0, sizeof(w0));
     w0.p = p;
     w0.start = start;
+    w0.ctx = call->ctx;
     w0.can_split = !call->eb;
     w0.cmd = call->cmd;
     w0.clen = call->clen;
@@ -1196,6 +1536,7 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
     out->hr = DDERR_GENERIC;
     out->offset = 0;
     out->bounce = FALSE;
+    out->resp_bytes = 0;
     if (!c) {
         if (p && p->dp2_errors < 8) {
             p->dp2_errors++;
@@ -1213,7 +1554,22 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
         }
         return;
     }
+    p->resp_n = p->resp_len = 0;
     do {
         start = dp2_record(p, c, call, start, out);
     } while (start != ~0u);
+    /* the query responses, now that nothing more is read from the buffer
+     * they overwrite */
+    if (p->resp_n) {
+        ULONG bytes = (2 + p->resp_len) * 4;
+
+        if (call->resp && bytes <= call->resp_max && out->hr == DD_OK) {
+            p->resp[0] = 88u | (p->resp_n << 16);  /* D3DDP2OP_RESPONSEQUERY, wPrimitiveCount entries */
+            p->resp[1] = bytes;                     /* the block's bytes, header included */
+            memcpy(call->resp, p->resp, bytes);
+            out->resp_bytes = bytes;
+            blt_log(p, "query responses (bytes, entries):", p->resp + 1, 1);
+        }
+        p->resp_n = p->resp_len = 0;
+    }
 }

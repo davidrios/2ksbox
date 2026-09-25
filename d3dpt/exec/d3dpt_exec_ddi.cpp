@@ -969,6 +969,14 @@ static bool sm1_valid(const uint32_t *t, size_t n, bool vs) {
             i++;
             continue;
         }
+        if (op == 31) {                                             /* DCL: vs 1.1 as d3d9.dll passes it (M16) */
+            /* a usage token, then the input register it names; d3d8.dll's
+             * vs 1.1 has none (its declaration is a separate token stream) */
+            if (!vs || i + 3 > end || !(t[i + 1] & 0x80000000u) || !(t[i + 2] & 0x80000000u) ||
+                ((t[i + 2] >> 28) & 7) != 1 || !sm1_reg_ok(t[i + 2], vs, minor)) return false;
+            i += 3;
+            continue;
+        }
         const Sm1Op *o = nullptr;
         for (const Sm1Op &e : sm1_ops) if (e.op == op) { o = &e; break; }
         if (!o || !(vs ? o->vs : o->ps)) return false;
@@ -1019,7 +1027,8 @@ struct Dp2 {
     }
     /* every level of a traced texture, as tex-<handle>-l<n>.ppm (RGB) +
      * tex-<handle>-l<n>-a.pgm (alpha) next to the flag file, once per handle;
-     * every format texel_argb knows (P8 as a grey ramp) */
+     * a cube's faces after the first as tex-<handle>-f<face>-l<n>; every
+     * format texel_argb knows (P8 as a grey ramp) */
     void dump_texture(const VramSurf &s, uint32_t handle) {
         char path[512]; const char *slash = strrchr(d.trace_flag, '/');
         int dirlen = slash ? (int)(slash - d.trace_flag) : 1;
@@ -1027,14 +1036,19 @@ struct Dp2 {
         snprintf(path, sizeof path, "%.*s/tex-%u-l0.ppm", dirlen, dir, handle);
         if (file_exists(path)) return;   /* one dump per handle */
         uint32_t bpp = fmt_row_bytes(s.d.format, 1);
-        for (uint32_t l = 0; l < s.d.levels; l++) {
+        uint32_t faces = (s.d.caps & D3DPT_VS_CUBE) ? D3DPT_CUBE_FACES : 1;
+        for (uint32_t e = 0; e < faces * s.d.levels; e++) {
+            uint32_t f = e / s.d.levels, l = e % s.d.levels;
             uint32_t w = s.d.width >> l, h = s.d.height >> l;
             if (!w) w = 1;
             if (!h) h = 1;
-            uint32_t off = l ? s.levels[l - 1].a : s.d.offset, pitch = l ? s.levels[l - 1].b : s.d.pitch;
-            snprintf(path, sizeof path, "%.*s/tex-%u-l%u.ppm", dirlen, dir, handle, l);
+            if (e && e > s.levels.size()) break;
+            uint32_t off = e ? s.levels[e - 1].a : s.d.offset, pitch = e ? s.levels[e - 1].b : s.d.pitch;
+            if (f) snprintf(path, sizeof path, "%.*s/tex-%u-f%u-l%u.ppm", dirlen, dir, handle, f, l);
+            else snprintf(path, sizeof path, "%.*s/tex-%u-l%u.ppm", dirlen, dir, handle, l);
             FILE *rgb = fopen(path, "wb");
-            snprintf(path, sizeof path, "%.*s/tex-%u-l%u-a.pgm", dirlen, dir, handle, l);
+            if (f) snprintf(path, sizeof path, "%.*s/tex-%u-f%u-l%u-a.pgm", dirlen, dir, handle, f, l);
+            else snprintf(path, sizeof path, "%.*s/tex-%u-l%u-a.pgm", dirlen, dir, handle, l);
             FILE *al = fopen(path, "wb");
             if (!rgb || !al) { if (rgb) fclose(rgb); if (al) fclose(al); return; }
             fprintf(rgb, "P6\n%u %u\n255\n", w, h);

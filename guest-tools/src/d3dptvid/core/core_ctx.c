@@ -83,6 +83,7 @@ HRESULT ctx_create(d3dpt_core *p, ULONG_PTR *handle, ULONG pid, ULONG rt, ULONG 
 
 void ctx_destroy(d3dpt_core *p, ULONG i)
 {
+    query_forget_ctx(p, i + 1);
     d3d_handle_op(p, D3DPT_OP_CTX_DESTROY, i + 1);
     d3d_ctx[i].used = FALSE;
     d3d_ctx_live--;

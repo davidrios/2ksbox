@@ -201,6 +201,9 @@ typedef struct _D3DCTX {
  * starts with one of these (NT's PDEV does), so a pointer to it is a
  * pointer to the layer's, and the doorbell callback finds its way back
  * from the encoder by offset. */
+#define D3D_MAX_QUERIES 128
+#define D3D_RESP_DWORDS 256
+
 typedef struct d3dpt_core {
     volatile ULONG *regs;       /* public access range (register page) */
     PVOID fb;                   /* mapped frame buffer */
@@ -228,6 +231,13 @@ typedef struct d3dpt_core {
     BOOL dx9;                   /* the layer offers the DirectX 9 face (M16; NT first, 9x at M16 step 5) */
     ULONG dx9_unwalked;         /* bit op - 64: a DX9 token the walker drops was reported (M16) */
     ULONG rt_dxver;             /* the last DXVERSION a runtime announced (0x802 d3d8.dll, 0x902 d3d9.dll) */
+    /* DX9 queries (M16): the runtime's per-context ids, the host's handle
+     * of an occlusion one, and the responses one DrawPrimitives2 call
+     * gathers for the runtime (written into its command buffer at the end) */
+    struct { ULONG ctx, id, type, host; } queries[D3D_MAX_QUERIES];
+    ULONG query_host_next;
+    ULONG resp[D3D_RESP_DWORDS];
+    ULONG resp_n, resp_len;     /* entries, and dwords used after the 2-dword block header */
 } d3dpt_core;
 
 /* the core whose Direct3D is on (the primary display) */
@@ -338,6 +348,7 @@ extern ULONG d3d_ctx_live;
 D3DCTX *ctx_of(d3dpt_core *c, ULONG_PTR h);
 HRESULT ctx_create(d3dpt_core *c, ULONG_PTR *handle, ULONG pid, ULONG rt, ULONG z);
 void ctx_destroy(d3dpt_core *c, ULONG i);
+void query_forget_ctx(d3dpt_core *c, ULONG_PTR ctx);
 HRESULT ctx_destroy_one(d3dpt_core *c, ULONG_PTR h);
 void ctx_destroy_all(d3dpt_core *c, ULONG pid);
 HRESULT ctx_scene_capture(d3dpt_core *c, ULONG_PTR h, BOOL end);
@@ -359,6 +370,8 @@ typedef struct d3dpt_dp2_call {
     ULONG vertex_type;          /* the call's FVF / vertex shader handle */
     BOOL eb;                    /* the stream is a DX3 execute buffer's instructions (doc 15) */
     DWORD *rstates;             /* the runtime's render-state array, or NULL */
+    UCHAR *resp;                /* the command buffer's start, where DX9 query responses go (NULL: none) */
+    ULONG resp_max;             /* its bytes */
 } d3dpt_dp2_call;
 
 typedef struct d3dpt_dp2_result {
@@ -367,6 +380,7 @@ typedef struct d3dpt_dp2_result {
     BOOL bounce;                /* hr is COMMAND_UNPARSED and offset is where the runtime
                                  * takes over; it counts from the command buffer's start,
                                  * so the layer adds back the command offset it passed in */
+    ULONG resp_bytes;           /* DX9 query responses written at resp: the layer's dwErrorOffset on success */
 } d3dpt_dp2_result;
 
 ULONG fvf_stride(ULONG fvf);

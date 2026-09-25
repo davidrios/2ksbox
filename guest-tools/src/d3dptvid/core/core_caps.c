@@ -682,10 +682,18 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
         return DD_OK;
     }
     case D3DGDI2_TYPE_GETD3DQUERYCOUNT_: {
-        /* no query types yet: RESPONSEQUERY is M16 step 2's */
+        /* the event and occlusion queries (M16 step 2) */
         DD_GETD3DQUERYCOUNTDATA_ *q = (DD_GETD3DQUERYCOUNTDATA_ *)g;
         if (!dx9 || want < sizeof(*q)) return DDERR_CURRENTLYNOTAVAIL;
-        q->dwNumQueries = 0;
+        q->dwNumQueries = 2;
+        *actual = sizeof(*q);
+        return DD_OK;
+    }
+    case D3DGDI2_TYPE_GETD3DQUERY_: {
+        static const DWORD types[2] = { 8, 9 };        /* D3DQUERYTYPE_EVENT, D3DQUERYTYPE_OCCLUSION */
+        DD_GETD3DQUERYDATA_ *q = (DD_GETD3DQUERYDATA_ *)g;
+        if (!dx9 || want < sizeof(*q) || q->dwQueryIndex >= 2) return DDERR_CURRENTLYNOTAVAIL;
+        q->dwQueryIndex = types[q->dwQueryIndex];
         *actual = sizeof(*q);
         return DD_OK;
     }

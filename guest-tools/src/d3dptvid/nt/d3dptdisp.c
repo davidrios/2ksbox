@@ -2099,12 +2099,16 @@ static DWORD APIENTRY D3dDrawPrimitives2(LPD3DNTHAL_DRAWPRIMITIVES2DATA d)
     call.vertex_type = d->dwVertexType;
     call.eb = (d->dwFlags & D3DNTHALDP2_EXECUTEBUFFER) != 0;
     call.rstates = d->lpdwRStates;
+    call.resp = (UCHAR *)d->lpDDCommands->lpGbl->fpVidMem;
+    call.resp_max = d->lpDDCommands->lpGbl->dwLinearSize;
 
     dp2_run(&p->core, &call, &res);
     d->ddrval = res.hr;
     /* A bounce offset counts from the command buffer's start, like
-     * dwCommandOffset. An error offset is the core's own. */
-    d->dwErrorOffset = res.bounce ? d->dwCommandOffset + res.offset : res.offset;
+     * dwCommandOffset. An error offset is the core's own. On success a DX9
+     * runtime reads dwErrorOffset as the bytes of query responses at the
+     * buffer's start (dp2_run) */
+    d->dwErrorOffset = res.bounce ? d->dwCommandOffset + res.offset : res.hr == DD_OK ? res.resp_bytes : res.offset;
     return DDHAL_DRIVER_HANDLED;
 }
 

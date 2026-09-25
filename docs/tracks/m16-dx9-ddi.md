@@ -29,21 +29,34 @@ ps 3.0, 256 vertex constants, 16 streams and hardware vertex processing
 (`DX9CAPS.EXE`), and `d3d8.dll` still sees the DX8 driver (the ten DX8
 probes and SHTEST pass). Doc 15 "The DirectX 9 DDI" has the queries, the
 runtime's caps check (the hard part: a failed check gives DX7-level caps,
-not an error) and the tokens. Step 2 has begun: declarations, shader code,
-integer / boolean constants, scissor, SETSTREAMSOURCE2 and the target
-tokens reach the host (protocol v14); the blits, queries, mip generation
-and instancing are dropped with a log line.
+not an error) and the tokens. Step 2 is most of the way: declarations,
+shader code, integer / boolean constants, scissor, SETSTREAMSOURCE2 and
+the target tokens reach the host (protocol v14); the blits and colour fill
+run in the driver and the event and occlusion queries answer (no wire
+change). Mip generation and instancing are still dropped with a log line.
 
 - **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
   `xp-driver-test.sh d3dgame9`): 600 frames on a hardware-vertex-processing
   device, frame 300 dumped, **0 pixels differ** from the native DXVK
   frame since finding 8's fix (17 % before it, all texture minification).
   D3DGAME8 through `d3d8.dll` on the same build: 0 pixels differ.
+- **D3DFEAT9 through `d3d9.dll`** (`xp-driver-test.sh d3dfeat9`, new):
+  the frame is **byte-identical** to the native run, and the occlusion
+  query counts the same 21316 pixels. One getter line differs: the
+  A16B16G16R16F render target's readback (`D3DERR_INVALIDCALL`), a float
+  format, which is step 3. D3DFEAT9 itself changed: its ColorFill target is
+  a render-target texture now, because Microsoft's runtime refuses
+  ColorFill on a default-pool texture without `D3DUSAGE_RENDERTARGET`
+  (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face:** d3d9 stateblock 14738 checks, **0**
   failures (182 on the DX8 face: the integer / boolean constants). d3d9
-  visual now reaches the SM2 / SM3 tests it skipped and fails 935 checks
-  before a crash inside the test program at `visual.c:25891`; the top
-  groups are `visual.c:3350` and `11556..11588`. The baseline in
+  visual reaches the SM2 / SM3 tests and fails **426** checks (935 before
+  the blits, queries and `dcl`) before a crash inside the test program at
+  `visual.c:25891`. What it shows next: vertex-shader fog
+  (`fog_with_shader_test`, `visual.c:3350`), point size from a vertex
+  shader (`test_pointsize`), `GENERATEMIPSUBLEVELS`
+  (`test_generate_mipmap`). They fail now because vs 1.x functions run
+  (finding 11) where the fixed function stood in before. The baseline in
   `reference/winetest/xp-driver.txt` is the DX8 face's; the DX9 face runs
   more tests, so a new one is due once the crashes are gone.
 - **Findings from the DX9 face:**
@@ -70,6 +83,34 @@ and instancing are dropped with a log line.
      (`surf_lw_layout`: each level after the last, dword rows, block rows
      for DXT) and `d3d_register_at` hands the host those offsets. The 9x
      HAL does not size one yet (step 5).
+  9. *Fixed.* The DX9 blits: `BLT` (StretchRect, `GetRenderTargetData`),
+     `SURFACEBLT` (UpdateSurface) and `COLORFILL` run in the driver on
+     the surfaces' memory, as `TEXBLT` does: the record ends before one
+     that follows other tokens, a video-memory surface the host drew into
+     is read back first, and the one written gets `VRAM_DIRTY`. Same-size
+     rectangles copy (DXT in whole blocks), StretchRect's scaled ones take
+     the nearest texel; formats of one texel size copy as they are.
+  10. *Fixed.* Queries. The driver lists `D3DQUERYTYPE_EVENT` and
+     `OCCLUSION` (`GETD3DQUERYCOUNT` / `GETD3DQUERY`). The runtime reads a
+     result from the **command buffer's start**: after a successful call
+     with a nonzero `dwErrorOffset` (DDI version 8 and later), that many
+     bytes of `RESPONSEQUERY` blocks (the DP2 command, the block's bytes,
+     then {id, size, data} per query; `RESPONSECONTINUE` asks it to call
+     again), `d3d9.dll`'s parser at 0x4fd75950. The mingw headers have no
+     response structs. An occlusion query is the host's
+     (`D3DPT_OP_CREATE_QUERY` / `QUERY_ISSUE` / `QUERY_GET_DATA`, the DLL
+     path's); an `ISSUEQUERY` starts a record, and its end waits for the
+     count, which the host has once the draws before it ran. The
+     responses are written after the whole call is walked, since they
+     overwrite the commands.
+  11. *Fixed.* The executor refused every vs 1.1 function `d3d9.dll` sent
+     (`vertex shader function 0x1 is not valid vs 1.x`): DX9's vs 1.1
+     carries `dcl` instructions, which the SM1 validator took from
+     `d3d8.dll`'s shaders never had. The draw fell back to the fixed
+     function, which got D3DFEAT9's texture and colours right by luck and
+     its cube lookup (the normal as `oT1`) black. `sm1_valid` takes `dcl`
+     for vs 1.x (a usage token, then an input register);
+     `d3dpt-dp2-test` has the case and a hostile one.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

@@ -1331,10 +1331,23 @@ the 9x layer not yet.
   context's current `SETVERTEXSHADERFUNC` over it (0 = fixed function).
   `SETSTREAMSOURCE2`'s offset is the walker's. `SETRENDERTARGET2`
   (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair.
-  Integer / boolean constants and the scissor go to the host. BLT,
-  COLORFILL, SURFACEBLT, the query tokens, GENERATEMIPSUBLEVELS and
-  SETSTREAMSOURCEFREQ are dropped with a `dx9 token N not walked yet`
-  line (M16 step 2).
+  Integer / boolean constants and the scissor go to the host.
+  GENERATEMIPSUBLEVELS and SETSTREAMSOURCEFREQ are dropped with a
+  `dx9 token N not walked yet` line (M16 step 2).
+- **Blits.** BLT (StretchRect, and `GetRenderTargetData` into system
+  memory), SURFACEBLT (UpdateSurface) and COLORFILL run in the driver on
+  the surfaces' memory, like TEXBLT: the record ends before one that
+  follows other tokens, a video-memory surface is read back first
+  (nothing happens when the host has not drawn into it), and the one
+  written gets `VRAM_DIRTY`.
+- **Queries.** Event and occlusion. A result goes back in the **command
+  buffer**: on a successful call a DX9 runtime reads `dwErrorOffset` as
+  the bytes of responses at the buffer's start (`RESPONSEQUERY`: the DP2
+  command with the entry count, the block's bytes, then {id, size, data}
+  per query; `d3d9.dll` 0x4fd75950). The occlusion count is the host's;
+  an `ISSUEQUERY` starts a record, so the draws before it have run when
+  its end asks for the count. Responses are written after the whole call
+  is walked, because they overwrite the commands.
 - **Surfaces.** `d3d9.dll` registers a texture's system-memory copy
   with no pixel format (`DDRAWISURF_HASPIXELFORMAT` clear; a DXT1 one is
   its block rows' bytes wide), so the core marks it (`SURF.nopf`) and a
@@ -1351,7 +1364,8 @@ the 9x layer not yet.
   (M16 track, finding 8).
 - **Shaders.** vs / ps 2.0 and 3.0 reach DXVK with the version and END
   checks only (no SM2/3 validator for v1, user decision); 1.x keeps
-  `sm1_valid`.
+  `sm1_valid`, which takes the `dcl` instructions `d3d9.dll`'s vs 1.1
+  carries (`d3d8.dll`'s never has them).
 
 ## The ddflags bits
 

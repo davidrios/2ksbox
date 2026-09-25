@@ -256,11 +256,12 @@ static void vram_surface(d3dpt_enc *e, uint32_t handle, uint32_t off, uint32_t w
     *s = { handle, off, w, h, pitch, fmt, caps, 1 };
 }
 
-static uint32_t send_dp2(d3dpt_enc *e, const Dp2Buf &d, const std::vector<tlv> &vtx, uint32_t cmd_bytes_claim = 0, uint32_t *err_off = nullptr) {
+static uint32_t send_dp2(d3dpt_enc *e, const Dp2Buf &d, const std::vector<tlv> &vtx, uint32_t cmd_bytes_claim = 0, uint32_t *err_off = nullptr,
+                         uint32_t ctx = CTX) {
     uint32_t cb = (uint32_t)d.b.size(), vb = (uint32_t)(vtx.size() * sizeof(tlv));
     uint32_t off = d3dpt_enc_ret(e, 0);
     d3dpt_dp2 *a = (d3dpt_dp2 *)d3dpt_enc_cmd(e, D3DPT_OP_DP2, sizeof *a, D3DPT_ALIGN8(cb) + vb);
-    *a = { CTX, off, 0, FVF_TLVERTEX, sizeof(tlv), cmd_bytes_claim ? cmd_bytes_claim : cb, vb, 0 };
+    *a = { ctx, off, 0, FVF_TLVERTEX, sizeof(tlv), cmd_bytes_claim ? cmd_bytes_claim : cb, vb, 0 };
     memcpy(a + 1, d.b.data(), cb);
     memcpy((uint8_t *)(a + 1) + D3DPT_ALIGN8(cb), vtx.data(), vb);
     d3dpt_enc_flush(e);
@@ -487,6 +488,60 @@ int main(int argc, char **argv) {
         hr = send_dp2(&enc, s2, vtx);
         hr |= readback(&enc, H_RT);
         CHECK(hr == 0 && near_(px(100, 100), 0x00ff00, 2), "vertex shader constant c0 green: 0x%06x", px(100, 100));
+        /* the DX9 DDI (M16): a declaration (CREATEVERTEXSHADERDECL, D3DVERTEXELEMENT9s) and
+         * a vs 1.1 function apart (CREATE / SETVERTEXSHADERFUNC). d3d9.dll's vs 1.1
+         * carries dcl instructions, which d3d8.dll's never did; a dcl naming a
+         * temporary instead of an input is refused, and the draw falls back.
+         * A context of its own: a context is d3d8.dll's or d3d9.dll's, never both */
+        {
+            const uint32_t H_DECL9 = 0x301, H_VF9 = 0x302, H_VF9_BAD = 0x304, DCL = 31, CTX9 = CTX + 1;
+            {
+                uint32_t off = d3dpt_enc_ret(&enc, 0);
+                d3dpt_ctx_create *c = (d3dpt_ctx_create *)d3dpt_enc_cmd(&enc, D3DPT_OP_CTX_CREATE, sizeof *c, 0);
+                *c = { CTX9, off, H_RT, H_Z };
+                d3dpt_enc_flush(&enc);
+                CHECK(enc.last_status == 0 && d3dpt_enc_result(&enc, off)->hr == 0, "a second context for the DX9 DDI (hr 0x%08x)",
+                      d3dpt_enc_result(&enc, off)->hr);
+            }
+            const D3DVERTEXELEMENT9 el9[2] = { { 0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
+                                               { 0, 16, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0 } };
+            std::vector<uint32_t> vf = { VS11, DCL, 0x80000000u, dst(R_INPUT, 0), DCL, 0x8000000Au, dst(R_INPUT, 1),
+                                         MOV, dst(R_RASTOUT, 0), src(R_INPUT, 0), MUL, dst(R_ATTROUT, 0), src(R_INPUT, 1), src(R_CONST, 0), END };
+            std::vector<uint32_t> vf_bad = vf;
+            vf_bad[3] = dst(R_TEMP, 0);
+            auto create_vf = [](Dp2Buf &d, uint32_t h, const std::vector<uint32_t> &code) {
+                d.cmd(74, 1); d.u32(h); d.u32((uint32_t)(code.size() * 4));
+                for (uint32_t w : code) d.u32(w);
+            };
+            Dp2Buf s9;
+            s9.cmd(71, 1); s9.u32(H_DECL9); s9.u32(2);
+            for (const D3DVERTEXELEMENT9 &e : el9) {
+                uint8_t raw[8];
+                memcpy(raw, &e, 8);
+                s9.b.insert(s9.b.end(), raw, raw + 8);
+            }
+            create_vf(s9, H_VF9, vf);
+            create_vf(s9, H_VF9_BAD, vf_bad);
+            s9.vs_const(0, 0, 0, 1, 1);                                        /* c0 = blue */
+            s9.cmd(76, 1); s9.u32(H_VF9);
+            s9.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            s9.tss(0, 0, 0); s9.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2); s9.tss(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+            s9.tss(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG2); s9.tss(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+            s9.draw8(4, 2, H_DECL9, sq);
+            hr = send_dp2(&enc, s9, vtx, 0, nullptr, CTX9);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0x0000ff, 2) && px(500, 400) == (CLEAR_COLOR & 0xffffff),
+                  "DX9 vs 1.1 with dcl tokens over a D3DVERTEXELEMENT9 declaration, c0 blue: quad 0x%06x, outside 0x%06x",
+                  px(100, 100), px(500, 400));
+            Dp2Buf b9;
+            b9.cmd(76, 1); b9.u32(H_VF9_BAD);
+            b9.draw8(4, 2, H_DECL9, sq);
+            hr = send_dp2(&enc, b9, vtx, 0, nullptr, CTX9);
+            CHECK(hr == 0, "DX9 vs 1.1 whose dcl names a temporary: refused, the draw not fatal (0x%08x)", hr);
+            d3dpt_handle *dc = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_CTX_DESTROY, sizeof *dc, 0);
+            *dc = { CTX9, 0 };
+            d3dpt_enc_flush(&enc);
+        }
         /* a declaration-only shader: the fixed function on a layout that is
          * no FVF (the colour before the position), identity transforms */
         struct ffvtx { uint32_t color; float x, y, z; };
