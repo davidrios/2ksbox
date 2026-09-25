@@ -1342,8 +1342,13 @@ the 9x layer not yet.
   surface (`CreateOffscreenPlainSurface`, `GetRenderTargetData`'s target)
   needs `D3DFORMAT_OP_OFFSCREENPLAIN` on its format; the RGB formats carry
   it when the last runtime to send `DXVERSION` was DX9, never to
-  `d3d8.dll`. Open: the video-memory copy of a mipmapped texture comes
-  as one level (M16 track, finding 8).
+  `d3d8.dll`. A texture with a full mip chain in video memory (the
+  default pool, or a managed texture's copy) is a *lightweight mipmap*:
+  one surface with `DDSCAPS3_LIGHTWEIGHTMIPMAP` in `dwCaps3`, whose
+  levels the driver keeps. `DdCreateSurface` sizes it for the whole
+  chain (`surf_lw_layout`) and the host gets each level's offset; the
+  runtime never locks a sublevel and its `TEXBLT` carries every level
+  (M16 track, finding 8).
 - **Shaders.** vs / ps 2.0 and 3.0 reach DXVK with the version and END
   checks only (no SM2/3 validator for v1, user decision); 1.x keeps
   `sm1_valid`.

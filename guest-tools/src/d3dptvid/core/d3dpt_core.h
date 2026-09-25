@@ -69,6 +69,7 @@
 #define D3DCAPS2_FULLSCREENGAMMA_  0x00020000
 #define DDSCAPS2_VERTEXBUFFER_ 0x02000000
 #define DDSCAPS3_MULTISAMPLE_MASK_ 0x1f   /* ddsCapsEx.dwCaps3: a multisampled surface's sample count */
+#define DDSCAPS3_LIGHTWEIGHTMIPMAP_ 0x400 /* ddsCapsEx.dwCaps3: the driver keeps a texture's mip levels inside its one surface (DX9) */
 #define DDSCAPS2_INDEXBUFFER_  0x04000000
 
 #define D3DFMT_X8R8G8B8_  22u
@@ -242,6 +243,7 @@ typedef struct d3dpt_surf_desc {
     ULONG caps2;                /* ddsCapsEx.dwCaps2 (0 when the surface has no "more" block) */
     ULONG depth;                /* a volume texture's depth (ddsCapsEx.dwCaps4's low word, DDSCAPS2_VOLUME); 0 otherwise */
     ULONG samples;              /* a multisampled surface's sample count (ddsCapsEx.dwCaps3's low 5 bits); 0 otherwise */
+    ULONG lwmip;                /* DDSCAPS3_LIGHTWEIGHTMIPMAP: a video-memory texture whose levels are packed in it (surf_lw_layout) */
     ULONG flags;                /* the surface's own flags: DDRAWISURF_HASPIXELFORMAT / HASCKEYSRCBLT */
     ULONG w, h;
     ULONG pitch;                /* lPitch as the OS gave it (the linear size for a compressed surface) */
@@ -327,6 +329,7 @@ void surf_colorkey_set(d3dpt_core *c, ULONG handle, ULONG lo, ULONG hi);
 void surf_lock_range(ULONG handle, BOOL has_rect, LONG left, LONG right);
 void surf_unlock_dirty(d3dpt_core *c, ULONG handle);
 ULONG surf_dxt_size(ULONG fourcc, ULONG w, ULONG h);
+ULONG surf_lw_layout(ULONG fmt, ULONG w, ULONG h, ULONG *off, ULONG *pitch, ULONG *levels);
 BOOL fmt_fourcc_rows(ULONG fourcc);
 
 /* --- core_ctx.c: contexts, render targets, Clear2, scene capture --- */

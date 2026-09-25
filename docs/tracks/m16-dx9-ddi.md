@@ -36,11 +36,9 @@ and instancing are dropped with a log line.
 
 - **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
   `xp-driver-test.sh d3dgame9`): 600 frames on a hardware-vertex-processing
-  device, frame 300 dumped. Next to the native DXVK frame everything
-  matches (cubes, lighting, particles, the render-to-texture panel, the
-  floor's two stages) except the floor's filtering: 17 % of pixels
-  differ, all of it texture minification. D3DGAME8 through `d3d8.dll`
-  on the same build: 0 pixels differ.
+  device, frame 300 dumped, **0 pixels differ** from the native DXVK
+  frame since finding 8's fix (17 % before it, all texture minification).
+  D3DGAME8 through `d3d8.dll` on the same build: 0 pixels differ.
 - **Wine's suite on the DX9 face:** d3d9 stateblock 14738 checks, **0**
   failures (182 on the DX8 face: the integer / boolean constants). d3d9
   visual now reaches the SM2 / SM3 tests it skipped and fails 935 checks
@@ -58,13 +56,20 @@ and instancing are dropped with a log line.
      a DX9 runtime makes a system-memory offscreen plain surface only in a
      format carrying `D3DFORMAT_OP_OFFSCREENPLAIN`. The RGB formats carry
      it, for the DX9 runtime only (the last `DXVERSION` said 0x9xx).
-  8. *Open, next.* The video-memory copy of a mipmapped texture is
-     created as one surface (`caps 0x10005000`: no MIPMAP, no COMPLEX)
-     while its system-memory copy has the whole chain, so the host
-     samples level 0 only (the trace: every texture `levels 1`). Something
-     the driver reports makes `d3d9.dll` drop the video-memory mip levels;
-     find it the way the caps check was found (doc 15), in the runtime's
-     texture creation.
+  8. *Fixed.* The video-memory copy of a mipmapped texture came as one
+     surface (`caps 0x10005000`, no MIPMAP) and the host sampled level 0
+     only. It is a **lightweight mipmap** (`DDSCAPS3_LIGHTWEIGHTMIPMAP`,
+     0x400 in `dwCaps3`): for a texture with a full chain in the default
+     pool, or a managed one's video-memory copy, `d3d9.dll` creates one
+     surface and the driver keeps every level inside it (the runtime's
+     check at 0x4fd20820: all levels, not scratch / system memory, no
+     render target / depth / dynamic usage, a HAL device; for the managed
+     pool only if the driver manages resources). The runtime never locks
+     the sublevels, and its `TEXBLT` brings all of them. The NT
+     `DdCreateSurface` sizes the surface for the whole chain
+     (`surf_lw_layout`: each level after the last, dword rows, block rows
+     for DXT) and `d3d_register_at` hands the host those offsets. The 9x
+     HAL does not size one yet (step 5).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

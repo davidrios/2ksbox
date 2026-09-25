@@ -106,6 +106,42 @@ ULONG surf_dxt_size(ULONG fourcc, ULONG w, ULONG h)
     return fmt_row_bytes(fourcc, w) * ((h + 3) / 4);
 }
 
+/* A DirectX 9 lightweight mipmap (DDSCAPS3_LIGHTWEIGHTMIPMAP): d3d9.dll
+ * makes the video-memory copy of a texture with a full mip chain (a managed
+ * texture's, or a default-pool one's) as one surface, and the driver keeps
+ * the other levels. The runtime never locks them; its TEXBLT brings every
+ * level from the system-memory copy. Treated as one level, the host
+ * sampled level 0 alone (M16 finding 8). The layout is the driver's own:
+ * each level after the one before, dword-aligned rows (block rows for DXT),
+ * down to 1x1. Fills off[] (bytes from level 0) and pitch[] for up to 16
+ * levels and returns the bytes the whole chain takes; 0 for a format with
+ * no known row size, which then stays one level. */
+ULONG surf_lw_layout(ULONG fmt, ULONG w, ULONG h, ULONG *off, ULONG *pitch, ULONG *levels)
+{
+    ULONG n = 0, total = 0, rb;
+
+    while (n < 16) {
+        rb = fmt_row_bytes(fmt, w);
+        if (!rb) {
+            return 0;
+        }
+        if (!fmt_is_dxt(fmt)) {
+            rb = (rb + 3) & ~3u;
+        }
+        if (off) off[n] = total;
+        if (pitch) pitch[n] = rb;
+        total += rb * surf_rows(fmt, h);
+        n++;
+        if (w == 1 && h == 1) {
+            break;
+        }
+        w = w > 1 ? w / 2 : 1;
+        h = h > 1 ? h / 2 : 1;
+    }
+    *levels = n;
+    return total;
+}
+
 /* a FOURCC code that is an uncompressed D3DFORMAT (Q8W8V8U8): the runtime
  * creates a DX8 format with no DDPIXELFORMAT this way, and DirectDraw knows
  * no bit count for it, so the layer's CreateSurface gives it its pitch */
@@ -491,6 +527,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         dbg_hex(p, " pitch ", s->pitch);
         dbg_hex(p, " pf ", s->pf_flags);
         if (s->samples > 1) dbg_hex(p, " samples ", s->samples);
+        if (s->lwmip) dbg_puts(p, " lightweight mips");
         if (s->caps2 & DDSCAPS2_VOLUME_) {
             dbg_hex(p, " volume caps2 ", s->caps2);
             dbg_hex(p, " depth ", s->depth);
@@ -513,7 +550,20 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         }
         return;
     }
-    if (caps & D3DPT_VS_TEXTURE) {
+    if ((caps & D3DPT_VS_TEXTURE) && s->lwmip && !sysmem && !depth) {
+        /* a lightweight mipmap: the levels are the layer's DdCreateSurface
+         * layout inside this surface (surf_lw_layout) */
+        ULONG off[16], pl[16];
+
+        if (surf_lw_layout(fmt, s->w, s->h, off, pl, &n)) {
+            for (i = 1; i < n; i++) {
+                lv[i - 1].a = offset + off[i];
+                lv[i - 1].b = pl[i];
+            }
+        } else {
+            n = 1;
+        }
+    } else if (caps & D3DPT_VS_TEXTURE) {
         for (m = d3dpt_os_next_mip(s->os); m && n < 16; m = d3dpt_os_next_mip(m)) {
             d3dpt_surf_desc d;
 

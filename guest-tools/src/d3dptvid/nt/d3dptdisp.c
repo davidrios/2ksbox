@@ -1542,6 +1542,7 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
     out->caps2 = s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0;
     out->depth = (out->caps2 & DDSCAPS2_VOLUME_) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0;
     out->samples = s->lpSurfMore ? (s->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_MULTISAMPLE_MASK_) : 0;
+    out->lwmip = s->lpSurfMore && (s->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_LIGHTWEIGHTMIPMAP_);
     out->flags = s->dwFlags;
     out->w = s->lpGbl->wWidth;
     out->h = s->lpGbl->wHeight;
@@ -1701,6 +1702,46 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
             g->lSlicePitch = pitch * rows;
             g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
         }
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
+    if (sd && d->dwSCnt == 1 && d->lplpSList[0] && d->lplpSList[0]->lpGbl && d->lplpSList[0]->lpSurfMore &&
+        (d->lplpSList[0]->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_LIGHTWEIGHTMIPMAP_) &&
+        (d->lplpSList[0]->ddsCaps.dwCaps & DDSCAPS_TEXTURE) && !(d->lplpSList[0]->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+        /* A lightweight mipmap (surf_lw_layout): one surface that holds its
+         * whole mip chain. d3d9.dll leaves out the pixel format when it is
+         * the desktop's. */
+        PDD_SURFACE_LOCAL s = d->lplpSList[0];
+        PDD_SURFACE_GLOBAL g = s->lpGbl;
+        ULONG fmt = (sd->dwFlags & DDSD_PIXELFORMAT) ? pf_format(&sd->ddpfPixelFormat) : 0, n = 0, size, pitch[16];
+
+        if (!fmt && p) {
+            fmt = p->core.bpp == 32 ? D3DFMT_X8R8G8B8_ : D3DFMT_R5G6B5_;
+        }
+        size = surf_lw_layout(fmt, g->wWidth, g->wHeight, NULL, pitch, &n);
+        if (p && p->core.reg_lines < 4096) {
+            p->core.reg_lines++;
+            dbg_hex(&p->core, "d3dptdisp: create lightweight mipmap, w ", g->wWidth);
+            dbg_hex(&p->core, " h ", g->wHeight);
+            dbg_hex(&p->core, " fmt ", fmt);
+            dbg_hex(&p->core, " levels ", n);
+            dbg_hex(&p->core, " -> ", size);
+            dbg_puts(&p->core, "\n");
+        }
+        if (!size) {
+            return DDHAL_DRIVER_NOTHANDLED;
+        }
+        if (fmt_is_dxt(fmt)) {
+            g->dwLinearSize = surf_dxt_size(fmt, g->wWidth, g->wHeight);   /* the lPitch union, as for any DXT surface */
+            sd->dwFlags |= DDSD_LINEARSIZE;
+            sd->dwLinearSize = g->dwLinearSize;
+        } else {
+            g->lPitch = pitch[0];
+            sd->dwFlags |= DDSD_PITCH;
+            sd->lPitch = pitch[0];
+        }
+        g->dwBlockSizeX = size;
+        g->dwBlockSizeY = 1;
+        g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
         return DDHAL_DRIVER_NOTHANDLED;
     }
     if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC)) {
