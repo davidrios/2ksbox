@@ -149,8 +149,10 @@ live in its track doc; fixed things leave this list.
   of the game going black on Start Game under Win9x, fixed by MS-DOS mode,
   is the same finding. Two things stood in the way and are fixed: the
   retrace (doc 06 "The display adapter") and the DOS drivers' "no disc"
-  (patch 56). For the user: run it from a DOS family machine or restart
-  98 in MS-DOS mode, with a CD driver. Sound: the install has no
+  (patch 56). For the user: run it from a DOS family machine, or `SETUP
+  /I 7` from the guest tools and open "2ksbox MS-DOS mode" on the desktop
+  (doc 06 "DOS games in a Win98 DOS box"; the CD-ROM and `BLASTER` are
+  there, and the game's SETSOUND then offers the SB16). Sound: the install has no
   `DIG.INI` (SETSOUND offers the Sound Blaster drivers only with a
   `BLASTER` variable, which the image does not set); a hand-written one
   (`SB16.DIG`, 220h/5/1/5) gets "Digital sound hardware not found" in the

@@ -176,7 +176,17 @@ settings a 1993 game wants are accurate. Boot time barely moves
 A DOS game whose clock misbehaves only in a Win98 DOS box is not chased
 (user decision). DOS games run on pure DOS, the DOS family or 98's
 "Restart in MS-DOS mode", where `TESTS\QCLOCK.COM` reads 100 % since
-patch 34. Inside a DOS box about 17 of 18 ticks still read one period
+patch 34. That mode has no CD-ROM drive and no `BLASTER` until the guest
+tools' MS-DOS mode component (`SETUP /I 7`, off by default) writes
+"2ksbox MS-DOS mode.pif" on the desktop: a PIF with its own CONFIG.SYS
+(UIDE.SYS as a CD-only driver) and AUTOEXEC.BAT (MSCDEX, `SET
+BLASTER`), as Windows 98's own "MS-DOS mode for games" samples are
+built; opening it restarts there and EXIT boots Windows again
+(`guest-tools/README-ISO.txt`, `DOSMODE\`). Not a CONFIG.SYS line: a
+real-mode CD driver under Windows puts every drive in compatibility
+mode (IOS.LOG "UnKnown int 13 hooker"). Mortal Kombat 3 is the title
+that needs it: it dies on Start Game in a DOS box on any host and plays
+there, proven headless from the PIF (2026-09-25). Inside a DOS box about 17 of 18 ticks still read one period
 backward. The IRQ arrives on time, so the lag is between VTD/VPICD
 taking the interrupt and the VM's reflected INT 8 updating 0040:006C;
 VTD's trapped counter reads are already current. DOS Quake there runs

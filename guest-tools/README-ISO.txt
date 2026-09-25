@@ -112,3 +112,19 @@ VOODOO2\  V2START.EXE, for Windows 98/Me with the emulated Voodoo 2 and
           "Voodoo 2 driver is loading, please wait before running 3dfx
           games" until it has finished. C:\WINDOWS\V2START.LOG says what
           happened at the last login.
+
+DOSMODE\  UIDE.SYS, FreeDOS's CD/DVD driver (public domain), for Windows
+          98/Me's MS-DOS mode, which has no CD-ROM drive and no BLASTER
+          variable of its own. SETUP's MS-DOS mode component (off by
+          default; pick it from the menu or SETUP /I 7) copies the driver
+          to C:\2KSBOX and writes "2ksbox MS-DOS mode.pif" on the desktop,
+          a program information file with its own CONFIG.SYS (this
+          machine's lines, HIMEM, the driver CD-only with no cache) and
+          AUTOEXEC.BAT (this machine's lines, PATH, MSCDEX, SET
+          BLASTER=A220 I5 D1 H5 P330 T6), the way Windows 98's own "MS-DOS
+          mode for games" samples are built. Open it: Windows restarts in
+          MS-DOS mode with the CD-ROM as the drive after the hard disk,
+          and EXIT boots Windows again. Nothing changes how Windows itself
+          starts. For a DOS game that dies in a DOS box (Mortal Kombat 3).
+          A game's own sound setup then wants Sound Blaster 16, 220h,
+          IRQ 5, DMA 1.

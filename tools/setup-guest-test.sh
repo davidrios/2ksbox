@@ -159,6 +159,13 @@ MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
     echo 'if exist %windir%\INF\D3DPT9V.VX_ echo STAGED INF\D3DPT9V.VX_ > COM1'
     echo 'if exist %windir%\INF\D3DPT9HL.DL_ echo STAGED INF\D3DPT9HL.DL_ > COM1'
   fi
+  if [ "$FAMILY" = win98 ]; then
+    echo 'echo ==== MS-DOS mode (/I 7), twice > COM1'
+    setup_line '/I 7'
+    setup_line '/I 7'
+    echo 'dir C:\2KSBOX\UIDE.SYS > COM1'
+    echo 'dir %windir%\DESKTOP\2KSBOX~1.PIF > COM1'
+  fi
   echo 'echo ==== per-game set 3 (OpenGL) > COM1'
   setup_line '/GAME 3 C:\2KSBOX'
   if [ -n "${VOODOO:-}" ]; then
@@ -432,6 +439,11 @@ else
   [ "$FAMILY" = win98 ] && want "no 3dfx card on this machine; nothing to do" "no Voodoo 2 guard without a 3dfx card"
 fi
 want "CDSHELF.EXE ->" "SETUP copied the disc shelf tool"
+if [ "$FAMILY" = win98 ]; then
+  want "UIDE.SYS -> C:\\2KSBOX" "the MS-DOS mode step copied the CD driver"
+  want "2ksbox MS-DOS mode.pif: written" "the MS-DOS mode step wrote the desktop PIF"
+  want "2KSBOX~1 PIF" "the PIF is on the desktop (Windows' own dir)"
+fi
 want "WGLGEARS.EXE" "the test programs are in C:\\2KSBOX (Windows' own dir)"
 want "OPENGL32.DLL" "the per-game set landed in C:\\2KSBOX (Windows' own dir)"
 if [ "$FAMILY" = win98 ]; then

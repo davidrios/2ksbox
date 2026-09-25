@@ -121,7 +121,7 @@ build_wrapper mesa
 # next to the game" can never pick up the wrong DLL, and every test
 # program lives in TESTS\. One copy of every file.
 rm -rf "$OUT/iso"
-mkdir -p "$OUT/iso"/{MAPPER,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2}
+mkdir -p "$OUT/iso"/{MAPPER,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2,DOSMODE}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
 T="$OUT/iso/TESTS"
 
@@ -295,6 +295,12 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -march=pentium3 -mtune=generic -mwindows -o "$OUT/iso/VOODOO2/v2start.exe" \
   "$ROOT/guest-tools/src/v2start.c"
 
+# DOSMODE\: UIDE.SYS, FreeDOS's CD/DVD driver (third_party/uide, public
+# domain, as packaged with FreeDOS 1.4), for Win98's "Restart in MS-DOS
+# mode". SETUP's MS-DOS mode step copies it to C:\2KSBOX and loads it from
+# CONFIG.SYS as a CD-only driver, with MSCDEX in DOSSTART.BAT (setup.c).
+cp "$ROOT/third_party/uide/UIDE.SYS" "$OUT/iso/DOSMODE/uide.sys"
+
 # XP display driver for the d3dpt-vga adapter (doc 15, M7a): built and
 # checked by its own script (kernel-mode PE rules differ), staged as DRIVER\.
 # Its progress is not wanted here, its failure is. The script reports a
@@ -338,7 +344,7 @@ fi
 # SETUP.EXE at the root: the installer that reads the folders above and
 # knows which of them this guest's Windows wants (guest-tools/src/setup.c).
 i686-w64-mingw32-gcc -O2 -Wall -o "$OUT/iso/setup.exe" "$ROOT/guest-tools/src/setup.c" \
-  -ladvapi32 -luser32 -lwinmm
+  -ladvapi32 -luser32 -lwinmm -lshell32
 
 # Every binary on the disc, however deep and whatever case it was staged
 # in (the per-game folders carry the names a game loads).
