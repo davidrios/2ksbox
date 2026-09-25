@@ -26,6 +26,8 @@
 #   tools/xp-driver-test.sh <image.qcow2> probes       # all eight in one boot, a verdict each
 #   tools/xp-driver-test.sh <image.qcow2> ebtest       # EBTEST: the DirectX 3 path (IDirect3D v1, execute buffers, texture
 #                                                       # handles, viewport Clear) on the HAL; PASS = "0 failed" in ebtest.log
+#   tools/xp-driver-test.sh <image.qcow2> caps         # DX8CAPS + DX9CAPS: what d3d8.dll / d3d9.dll make of the driver (device
+#                                                       # types, depth formats, CreateDevice as Wine's tests call it, the caps)
 #   tools/xp-driver-test.sh <image.qcow2> winetest     # Wine's d3d8 / d3d9 conformance tests (M16) through XP's own runtime:
 #                                                       # guest-tools/build-winetests.sh first; a table per test file, and with
 #                                                       # WT_BASELINE=reference/winetest/<f>.txt a verdict (tools/winetest-summary.py).
@@ -75,7 +77,7 @@ if [ "$(uname -s)" = Darwin ]; then
     done
   fi
 fi
-IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|vesa|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|winetest|cmd|bat}"; shift 2
+IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|vesa|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|caps|winetest|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 # DRIVER_ISO= another build's driver ISO: the A/B against an older driver
 # (built from `git archive <sha>` into a scratch tree, never over this one's)
@@ -137,7 +139,8 @@ if [ "$MODE" = winetest ]; then
   mcopy -o -i "$SCRATCH@@1048576" "$WT/wtrun.exe" "$WT/d3d8_test.exe" "$WT/d3d9_test.exe" ::/WT/
   { printf '%s\n' '@echo off' 'set BOXLOG=E:\WT'
     # WT_TESTS="d3d9:visual d3d8:device": a subset; the default is every file
-    for t in ${WT_TESTS:-d3d9:d3d9ex d3d9:device d3d9:stateblock d3d9:visual d3d8:device d3d8:stateblock d3d8:visual}; do
+    # `device` last: its fullscreen tests can leave the desktop without Direct3D (M16 finding 5)
+    for t in ${WT_TESTS:-d3d9:visual d3d9:stateblock d3d9:d3d9ex d3d8:visual d3d8:stateblock d3d9:device d3d8:device}; do
       printf 'E:\\WT\\WTRUN.EXE %s E:\\WT\\%s_TEST.EXE %s\n' "${WT_CAP:-1200}" "$(echo "${t%%:*}" | tr a-z A-Z)" "${t#*:}"
     done
     printf '%s\n' 'echo WTALL > COM1'; } > "$OUT/winetest.bat"
@@ -382,6 +385,10 @@ PY
     pull ebtest.log
     for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/EB$n.BMP" "$OUT/eb$n.bmp" 2>/dev/null || true; done
     if grep -q 'ebtest: [1-9][0-9]* cases, 0 failed' "$OUT/ebtest.log" 2>/dev/null; then echo "-- ebtest: PASS"; else echo "-- ebtest: FAIL (see $OUT/ebtest.log and the device log)"; fi ;;
+  caps)
+    run_until CAPSDONE "${CMD_WAIT:-180}" 'D:\DRIVER\DX8CAPS.EXE > nul & D:\DRIVER\DX9CAPS.EXE > nul & copy C:\2KSBOX\DX8CAPS.LOG E:\dx8caps.log & copy C:\2KSBOX\DX9CAPS.LOG E:\dx9caps.log'
+    finish
+    pull dx8caps.log || true; pull dx9caps.log || true ;;
   winetest)
     run 'E:\RUN.BAT'
     gw_wait_log "$SER" WTALL "${CMD_WAIT:-14400}" || true

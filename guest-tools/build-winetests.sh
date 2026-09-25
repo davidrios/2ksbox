@@ -76,7 +76,11 @@ echo "built $OUT/wtrun.exe"
   printf '%s\r\n' '@echo off' 'rem Wine d3d8/d3d9 tests, every file (2ksbox M16). Output: C:\2KSBOX\WINETEST'
   for dll in d3d9 d3d8; do
     tests=""
-    for f in "$SRC/dlls/$dll/tests"/*.c; do tests="$tests $(basename "$f" .c)"; done
+    # `device` last, as in xp-driver-test.sh: its fullscreen tests change modes
+    for f in "$SRC/dlls/$dll/tests"/*.c; do
+      [ "$(basename "$f" .c)" = device ] || tests="$tests $(basename "$f" .c)"
+    done
+    tests="$tests device"
     printf 'WTRUN.EXE 1800 %s_TEST.EXE%s\r\n' "$(echo "$dll" | tr a-z A-Z)" "$tests"
   done
 } >"$OUT/RUNALL.BAT"

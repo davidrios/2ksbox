@@ -354,16 +354,22 @@ void d3d_caps_init(d3dpt_core *p)
         c8->TextureFilterCaps |= D3DPTFILTERCAPS_MINFANISOTROPIC_ | D3DPTFILTERCAPS_MAGFANISOTROPIC_;
     }
     if (!(ddflags(p) & DDF_NO_CUBE)) {
-        /* cube textures (v11), mip-mapped too, any edge: the DX8 face only
-         * (a DirectX 7 cube map is created through DirectDraw's own
-         * surface caps, which this driver does not answer) */
+        /* cube textures (v11), mip-mapped too: the DX8 face only (a
+         * DirectX 7 cube map is created through DirectDraw's own surface
+         * caps, which this driver does not answer). Power-of-two edges
+         * wherever 2D textures are, as the era's cards: without CUBEMAP_POW2
+         * the runtime made a cube of edge 3 that real drivers refuse (Wine's
+         * d3d9 device.c:10178, M16) */
         c8->TextureCaps |= D3DPTEXTURECAPS_CUBEMAP_ | D3DPTEXTURECAPS_MIPCUBEMAP_;
+        if (t->dwTextureCaps & D3DPTEXTURECAPS_POW2_) c8->TextureCaps |= D3DPTEXTURECAPS_CUBEMAP_POW2_;
         c8->CubeTextureFilterCaps = c8->TextureFilterCaps;
     }
     if (!(ddflags(p) & DDF_NO_VOLUME)) {
-        /* volume textures, mip-mapped too, any extent up to 256: the DX8
-         * face only, like the cubes */
+        /* volume textures, mip-mapped too, up to 256: the DX8 face only,
+         * like the cubes, and power-of-two extents by the same rule
+         * (device.c:10194) */
         c8->TextureCaps |= D3DPTEXTURECAPS_VOLUMEMAP_ | D3DPTEXTURECAPS_MIPVOLUMEMAP_;
+        if (t->dwTextureCaps & D3DPTEXTURECAPS_POW2_) c8->TextureCaps |= D3DPTEXTURECAPS_VOLUMEMAP_POW2_;
         c8->VolumeTextureFilterCaps = c8->TextureFilterCaps;
         c8->VolumeTextureAddressCaps = t->dwTextureAddressCaps | D3DPTADDRESSCAPS_MIRRORONCE;
         c8->MaxVolumeExtent = 256;
@@ -419,7 +425,11 @@ void d3d_caps_init(d3dpt_core *p)
 
         fmt8_add(D3DFMT_X8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
                                    D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube | vol);
-        fmt8_add(D3DFMT_A8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube | vol);
+        /* UP_TO_ALPHA: an A8R8G8B8 back buffer on the X8R8G8B8 desktop, as
+         * every 32-bit card allows. Without it d3d8.dll refused a windowed
+         * device with one (every Wine d3d8 test, M16) */
+        fmt8_add(D3DFMT_A8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ |
+                                   D3DFORMAT_OP_SAME_FORMAT_UP_TO_ALPHA_RENDERTARGET_ | cube | vol);
         fmt8_add(D3DFMT_R5G6B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
                                  D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube | vol);
         fmt8_add(D3DFMT_X1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | cube | vol);

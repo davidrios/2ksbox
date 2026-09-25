@@ -1,14 +1,24 @@
-# tools/winetest-summary.py base-dx8 --save; one failing check per line
+# tools/winetest-summary.py cur --save; one failing check per line
 d3d8_test_device crash 1
 d3d8_test_device device.c:3244 1
 d3d8_test_device device.c:3256 1
 d3d8_test_device device.c:3281 1
 d3d8_test_device device.c:4402 1
+d3d8_test_visual crash 1
+d3d8_test_visual visual.c:1723 119
+d3d8_test_visual visual.c:2426 1
+d3d8_test_visual visual.c:2461 1
+d3d8_test_visual visual.c:2685 1
+d3d8_test_visual visual.c:3506 1
+d3d8_test_visual visual.c:3508 1
+d3d8_test_visual visual.c:3510 1
+d3d8_test_visual visual.c:3512 1
+d3d8_test_visual visual.c:3514 1
+d3d8_test_visual visual.c:5138 6
+d3d8_test_visual visual.c:5141 4
+d3d8_test_visual visual.c:6640 1
+d3d8_test_visual visual.c:6759 8
 d3d9_test_device crash 1
-d3d9_test_device device.c:10141 1
-d3d9_test_device device.c:10142 1
-d3d9_test_device device.c:10178 3
-d3d9_test_device device.c:10194 3
 d3d9_test_device device.c:4661 1
 d3d9_test_device device.c:4663 1
 d3d9_test_device device.c:4680 1

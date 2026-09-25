@@ -111,6 +111,11 @@ echo "==> ebtest.exe (the DirectX 3 path: execute buffers and texture handles on
 echo "==> shtest.exe (vertex / pixel shaders 1.x through d3d8.dll on the DX8 DDI)"
 "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
   -o "$OUT/shtest.exe" "$SRC/shtest.c" -ld3d8 -lgdi32 -luser32
+for v in 8 9; do
+  echo "==> dx${v}caps.exe (what d3d${v}.dll makes of the driver: device types, depth formats, CreateDevice, caps; M16)"
+  "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic -DDXVER=$v \
+    -o "$OUT/dx${v}caps.exe" "$SRC/dx9caps.c" -lgdi32 -luser32
+done
 # the DX8 feature probes (d3d8probe.h): each one says "not offered" while the
 # driver lacks its feature and is the feature's check once it has it
 for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst msaatest mgdtest gammatest; do

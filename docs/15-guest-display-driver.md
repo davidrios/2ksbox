@@ -932,6 +932,13 @@ oracle).
   camera plane, which the host rasterizes as garbage: Max Payne
   transforms on the CPU even on a T&L device, and its alley walls came
   out as flat panels at wrong depths.
+- **What Wine's conformance tests fixed (M16).** A8R8G8B8 carries
+  `D3DFORMAT_OP_SAME_FORMAT_UP_TO_ALPHA_RENDERTARGET` (0x100, from
+  `ddk/ddrawint.h`), so a windowed device can have an A8R8G8B8 back
+  buffer on the X8R8G8B8 desktop; with a wrong value (0x20) d3d8.dll
+  dropped the HAL altogether. Cube and volume textures claim
+  `CUBEMAP_POW2` / `VOLUMEMAP_POW2` wherever 2D textures claim POW2, so
+  the runtime refuses the sizes real cards refuse.
 - **The tokens.** The DX8 draws name vertex and index buffers by surface
   handle, possibly in guest system memory the host cannot see. The
   driver keeps a table of every surface dxg reports (VRAM and system

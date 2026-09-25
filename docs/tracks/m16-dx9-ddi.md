@@ -35,39 +35,49 @@ two baselines are the part left (they are the user's runs).
   (`patches/winetest/`) fence off Windows 10 and WoW64 code mingw cannot
   compile. `tools/xp-driver-test.sh <image> winetest` runs them;
   `tools/winetest-summary.py` compares.
-- **Today's driver** (`reference/winetest/xp-driver-dx8.txt`, the DX8
-  driver of `0c9d7b3` on `winxp-m7`, KVM):
+- **The driver's baseline** (`reference/winetest/xp-driver.txt`, only
+  ever shrinks; the DX8 driver on `winxp-m7`, KVM). After the first
+  fixes below (2026-09-25):
 
   | test file | executed | failures | state |
   |---|---|---|---|
   | d3d9 stateblock | 14738 | 182 | ran |
-  | d3d9 device | | 12 | crash in `test_update_volumetexture` |
   | d3d9 visual | | 149 | crash in `test_updatetexture` |
+  | d3d9 device | | 4 | crash in `test_update_volumetexture` |
   | d3d9 d3d9ex | | | skipped (no `Direct3DCreate9Ex` on XP) |
-  | d3d8 device | | 4 | crash after device creation failed |
-  | d3d8 stateblock, visual | 67 | 0 | nearly all skipped: no device |
+  | d3d8 stateblock | 9283 | 0 | ran (skipped whole before fix 1) |
+  | d3d8 visual | | 146 | crash in `test_updatetexture` |
+  | d3d8 device | | 4 | crash after the lost-device test (finding 5) |
 
-  A crash ends a file, so the counts are floors.
-- **What it found on the first run:**
-  1. d3d8 creates no device: the tests ask for an A8R8G8B8 back buffer
-     on the X8R8G8B8 desktop, and the format list never gives A8R8G8B8
-     `D3DFORMAT_OP_SAME_FORMAT_UP_TO_ALPHA_RENDERTARGET` (0x20).
-  2. `UpdateTexture` crashes inside Microsoft's `d3d9.dll` on its first
-     call (both d3d9 crashes; withdrawing volume textures,
-     `ddflags=0x1000000`, does not move it).
-  3. Cube and volume textures of a non-power-of-two size are created
-     where real drivers refuse them (device.c:10178, 10194).
-  4. The stateblock failures are the DX9 work itself: pixel shader
-     integer and boolean constants refused (`D3DERR_INVALIDCALL`) by a
-     runtime that sees ps 1.4.
-
-Today the driver is a DirectX 8 driver (`DXVERSION` 0x802, `D3DCAPS8`,
-vs 1.1 / ps 1.4). Microsoft's `d3d9.dll` accepts it and shows a game
-those caps, so a DX9 title that needs shader model 2.0 either refuses to
-start or picks a DX8 path. Today a DX9 game with shaders runs only on
-the `D3DPT\` DLLs, which bypass the runtime. That path has its own
-stubs (doc 14 "The guest DLLs"), and on 9x it reaches only the session's
-first DirectDraw program (doc 19 §42).
+  A crash ends a file, so the counts are floors. `DX8CAPS.EXE` /
+  `DX9CAPS.EXE` (`xp-driver-test.sh caps`) print what each runtime makes
+  of the driver, one line per question, and the caps it reports.
+- **Findings, in the order the suite showed them:**
+  1. *Fixed.* d3d8 made no windowed device with an A8R8G8B8 back
+     buffer on the X8R8G8B8 desktop: A8R8G8B8 lacked
+     `D3DFORMAT_OP_SAME_FORMAT_UP_TO_ALPHA_RENDERTARGET`. Its value is
+     **0x100** (`ddk/ddrawint.h`); 0x20 is no op, and with it d3d8.dll
+     dropped the HAL entirely (every call `D3DERR_NOTAVAILABLE`, SHTEST
+     too). Take op values from the DDK header, never from memory.
+  2. *Open.* `UpdateTexture` faults inside the runtime, in d3d8.dll and
+     d3d9.dll alike, before any `TEXBLT` reaches the driver: the first
+     instruction of a runtime routine reads a NULL object. Several
+     updates succeed first, so it is one case of Wine's table (formats,
+     levels or pools). Recheck after step 1, which changes what the
+     runtime is told.
+  3. *Fixed.* Cube and volume textures of a non-power-of-two size were
+     created where real drivers refuse them: the caps now carry
+     `CUBEMAP_POW2` / `VOLUMEMAP_POW2` wherever 2D textures are POW2.
+     The DX8 probes still pass.
+  4. *The DX9 work itself.* d3d9 stateblock's 182: pixel shader integer
+     and boolean constants refused by a runtime that sees ps 1.4.
+  5. *Open.* The lost-device test: a fullscreen device minimized and
+     restored fails `Reset` with `D3DERR_INVALIDCALL` (d3d8 device.c:3244),
+     and once the desktop is back in its own mode, dxg never calls
+     `DrvEnableDirectDraw` on it again (QEMU log: `dd disabled`, then
+     GetDriverInfo queries but no `dd enabled`), so later devices fail
+     in every process until a reboot. A game's Alt+Tab takes this path.
+     The harness runs the `device` files last because of it.
 
 ## Why SM3 in one step
 
