@@ -223,6 +223,18 @@ for A/B-ing a title that misbehaves on ours, and for the test tools that
 exercise the in-box driver. On Other only the person installing knows
 which standard adapter the guest has a driver for.
 
+- **Every adapter carries `retrace=precise`** (`Machine::video_args`,
+  on the `-vga` option, which QEMU parses for the whole machine, so
+  `d3dpt-vga` gets it too: it is built on the same VGA core). QEMU's
+  default answers each read of the input status register (port 3DAh) by
+  flipping the vertical-retrace bit, so a wait-for-retrace loop ends on
+  its second read and a title paced by the retrace runs unbounded
+  whatever the processor combo says: Mortal Kombat 3's intro went by in
+  under two seconds, and its character select was unusable. `precise`
+  derives the bit from the CRTC timing on the virtual clock, a 70 Hz
+  retrace in mode 13h, and the intro plays at its own pace with no
+  throttle at all (2026-09-24). A CPU rate is still what a title that
+  paces on instructions wants.
 - **An adapter a family doesn't offer falls back to its default**
   (`Machine::effective_video`) and the form refuses it
   (`Form::choose_video`). `video = "std"` on XP would leave the guest

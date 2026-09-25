@@ -58,7 +58,7 @@ unmerged). The Mac pulls `main`.
 | CD-ROM (docs 05, 17) | `libdisc` behind the `cdimage` driver: cue/bin, CCD, MDS, ISO and `isodir:` folders, L-EC, subchannel, CD-DA, a DVD profile past 80 minutes, the disc shelf from inside the guest (patch 52, `CDSHELF`; the listing names the disc in the drive from the medium itself, boot disc included). SafeDisc 1.x's band read is the negative control; SafeDisc 2.x and ProtectCD never read theirs. |
 | Music (doc 20) | OPL3 and MPU-401 (no IRQ line) on SoundFont GM or the user's MT-32 ROMs. The SB16 applies its mixer (patch 61). Open: Win98's own MIDI through our port loses instruments. |
 | Gamepads (M13) | USB HID pad (patch 26), gameport (patch 27), key mapping. Done. |
-| Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`. No network card by default. Win98 is TCG with `hpet=off`; the BIOS date stamp makes it install ACPI. DOS paces with `-icount …,align=on`. |
+| Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`. No network card by default. Win98 is TCG with `hpet=off`; the BIOS date stamp makes it install ACPI. DOS paces with `-icount …,align=on`; every adapter has QEMU's `retrace=precise`, so a wait-for-retrace loop really waits (2026-09-24). |
 | Guest tools (`guest-tools/README.md`) | One ISO. `SETUP.EXE` installs what this Windows can use; every program logs to `C:\2KSBOX` (`BOXLOG=` overrides). |
 | Launcher (doc 07) | `launcher-qt` over `launcher-core` (also `launcherx`, `launcher-capi`). The machine form is a settings window, a page per section, every picker the style's own combo box over the model's rows; the Direct3D picker shows only what this host runs. Extra QEMU arguments, clone, first-run preset download; the profile library has a default profile that every machine on "(default)" plays through, CRT Aperture from the first download (2026-09-24). The snapshot window is a tree (2026-09-23): a qcow2 records no parent, so the launcher writes each take and restore to `snapshots.toml` beside the bundle and reconciles it against the disk on every read; snapshots it has no record of sit at the top level; its header and rows share one set of column widths, so they line up at any window size (`qt-snapshots`, user report 2026-09-23). Window text is short and plain (user rule). |
 | Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair down to macOS 12; nothing in either from Homebrew since 2026-09-23, `scripts/build-deps.sh` builds QEMU's libraries and Qt 6.9.3 from source, `build-macos.md` "The libraries"; the community app for Intel Macs builds and packages on the Air under Rosetta since 2026-09-24, `scripts/build.sh --x86_64` + `package-macos.sh --x86_64`, untested on an Intel Mac, "The Intel build"), Windows zip (cross build; native MSYS2 build for debugging) and, from 2026-09-23, the same tree as a Microsoft Store MSIX (`scripts/package-msix.sh`, packed on the PC; passes the certification kit; not yet uploaded: the submission's steps, text and privacy policy are written, `build-windows.md` "The Store package", `packaging/windows/store-listing.md`, `docs/privacy.md`). Every packager opens a real window offscreen. |
@@ -130,6 +130,39 @@ live in its track doc; fixed things leave this list.
   suspends the VM, input piles up in the embed queue (512 events, 151
   dropped, 20 s late on the user's run), and on wake nothing reprograms
   the adapter, so a blank text page idles back into standby.
+
+- **Mortal Kombat 3 (DOS) dies on Start Game in a Win98 DOS box, and
+  plays on pure DOS.** The user's report (2026-09-24): it looked
+  timing-sensitive, and the 386DX combo got it a little further.
+  Headless (`tools/win98-game-test.sh` on `base98-br`, the redump cue in
+  the drive) the DOS box run is a DOS/4GW general protection fault right
+  after "preloading fighter data", with EIP in the game's *data* object
+  (a wild jump): the same unthrottled, with the precise retrace, and with
+  every TCG fast path off (`x87-fast`, `sse-fast`, `simd-fast`,
+  `rep-fast` and all nine `-accel tcg` switches), so not one of ours. The
+  same install on the same image booted to DOS (`MSDOS.SYS`
+  `BootGUI=0`, `OAKCDROM.SYS` + MSCDEX in CONFIG/AUTOEXEC, `MK3.EXE` from
+  AUTOEXEC.BAT, unthrottled) plays: intro, fighter select, whole rounds,
+  the round timer and the continue countdown at their own pace, and the
+  Sound Blaster's own output (the CD's audio muted) recorded through
+  `-audiodev wav`. A PCem report
+  of the game going black on Start Game under Win9x, fixed by MS-DOS mode,
+  is the same finding. Two things stood in the way and are fixed: the
+  retrace (doc 06 "The display adapter") and the DOS drivers' "no disc"
+  (patch 56). For the user: run it from a DOS family machine or restart
+  98 in MS-DOS mode, with a CD driver. Sound: the install has no
+  `DIG.INI` (SETSOUND offers the Sound Blaster drivers only with a
+  `BLASTER` variable, which the image does not set); a hand-written one
+  (`SB16.DIG`, 220h/5/1/5) gets "Digital sound hardware not found" in the
+  DOS box, where Blood and Duke find the card, and works on pure DOS.
+
+- **Four checks fail at the 2026-09-25 baseline on the Linux box, none
+  from that day's changes:** `pit-guest` (the 15.6 ms-wait cases run the
+  guest clock at 13 %, the same on a QEMU built without patch 56),
+  `guest-G9=native` / `guest-G8=native` / `guest-F9=native` (the XP
+  frame against the native render), and `icons` (the MSIX assets are
+  out of date against `gen-icons.sh`). `exec-no-device` and `exec-wine`
+  are the 2026-09-23 ones.
 
 - **The zero-copy ring's frozen slot has no known cause.** `zc_probe()`
   repairs it; doc 12 §4 has what was ruled out and the suspects left.

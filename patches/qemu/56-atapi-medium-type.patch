@@ -1,0 +1,90 @@
+The mode parameter header says what the drive holds, instead of "no disc".
+
+Upstream writes 0x70 as the medium type on every mode page, which MMC-1
+(table 92) defines as "door closed, no disc present". Windows and Linux
+never look at the byte. The DOS ATAPI drivers do: OAKCDROM.SYS and UIDE
+both turn it into bit 11 of the MSCDEX device status, "no disc in drive",
+on a disc the guest is reading its directory from. Mortal Kombat 3 reads
+that status before it starts and refused its own CD on a DOS boot
+(2026-09-24), while the same disc passed in a Windows 98 DOS box, where
+the status comes from CDFS. Now the byte is 01h (data), 02h (audio) or
+03h (both) from the libdisc track list, 01h on a plain image, 70h with no
+medium and 71h with the tray open, as a real drive answers.
+
+diff --git a/hw/ide/atapi.c b/hw/ide/atapi.c
+index 4438d09..e2c0dfb 100644
+--- a/hw/ide/atapi.c
++++ b/hw/ide/atapi.c
+@@ -1447,6 +1447,45 @@ static void cmd_get_configuration(IDEState *s, uint8_t *buf)
+     ide_atapi_cmd_reply(s, len, max_len);
+ }
+ 
++/* 2ksbox (patch 56): the medium type byte of the mode parameter header.
++ * Upstream writes 0x70 on every page, which MMC-1 table 92 defines as
++ * "door closed, no disc present". Windows and Linux never read the byte;
++ * the DOS ATAPI drivers do (OAKCDROM.SYS, UIDE), and their MSCDEX device
++ * status then carries bit 11, "no disc in drive", on a disc the guest is
++ * reading from. A game that checks the bit before it starts (Mortal
++ * Kombat 3) refuses its own CD on the DOS family. 01h..03h say what the
++ * drive holds, as a real drive does. */
++static uint8_t atapi_medium_type(IDEState *s)
++{
++    if (s->tray_open) {
++        return 0x71;
++    }
++    if (!s->blk || !blk_is_inserted(s->blk)) {
++        return 0x70;
++    }
++#ifdef CONFIG_CDIMAGE
++    if (atapi_disc(s)) {
++        libdisc *disc = atapi_disc(s);
++        uint8_t n = libdisc_track_count(disc), t;
++        bool data = false, audio = false;
++
++        for (t = 1; t <= n; t++) {
++            LibdiscTrackInfo ti;
++
++            if (libdisc_track_info(disc, t, &ti) == 0) {
++                if (ti.mode == LIBDISC_KIND_AUDIO) {
++                    audio = true;
++                } else {
++                    data = true;
++                }
++            }
++        }
++        return (data && audio) ? 0x03 : audio ? 0x02 : 0x01;
++    }
++#endif
++    return 0x01;
++}
++
+ static void cmd_mode_sense(IDEState *s, uint8_t *buf)
+ {
+     int action, code;
+@@ -1461,7 +1500,7 @@ static void cmd_mode_sense(IDEState *s, uint8_t *buf)
+         switch(code) {
+         case MODE_PAGE_R_W_ERROR: /* error recovery */
+             stw_be_p(&buf[0], 16 - 2);
+-            buf[2] = 0x70;
++            buf[2] = atapi_medium_type(s);
+             buf[3] = 0;
+             buf[4] = 0;
+             buf[5] = 0;
+@@ -1480,7 +1519,7 @@ static void cmd_mode_sense(IDEState *s, uint8_t *buf)
+             break;
+         case MODE_PAGE_AUDIO_CTL:
+             stw_be_p(&buf[0], 24 - 2);
+-            buf[2] = 0x70;
++            buf[2] = atapi_medium_type(s);
+             buf[3] = 0;
+             buf[4] = 0;
+             buf[5] = 0;
+@@ -1510,7 +1549,7 @@ static void cmd_mode_sense(IDEState *s, uint8_t *buf)
+             break;
+         case MODE_PAGE_CAPABILITIES:
+             stw_be_p(&buf[0], 30 - 2);
+-            buf[2] = 0x70;
++            buf[2] = atapi_medium_type(s);
+             buf[3] = 0;
+             buf[4] = 0;
+             buf[5] = 0;

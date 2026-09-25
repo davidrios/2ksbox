@@ -674,6 +674,14 @@ Implementation rules:
   sizes, byte-count limits, 2048 and 2352, paced 1×/4×/16×) match the
   host's checksum on both drivers. A `speed=` property both drivers
   honour waits for a title that paces itself on CD reads.
+- **The mode parameter header names the medium** (patch 56): byte 2 of
+  every MODE SENSE reply is 01h/02h/03h from the track list, 70h with no
+  medium, 71h with the tray open. Upstream's constant 70h is "no disc";
+  the DOS ATAPI drivers (OAKCDROM.SYS, UIDE) copy it into MSCDEX device
+  status bit 11, and a game that checks the bit (Mortal Kombat 3) refuses
+  its disc on a DOS boot while the same disc passes in a Windows DOS box.
+  `tools/cdprobe.asm` prints what MSCDEX reports (drive count, 150Bh, the
+  IOCTL INPUT subfunctions) from any DOS.
 
 ### 5.4 CD-DA
 
@@ -801,8 +809,8 @@ REQUEST SENSE: INQUIRY, READ TOC 0/1/2, READ CD across track boundaries,
 READ(10) of the unreadable sector (03/11/05), the repairable one and
 their neighbours, READ SUB-CHANNEL 1/2/3, PLAY AUDIO MSF with the
 position advancing, PAUSE, both stops (each followed by status 0x15),
-GET CONFIGURATION, MODE SENSE 0x2A / 0x0E and MODE SELECT 0x0E read
-back, at byte-count limits 512 and 65534. Every reply must equal `discx
+GET CONFIGURATION, MODE SENSE 0x2A (its medium type 03h, patch 56) /
+0x0E and MODE SELECT 0x0E read back, at byte-count limits 512 and 65534. Every reply must equal `discx
 dump` of the same request. Then it exercises the shelf (patch 52). This
 is the `atapi-guest` check; `ATAPI_READ_ERROR=1` is `atapi-read-error`
 (patch 55).

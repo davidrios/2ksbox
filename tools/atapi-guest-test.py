@@ -922,7 +922,7 @@ def check(bcl, entries):
             if b"\x00\x1e" not in data or b"\x01\x03" not in data:
                 failures.append("%s: features 001E / 0103 missing: %s" % (name, data.hex()))
         elif kind == "page2a":
-            if n < 30 or data[8] != 0x2A or data[10] != 0x03 or data[12] != 0x71 or data[13] != 0x7F or data[15] != 0x03:
+            if n < 30 or data[2] != 0x03 or data[8] != 0x2A or data[10] != 0x03 or data[12] != 0x71 or data[13] != 0x7F or data[15] != 0x03:
                 failures.append("%s: %s" % (name, data[:30].hex()))
         elif kind == "page0e":
             if n < 24 or data[8] != 0x0E or data[16:20] != bytes([1, 255, 2, 255]):

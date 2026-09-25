@@ -1504,14 +1504,26 @@ impl Machine {
     /// The `-vga` / `-device` pair that puts the machine's adapter on it.
     /// `-vga none` first for every choice, so the machine never gets the
     /// default adapter as well as the one it asked for.
+    ///
+    /// `retrace=precise` rides on the `-vga` option whichever adapter is
+    /// picked (it is a QEMU-wide setting every VGA-derived device reads
+    /// at init, `d3dpt-vga` included). QEMU's default, `dumb`, answers
+    /// each read of the input status register (port 3DAh) by flipping
+    /// the vertical-retrace bit, so a program's wait-for-retrace loop
+    /// ends on its second read and a game paced by the retrace (Mortal
+    /// Kombat 3, and most of the DOS era) runs unbounded whatever the
+    /// processor combo says. `precise` derives the bit from the CRTC
+    /// timing and the virtual clock, which is a 70 Hz retrace in mode
+    /// 13h and the game's own pace.
     fn video_args(&self) -> Vec<String> {
-        let mut args = vec!["-vga".to_string(), "none".to_string()];
+        const RETRACE: &str = ",retrace=precise";
+        let mut args = vec!["-vga".to_string(), format!("none{RETRACE}")];
         if let Some(video) = self.effective_video() {
             let [flag, value] = video.args();
             // `-vga <name>` replaces the `none` above rather than adding
             // to it; our own adapter is a `-device` and keeps it.
             if flag == "-vga" {
-                args = vec![flag.to_string(), value.to_string()];
+                args = vec![flag.to_string(), format!("{value}{RETRACE}")];
             } else {
                 let mut dev = value.to_string();
                 // Which Direct3D 9 the executor runs on, on the one

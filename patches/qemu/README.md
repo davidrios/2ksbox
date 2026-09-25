@@ -121,7 +121,7 @@ because they change only cost, not behaviour. Device-level A/Bs:
 
 ## The patches
 
-Numbers 03 and 56–59 are unused (56–59 are kept for CD-ROM backend
+Numbers 03 and 57–59 are unused (57–59 are kept for CD-ROM backend
 work, doc 17). Two files share the number 20.
 
 ### 00-3dfx-darwin-contextalpha
@@ -682,6 +682,19 @@ failure (an image on a network share) stopped the music with status 0x14
 until the game asked for another track. A data sector in the range or a vanished medium still
 stops, with a warning. **Test:** the `atapi-read-error` check
 (`tools/read-error-inject.c`). **Drop:** never.
+
+### 56-atapi-medium-type
+The mode parameter header's medium type (byte 2 of every MODE SENSE
+reply) says what the drive holds: 01h data, 02h audio, 03h both, from the
+libdisc track list; 01h on a plain image; 70h with no medium; 71h with the
+tray open. Upstream writes 70h always, which MMC-1 defines as "door
+closed, no disc present". Windows and Linux never read it; OAKCDROM.SYS
+and UIDE turn it into bit 11 of the MSCDEX device status, "no disc in
+drive", and Mortal Kombat 3 checks that bit before it starts, so on a DOS
+boot it refused the disc it had just read its directory from (2026-09-24;
+the same disc passed in a Win98 DOS box, where CDFS answers). **Test:**
+`tools/atapi-guest-test.py` (page 2A's byte 2 is 03h on the mixed test
+disc). **Drop:** if upstream reports the medium.
 
 ### 60-opl3-mpu401-devices
 Builds the music devices (doc 20 §1, §5): meson option `libsynth_dir`,
