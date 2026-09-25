@@ -383,6 +383,7 @@ typedef struct _D3DCAPS9_ {
 #define D3DFORMAT_OP_TEXTURE_                  0x00000001
 #define D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_   0x00000008
 #define D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ 0x00000010
+#define D3DFORMAT_OP_OFFSCREENPLAIN_            0x00004000   /* ddk/ddrawint.h: CreateOffscreenPlainSurface (DX9) */
 #define D3DFORMAT_OP_SAME_FORMAT_UP_TO_ALPHA_RENDERTARGET_ 0x00000100   /* ddk/ddrawint.h; 0x20 is no op and d3d8.dll drops the HAL for it */
 #define D3DFORMAT_OP_ZSTENCIL_                 0x00000040
 #define D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_ 0x00000080

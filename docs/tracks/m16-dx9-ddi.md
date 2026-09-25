@@ -34,6 +34,38 @@ integer / boolean constants, scissor, SETSTREAMSOURCE2 and the target
 tokens reach the host (protocol v14); the blits, queries, mip generation
 and instancing are dropped with a log line.
 
+- **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
+  `xp-driver-test.sh d3dgame9`): 600 frames on a hardware-vertex-processing
+  device, frame 300 dumped. Next to the native DXVK frame everything
+  matches (cubes, lighting, particles, the render-to-texture panel, the
+  floor's two stages) except the floor's filtering: 17 % of pixels
+  differ, all of it texture minification. D3DGAME8 through `d3d8.dll`
+  on the same build: 0 pixels differ.
+- **Wine's suite on the DX9 face:** d3d9 stateblock 14738 checks, **0**
+  failures (182 on the DX8 face: the integer / boolean constants). d3d9
+  visual now reaches the SM2 / SM3 tests it skipped and fails 935 checks
+  before a crash inside the test program at `visual.c:25891`; the top
+  groups are `visual.c:3350` and `11556..11588`. The baseline in
+  `reference/winetest/xp-driver.txt` is the DX8 face's; the DX9 face runs
+  more tests, so a new one is due once the crashes are gone.
+- **Findings from the DX9 face:**
+  6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
+     with no pixel format (a DXT1 one as its block rows' bytes by block
+     rows), so every `TEXBLT` from a 16-bit or DXT texture was refused as
+     a format mismatch. Such a surface is marked (`SURF.nopf`) and a
+     `TEXBLT` from it takes the target's format and size.
+  7. *Fixed.* `GetRenderTargetData` failed before reaching the driver:
+     a DX9 runtime makes a system-memory offscreen plain surface only in a
+     format carrying `D3DFORMAT_OP_OFFSCREENPLAIN`. The RGB formats carry
+     it, for the DX9 runtime only (the last `DXVERSION` said 0x9xx).
+  8. *Open, next.* The video-memory copy of a mipmapped texture is
+     created as one surface (`caps 0x10005000`: no MIPMAP, no COMPLEX)
+     while its system-memory copy has the whole chain, so the host
+     samples level 0 only (the trace: every texture `levels 1`). Something
+     the driver reports makes `d3d9.dll` drop the video-memory mip levels;
+     find it the way the caps check was found (doc 15), in the runtime's
+     texture creation.
+
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
   `kernel32`, `user32`, `gdi32` and `msvcrt` export (checked against the

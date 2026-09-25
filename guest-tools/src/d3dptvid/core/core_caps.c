@@ -605,6 +605,18 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
         DD_GETFORMATDATA_ *f = (DD_GETFORMATDATA_ *)g;
         if (want < sizeof(*f) || f->dwFormatIndex >= d3d_fmt8_n) return DDERR_CURRENTLYNOTAVAIL;
         f->format = d3d_fmt8[f->dwFormatIndex];
+        if (dx9 && c->rt_dxver >= 0x900) {
+            /* d3d9.dll makes an offscreen plain surface (GetRenderTargetData's
+             * target, a 2D game's back store) only in a format with this op.
+             * Said to the DX9 runtime alone: the DX8 list stays the one
+             * d3d8.dll has always had (an op it did not know once made it
+             * drop the HAL) */
+            ULONG fcc = f->format.dwFourCC;
+            if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fcc == D3DFMT_R5G6B5_ || fcc == D3DFMT_X1R5G5B5_ ||
+                fcc == D3DFMT_A1R5G5B5_ || fcc == D3DFMT_A4R4G4B4_) {
+                f->format.dwRBitMask |= D3DFORMAT_OP_OFFSCREENPLAIN_;
+            }
+        }
         *actual = sizeof(*f);
         return DD_OK;
     }
@@ -613,6 +625,7 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
         if (want >= sizeof(*v)) {
             dbg_hex(c, "d3dptdisp: runtime DirectX version ", v->dwDXVersion);
             dbg_puts(c, "\n");
+            c->rt_dxver = v->dwDXVersion;
         }
         *actual = sizeof(*v) <= want ? sizeof(*v) : want;
         return DD_OK;

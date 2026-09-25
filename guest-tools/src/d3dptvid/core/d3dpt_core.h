@@ -161,6 +161,8 @@ typedef struct _SURF {
     ULONG size;                 /* bytes (the linear size of a buffer, pitch * height otherwise) */
     ULONG pitch, w, h, fmt;
     UCHAR used, sysmem, buffer, levels;
+    UCHAR nopf;                 /* registered with no pixel format: fmt is the mode's, a guess. d3d9.dll's
+                                 * system-memory textures come so (M16); a TEXBLT takes its target's format */
     SURF_LEVEL lv[15];          /* mip levels 1.. */
     UCHAR ck_on;                /* the key the host was told (0xff: not yet) */
     UCHAR ck_src;               /* the surface carried a source key when it was registered (ck_lo..ck_hi
@@ -224,6 +226,7 @@ typedef struct d3dpt_core {
     BOOL gamma;                 /* the layer loads gamma ramps into the adapter (NT: DrvIcmSetDeviceGammaRamp) */
     BOOL dx9;                   /* the layer offers the DirectX 9 face (M16; NT first, 9x at M16 step 5) */
     ULONG dx9_unwalked;         /* bit op - 64: a DX9 token the walker drops was reported (M16) */
+    ULONG rt_dxver;             /* the last DXVERSION a runtime announced (0x802 d3d8.dll, 0x902 d3d9.dll) */
 } d3dpt_core;
 
 /* the core whose Direct3D is on (the primary display) */
@@ -245,7 +248,7 @@ typedef struct d3dpt_surf_desc {
     ULONG linear;               /* dwLinearSize */
     ULONG vidmem;               /* fpVidMem: the VRAM offset, or the system-memory pointer */
     ULONG fmt;                  /* what pf_format made of its pixel format; 0 = none */
-    ULONG pf_flags;             /* its pixel format's flags, ~0u when it has none (the log only) */
+    ULONG pf_flags;             /* its pixel format's flags, ~0u when it has none (the log; SURF.nopf) */
     ULONG ck_lo, ck_hi;         /* the source colour key (ddckCKSrcBlt) */
     ULONG ck_dst_lo;            /* the destination key's low value (the log only) */
 } d3dpt_surf_desc;

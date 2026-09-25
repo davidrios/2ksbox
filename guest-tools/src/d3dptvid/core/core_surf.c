@@ -541,6 +541,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         t->w = s->w;
         t->h = s->h;
         t->fmt = fmt;
+        t->nopf = s->pf_flags == 0xffffffffu;
         t->size = buffer ? bsize : pitch0 * rows0 * (depth ? depth : 1);
         t->depth = depth;
         t->levels = (UCHAR)n;

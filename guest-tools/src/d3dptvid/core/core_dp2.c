@@ -471,9 +471,21 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
     SURF *dst = surf_slot(b[0], FALSE), *src = surf_slot(b[1], FALSE);
     LONG dx = (LONG)b[2], dy = (LONG)b[3], sl = (LONG)b[4], st = (LONG)b[5], sr = (LONG)b[6], sb = (LONG)b[7];
     SURF_LEVEL slv[16], dlv[16];
-    ULONG lv, levels, f;
+    ULONG lv, levels, f, sfmt, sw, sh;
 
-    if (!dst || !src || !dst->fmt || dst->fmt != src->fmt || !src->sysmem || dst->buffer || src->buffer) {
+    /* A system-memory source with no pixel format of its own: d3d9.dll
+     * registers its textures' system-memory copies so (a DXT1 one as its
+     * block rows' bytes by block rows). UpdateTexture wants the two formats
+     * equal, so the target's format and size are the source's (M16) */
+    sfmt = src ? src->fmt : 0;
+    sw = src ? src->w : 0;
+    sh = src ? src->h : 0;
+    if (dst && src && src->nopf && src->sysmem && dst->fmt && !dst->cube && !src->cube) {
+        sfmt = dst->fmt;
+        sw = dst->w;
+        sh = dst->h;
+    }
+    if (!dst || !src || !dst->fmt || dst->fmt != sfmt || !src->sysmem || dst->buffer || src->buffer) {
         if (p->dp2_errors < 8) {
             p->dp2_errors++;
             dbg_hex(p, "d3dptdisp: texblt refused, dst ", b[0]);
@@ -523,7 +535,7 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
             slv[lv] = src->lv[lv - 1];
             dlv[lv] = dst->lv[lv - 1];
         }
-        blt_levels(dst->fmt, src->w, src->h, slv, dst->w, dst->h, dlv, levels, b);
+        blt_levels(dst->fmt, sw, sh, slv, dst->w, dst->h, dlv, levels, b);
     }
     if (!dst->sysmem) {
         d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[0]);

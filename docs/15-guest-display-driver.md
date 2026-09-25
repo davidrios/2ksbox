@@ -1335,6 +1335,15 @@ the 9x layer not yet.
   COLORFILL, SURFACEBLT, the query tokens, GENERATEMIPSUBLEVELS and
   SETSTREAMSOURCEFREQ are dropped with a `dx9 token N not walked yet`
   line (M16 step 2).
+- **Surfaces.** `d3d9.dll` registers a texture's system-memory copy
+  with no pixel format (`DDRAWISURF_HASPIXELFORMAT` clear; a DXT1 one is
+  its block rows' bytes wide), so the core marks it (`SURF.nopf`) and a
+  `TEXBLT` from it takes the target's format and size. An offscreen plain
+  surface (`CreateOffscreenPlainSurface`, `GetRenderTargetData`'s target)
+  needs `D3DFORMAT_OP_OFFSCREENPLAIN` on its format; the RGB formats carry
+  it when the last runtime to send `DXVERSION` was DX9, never to
+  `d3d8.dll`. Open: the video-memory copy of a mipmapped texture comes
+  as one level (M16 track, finding 8).
 - **Shaders.** vs / ps 2.0 and 3.0 reach DXVK with the version and END
   checks only (no SM2/3 validator for v1, user decision); 1.x keeps
   `sm1_valid`.
