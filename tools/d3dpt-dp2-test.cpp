@@ -1069,6 +1069,64 @@ int main(int argc, char **argv) {
         send_dp2(&enc, r, vtx);
     }
 
+    /* --- a render-target texture's level under its own handle (v19): a
+     * 64x64 target texture of two levels, level 1 linked as handle 361;
+     * a SETRENDERTARGET to 361 and a clear to green land in level 1 (read
+     * back at its offset), and a one-pixel quad sampling the texture with
+     * point mips reads that green. Hostile: level 0, a level past the
+     * texture, a texture that is no target --- */
+    {
+        enum { MT_OFF = 0x378000, H_MT = 360, H_ML = 361 };
+        const uint32_t l1_off = MT_OFF + 64 * 64 * 4;
+        memset(vram + MT_OFF, 0, 64 * 64 * 4 + 32 * 32 * 4);
+        {
+            d3dpt_vram_surface *t = (d3dpt_vram_surface *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_SURFACE, sizeof *t, sizeof(d3dpt_u32x2));
+            *t = { H_MT, MT_OFF, 64, 64, 256, D3DFMT_X8R8G8B8, D3DPT_VS_TEXTURE | D3DPT_VS_RENDER_TARGET, 2 };
+            *(d3dpt_u32x2 *)(t + 1) = { l1_off, 128 };
+            d3dpt_u32x4 *ml = (d3dpt_u32x4 *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_MIP_LEVEL, sizeof *ml, 0);
+            *ml = { H_ML, H_MT, 1, 0 };
+        }
+        Dp2Buf g;
+        g.cmd(41, 1); g.u32(H_ML); g.u32(0);
+        g.viewport(0, 0, 32, 32);
+        g.clear(D3DCLEAR_TARGET, 0xff00ff00u, 1.0f);
+        g.cmd(41, 1); g.u32(H_RT); g.u32(H_Z);
+        g.viewport(0, 0, W, H);
+        hr = send_dp2(&enc, g, vtx);
+        hr |= readback(&enc, H_ML);
+        uint32_t lv1;
+        memcpy(&lv1, vram + l1_off + 16 * 128 + 16 * 4, 4);
+        lv1 = hr ? 0xdeadbe : lv1 & 0xffffff;
+        std::vector<tlv> one = { { 300, 300, 0.5f, 1, ~0u, 0, 0, 0 }, { 301, 300, 0.5f, 1, ~0u, 0, 1, 0 }, { 300, 301, 0.5f, 1, ~0u, 0, 0, 1 },
+                                 { 300, 301, 0.5f, 1, ~0u, 0, 0, 1 }, { 301, 300, 0.5f, 1, ~0u, 0, 1, 0 }, { 301, 301, 0.5f, 1, ~0u, 0, 1, 1 } };
+        Dp2Buf q;
+        q.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+        q.rs(D3DRS_ZENABLE, 0);
+        q.tss(0, 0, H_MT); q.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1); q.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        q.tss(0, 16, 1); q.tss(0, 17, 1); q.tss(0, 18, 2);
+        q.draw8(4, 2, FVF_TLVERTEX, one);                 /* 64 texels a pixel: the last level, 1 */
+        q.tss(0, 0, 0); q.tss(0, 18, 1); q.rs(D3DRS_ZENABLE, 1);
+        hr = send_dp2(&enc, q, vtx);
+        hr |= readback(&enc, H_RT);
+        uint32_t sampled = hr ? 0xdeadbe : px(300, 300);
+        CHECK(lv1 == 0x00ff00 && near_(sampled, 0x00ff00, 2),
+              "a target texture's level 1 by its own handle: cleared 0x%06x (want 0x00ff00), sampled 0x%06x (want 0x00ff00)", lv1, sampled);
+        struct { uint32_t lh, th, lvl; const char *what; } bad[] = {
+            { 362, H_MT, 0, "level 0" }, { 362, H_MT, 2, "a level past the texture" }, { 362, H_TEX, 1, "a texture that is no target" } };
+        for (auto &c : bad) {
+            d3dpt_u32x4 *ml = (d3dpt_u32x4 *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_MIP_LEVEL, sizeof *ml, 0);
+            *ml = { c.lh, c.th, c.lvl, 0 };
+            d3dpt_enc_flush(&enc);
+            CHECK(enc.last_status == D3DPT_ERR_BAD_ARG || enc.last_status == D3DPT_ERR_BAD_HANDLE, "MIP_LEVEL with %s refused (status %u)", c.what, enc.last_status);
+        }
+        for (uint32_t h : { (uint32_t)H_ML, (uint32_t)H_MT }) {
+            d3dpt_handle *hh = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_RELEASE, sizeof *hh, 0);
+            *hh = { h, 0 };
+        }
+        Dp2Buf r; r.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        send_dp2(&enc, r, vtx);
+    }
+
     /* --- the luminance bump maps (BUMPENVMAPLUMINANCE): a uniform bump map
      * (du = dv = 0, L = one half) at stage 0 over a uniform green
      * environment map at stage 1, a zero bump matrix and a luminance scale

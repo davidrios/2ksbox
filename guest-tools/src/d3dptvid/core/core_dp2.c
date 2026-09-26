@@ -711,6 +711,14 @@ static BOOL blt_level(const SURF *t, ULONG lv, ULONG_PTR *mem, ULONG *pitch, ULO
     return *mem != 0;
 }
 
+/* the handle the host knows level lv of a surface by: a render-target
+ * texture's level has its own (v19), whose readback and VRAM_DIRTY are
+ * that level's; else the surface's */
+static ULONG level_handle(const SURF *t, ULONG handle, ULONG lv)
+{
+    return (lv >= 1 && lv <= 15 && t->lvh[lv - 1]) ? t->lvh[lv - 1] : handle;
+}
+
 /* a RECTL (l, t, r, b) inside w x h, not empty */
 static BOOL blt_rect_ok(const LONG *r, ULONG w, ULONG h)
 {
@@ -920,8 +928,8 @@ static void walk_blt9(DP2WALK *w, const ULONG *b, BOOL stretch)
     blt_log(p, stretch ? "blt" : "surfaceblt", b, 13);
     cw = (ULONG)(dr[2] - dr[0]);
     ch = (ULONG)(dr[3] - dr[1]);
-    if (!src->sysmem) d3d_readback(p, b[0]);
-    if (!dst->sysmem) d3d_readback(p, b[6]);
+    if (!src->sysmem) d3d_readback(p, level_handle(src, b[0], b[5]));
+    if (!dst->sysmem) d3d_readback(p, level_handle(dst, b[6], b[11]));
     dxt = fmt_is_dxt(sfmt);
     if (dxt) {
         ULONG block = fmt_row_bytes(sfmt, 4), rows, rowbytes;
@@ -956,7 +964,7 @@ static void walk_blt9(DP2WALK *w, const ULONG *b, BOOL stretch)
             }
         }
     }
-    if (!dst->sysmem) d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[6]);
+    if (!dst->sysmem) d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, level_handle(dst, b[6], b[11]));
 }
 
 /* The DX9 queries (M16): event and occlusion. The runtime names a query by

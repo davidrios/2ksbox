@@ -14,7 +14,7 @@ The driver came in three stages, which still name the parts: **M7a** the
 framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
 (a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L, and
 since M16 a DirectX 9 DDI with shader model 3.0). The
-register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v18**
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v19**
 (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
 GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
@@ -1354,6 +1354,13 @@ the 9x layer not yet.
   and makes the levels after each upload of level 0 and before sampling
   a target drawn into since (DXVK does neither on its own), and at the
   stream's GENERATEMIPSUBLEVELS, which the walker passes through.
+- **A render-target texture's levels** (v19). The host makes such a
+  texture with all its levels. A level has a handle of its own, which a
+  SETRENDERTARGET names, so the driver links each to its texture
+  (`D3DPT_OP_VRAM_MIP_LEVEL`) and the host serves it as the texture's
+  `GetSurfaceLevel`. The runtime's BLT names a level as the texture's
+  handle and a level index, so the driver reads back, or marks dirty, the
+  level's own handle.
 - **An unbound stream reads as zeros.** A declaration that reads a
   stream nothing is bound to draws with that stream's elements zero, as
   Direct3D 9 does (black for a missing colour, the point size of a

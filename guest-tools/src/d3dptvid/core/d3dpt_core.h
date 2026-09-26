@@ -185,6 +185,7 @@ typedef struct _SURF {
     UCHAR nopf;                 /* registered with no pixel format: fmt is the mode's, a guess. d3d9.dll's
                                  * system-memory textures come so (M16); a TEXBLT takes its target's format */
     SURF_LEVEL lv[15];          /* mip levels 1.. */
+    ULONG lvh[15];              /* a render-target texture's levels 1.. by their own handles (v19; 0 = none) */
     UCHAR ck_on;                /* the key the host was told (0xff: not yet) */
     UCHAR ck_src;               /* the surface carried a source key when it was registered (ck_lo..ck_hi
                                  * until the host is told): the OS's object is never kept, doc 19 §36 */

@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   18u
+#define D3DPT_PROTO_VERSION   19u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -173,6 +173,9 @@ enum d3dpt_op {
                                          * a cube face's level 0, after the cube's own VRAM_SURFACE (D3DPT_VS_CUBE; face 0 is
                                          * the cube's handle itself). A VRAM_DIRTY of it means the cube; on a render-target
                                          * cube it is a target a SETRENDERTARGET / READBACK can name (v11; forward) */
+    D3DPT_OP_VRAM_MIP_LEVEL = 108,      /* body: d3dpt_u32x4 (level handle, texture handle, level 1.., 0): the runtime's handle
+                                         * of a render-target texture's mip level, after the texture's VRAM_SURFACE; a
+                                         * SETRENDERTARGET / READBACK / VRAM_DIRTY of it is that level of the texture (v19) */
     D3DPT_OP_MAX
 };
 

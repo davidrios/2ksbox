@@ -481,6 +481,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
 {
     d3dpt_vram_surface *r;
     d3dpt_u32x2 lv[15];
+    ULONG lvh[15] = { 0 };          /* the mip levels' own handles (0 = none known) */
     ULONG handle, fmt, caps, n = 1, i;
     void *m;
     BOOL sysmem, buffer;
@@ -583,6 +584,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
             }
             lv[n - 1].a = d.vidmem;
             lv[n - 1].b = surf_pitch(fmt, d.w, d.pitch);
+            lvh[n - 1] = d.handle;
             n++;
         }
     }
@@ -613,6 +615,9 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
             t->lv[i].mem = sysmem ? (ULONG_PTR)lv[i].a : (ULONG_PTR)p->fb + lv[i].a;
             t->lv[i].pitch = lv[i].b;
         }
+        for (i = 0; i < 15; i++) {
+            t->lvh[i] = (!sysmem && (caps & D3DPT_VS_TEXTURE) && (caps & D3DPT_VS_RENDER_TARGET) && !s->lwmip && i + 1 < n) ? lvh[i] : 0;
+        }
     }
     if (sysmem) {
         return;
@@ -637,6 +642,20 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     if (depth) {
         ((d3dpt_u32x2 *)(r + 1))[n - 1].a = depth;          /* v12: {depth, level 0's slice pitch} */
         ((d3dpt_u32x2 *)(r + 1))[n - 1].b = pitch0 * rows0;
+    }
+    /* v19: a render-target texture's levels under their own handles, which
+     * a SETRENDERTARGET to one of them names */
+    if ((caps & D3DPT_VS_TEXTURE) && (caps & D3DPT_VS_RENDER_TARGET) && !s->lwmip && !depth) {
+        for (i = 0; i + 1 < n; i++) {
+            d3dpt_u32x4 *ml;
+            if (!lvh[i] || lvh[i] == handle) continue;
+            ml = d3dpt_enc_cmd(&p->enc, D3DPT_OP_VRAM_MIP_LEVEL, sizeof(*ml), 0);
+            if (!ml) break;
+            ml->a = lvh[i];
+            ml->b = handle;
+            ml->c = i + 1;
+            ml->d = 0;
+        }
     }
 }
 

@@ -30,6 +30,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include "d3dpt_exec_int.h"
+#include <algorithm>
 #include <bitset>
 #include <chrono>
 #include <cstdio>
@@ -116,6 +117,8 @@ struct VramSurf {
      * surface of the cube's host object */
     IDirect3DCubeTexture9 *cube = nullptr;
     uint32_t cube_root = 0, face = 0;
+    uint32_t mip_root = 0, mip_level = 0;      /* v19: a render-target texture's level under its own handle */
+    std::vector<uint32_t> mip_h;               /* v19: a render-target texture: its levels' handles */
     uint32_t face_h[D3DPT_CUBE_FACES] = {};    /* a cube: its faces' handles (0: none) */
     bool faces_dirty = false;                   /* a render-target cube: a face entry is dirty */
     /* v12: a volume texture (D3DPT_VS_VOLUME): level 0's depth and slice pitch */
@@ -487,6 +490,13 @@ static uint32_t target_samples(Exec &x, const VramSurf &s) {
 static bool ensure_object(Exec &x, VramSurf &s) {
     if (s.tex || s.rt || s.cube || s.vol) return true;
     if (s.d.caps & D3DPT_VS_BUFFER) return false;       /* a vertex / index buffer: read from VRAM at each draw, no host object */
+    if (s.mip_root) {
+        /* a level of a render-target texture (v19): its surface of the
+         * texture's host object */
+        VramSurf *r = surf(x, s.mip_root);
+        if (!r || !ensure_object(x, *r) || !r->tex || !(r->d.caps & D3DPT_VS_RENDER_TARGET)) return false;
+        return SUCCEEDED(r->tex->GetSurfaceLevel(s.mip_level, &s.rt)) && s.rt;
+    }
     if (s.cube_root) {
         /* a cube face (v11): its surface of a render-target cube's host
          * object; a plain cube's face has no object of its own */
@@ -2632,6 +2642,18 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         }
         Ddi &d = ddi(x);
         VramSurf &s = d.surfs[a->handle];
+        /* a level of a live render-target texture (v19) stays that when the
+         * runtime registers the same level on its own as well; a handle the
+         * runtime gave another surface since is that surface */
+        if (s.mip_root && surf(x, s.mip_root) && a->offset == s.d.offset && a->width == s.d.width && a->height == s.d.height &&
+            !(a->caps & (D3DPT_VS_CUBE | D3DPT_VS_VOLUME | D3DPT_VS_BUFFER)))
+            break;
+        if (s.mip_root) {
+            VramSurf *r = surf(x, s.mip_root);
+            if (r) r->mip_h.erase(std::remove(r->mip_h.begin(), r->mip_h.end(), a->handle), r->mip_h.end());
+            s.release();
+        }
+        s.mip_root = s.mip_level = 0;
         d3dpt_vram_surface nd = *a;
         nd.levels = levels;
         /* the same surface again (a flip moved it): keep the host object if it still fits */
@@ -2641,6 +2663,10 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
             for (uint32_t f = 0; f < D3DPT_CUBE_FACES; f++) {
                 VramSurf *fs = s.face_h[f] ? surf(x, s.face_h[f]) : nullptr;
                 if (fs) { fs->release(); fs->dirty = true; }
+            }
+            for (uint32_t h : s.mip_h) {                   /* v19: its levels' surfaces too */
+                VramSurf *ls = surf(x, h);
+                if (ls && ls->mip_root == a->handle) { ls->release(); ls->dirty = true; }
             }
             s.release();
         }
@@ -2655,6 +2681,42 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         s.slice = slice;
         s.cube_root = s.face = 0;
         if (!cube) memset(s.face_h, 0, sizeof s.face_h);
+        break;
+    }
+    case D3DPT_OP_VRAM_MIP_LEVEL: {
+        /* v19: a render-target texture's level l under its own handle: a
+         * target SETRENDERTARGET / READBACK / VRAM_DIRTY can name, the
+         * texture's surface of that level on the host */
+        auto *a = body<d3dpt_u32x4>(c, 0, b); if (!a) return true;
+        if (!a->a || a->a == a->b || a->c < 1 || a->c > 15) { b.err = D3DPT_ERR_BAD_ARG; return true; }
+        VramSurf *r = surf(x, a->b);
+        if (!r || !(r->d.caps & D3DPT_VS_TEXTURE) || !(r->d.caps & D3DPT_VS_RENDER_TARGET) || (r->d.caps & (D3DPT_VS_CUBE | D3DPT_VS_VOLUME)) ||
+            r->mip_root) { b.err = D3DPT_ERR_BAD_HANDLE; return true; }
+        if (a->c >= r->d.levels || a->c > r->levels.size()) { b.err = D3DPT_ERR_BAD_ARG; return true; }
+        uint32_t root_h = a->b;
+        d3dpt_u32x2 lvl = r->levels[a->c - 1];
+        d3dpt_vram_surface rd = r->d;
+        VramSurf &s = ddi(x).surfs[a->a];               /* node-based map: r stays valid */
+        r = surf(x, root_h);
+        if (s.tex || s.rt || s.cube || s.vol) s.release();
+        s.shadow.clear();
+        s.levels.clear();
+        s.mip_h.clear();
+        s.d = rd;
+        s.d.handle = a->a;
+        s.d.offset = lvl.a;
+        s.d.pitch = lvl.b;
+        s.d.width = rd.width >> a->c ? rd.width >> a->c : 1;
+        s.d.height = rd.height >> a->c ? rd.height >> a->c : 1;
+        s.d.caps = rd.caps & ~D3DPT_VS_AUTOGEN;
+        s.d.levels = 1;
+        s.cube_root = s.face = 0;
+        memset(s.face_h, 0, sizeof s.face_h);
+        s.mip_root = root_h;
+        s.mip_level = a->c;
+        s.dirty = true;
+        s.rendered = false;
+        if (std::find(r->mip_h.begin(), r->mip_h.end(), a->a) == r->mip_h.end()) r->mip_h.push_back(a->a);
         break;
     }
     case D3DPT_OP_VRAM_CUBE_FACE: {
@@ -2712,6 +2774,10 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         for (uint32_t f = 0; f < D3DPT_CUBE_FACES; f++) {   /* a cube: its faces' surfaces of it go too */
             VramSurf *fs = gone.face_h[f] ? surf(x, gone.face_h[f]) : nullptr;
             if (fs) { fs->release(); fs->dirty = true; }
+        }
+        for (uint32_t h : gone.mip_h) {                     /* v19: a texture's levels become plain handles */
+            VramSurf *ls = surf(x, h);
+            if (ls && ls->mip_root == a->handle) { ls->release(); ls->mip_root = ls->mip_level = 0; ls->dirty = true; }
         }
         if (gone.cube_root) {                           /* a face: its cube forgets it */
             VramSurf *r = surf(x, gone.cube_root);
