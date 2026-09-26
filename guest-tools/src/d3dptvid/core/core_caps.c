@@ -601,6 +601,15 @@ void d3d_caps_init(d3dpt_core *p)
     d3d_caps9.c8.DestBlendCaps |= D3DPBLENDCAPS_BLENDFACTOR_;
     d3d_caps9.c8.StencilCaps |= D3DSTENCILCAPS_TWOSIDED_;
     d3d_caps9.c8.TextureCaps |= D3DPTEXTURECAPS_TEXREPEATNOTSCALEDBYSIZE_;
+    /* Textures of any size, 2D, cube and volume alike, as the DX9 cards
+     * of the rig's class (a GeForce 6 claims none of the POW2 flags) and
+     * as the host really draws them: a conditional claim promises clamping
+     * and no mip chain for such a texture, which DXVK does not do (Wine's
+     * conditional_np2_repeat_test), and test_npot_textures wants the three
+     * restrictions equal. The DX7 / DX8 faces keep the conditional claim
+     * their titles branch on (Crimson Skies, above) */
+    d3d_caps9.c8.TextureCaps &= ~(D3DPTEXTURECAPS_POW2_ | D3DPTEXTURECAPS_NONPOW2CONDITIONAL_ |
+                                  D3DPTEXTURECAPS_CUBEMAP_POW2_ | D3DPTEXTURECAPS_VOLUMEMAP_POW2_);
     d3d_caps9.c8.GuardBandLeft = -8192.0f;
     d3d_caps9.c8.GuardBandTop = -8192.0f;
     d3d_caps9.c8.GuardBandRight = 8192.0f;

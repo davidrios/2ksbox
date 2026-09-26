@@ -675,7 +675,10 @@ guest (XP)                                      host
   NONPOW2CONDITIONAL` (and D3DCAPS8 with it), a GeForce's answer.
   Crimson Skies branches on `POW2`, and without it the game never made
   its menu's string textures (doc 19 §34). `ddflags=0x2`
-  (`DDF_TEX_ANYSIZE`) is the A/B.
+  (`DDF_TEX_ANYSIZE`) is the A/B. **The DX9 caps claim any size** for
+  2D, cube and volume textures (M16): a GeForce 6, the rig's card, claims
+  none of the POW2 flags there, and a conditional claim promises a clamp
+  DXVK does not do (Wine's `conditional_np2_repeat_test`).
 - **A Z buffer written through a Lock.** Some titles reset depth by
   writing the Z buffer, and the HEL performs an application's depth fill
   through `DdLock` too, since the driver claims no blits. Both write VRAM

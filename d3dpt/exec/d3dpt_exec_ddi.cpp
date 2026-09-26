@@ -1313,7 +1313,23 @@ struct Dp2 {
                 f.push_back(0x80000000u | vsde_usage[r].usage | ((uint32_t)vsde_usage[r].index << 16));
                 f.push_back(0x900F0000u | r);
             }
+            size_t body = f.size();
             for (uint32_t i = 4; i < codebytes; i += 4) f.push_back(u32(code + i));
+            /* DX8's scalar instructions (rcp, rsq, exp, log, expp, logp:
+             * opcodes 6, 7, 14, 15, 78, 79) read the source's w when it has
+             * no swizzle; d3d9 wants a replicate swizzle and otherwise reads
+             * x. The source gets .wwww, as DXVK's own d3d8 does (Wine's
+             * test_scalar_instructions: logp of (0.25, 0.5, 1, 2) drew black) */
+            for (size_t i = body; i + 2 < f.size();) {
+                uint32_t op = f[i] & 0xffff;
+                if (op == 0xfffe) { i += 1 + ((f[i] >> 16) & 0x7fff); continue; }
+                if (op == 81) { i += 6; continue; }                 /* DEF: a register, then four raw floats */
+                if (!(f[i] & 0x80000000u) && (op == 6 || op == 7 || op == 14 || op == 15 || op == 78 || op == 79) &&
+                    (f[i + 2] & 0x00ff0000u) == 0x00e40000u)
+                    f[i + 2] |= 0x00ff0000u;
+                i++;
+                while (i < f.size() && (f[i] & 0x80000000u)) i++;
+            }
             hr = x.dev->CreateVertexShader((const DWORD *)f.data(), &s.vs);
             if (FAILED(hr) || !s.vs) {
                 if (d.warn_once(0xc1003)) x.log("ddi: dp2: vertex shader 0x%x: CreateVertexShader 0x%08x (version 0x%08x, %u bytes)", handle, (unsigned)hr, u32(code), codebytes);

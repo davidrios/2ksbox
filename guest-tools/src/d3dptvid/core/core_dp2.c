@@ -432,7 +432,7 @@ static void walk_volumeblt(DP2WALK *w, const ULONG *b)
 {
     d3dpt_core *p = w->p;
     SURF *dst = surf_slot(b[0], FALSE), *src = surf_slot(b[1], FALSE);
-    ULONG bpp, levels, lv, z, y;
+    ULONG bpp, levels, lv, z, y, skip, w0;
     BOOL dxt;
 
     if (p->reg_lines < 4096 && p->bufblt_lines < 8) {
@@ -462,16 +462,28 @@ static void walk_volumeblt(DP2WALK *w, const ULONG *b)
     }
     dxt = fmt_is_dxt(dst->fmt);
     bpp = dxt ? fmt_row_bytes(dst->fmt, 4) : fmt_row_bytes(dst->fmt, 1);    /* DXT: one 4x4 block */
-    levels = dst->levels < src->levels ? dst->levels : src->levels;
+    /* A source larger than the target: its top levels are left out until
+     * the sizes match, the box (in the source's level 0) scaled down with
+     * them, as walk_texblt does (Wine's test_updatetexture: an 8x8x8 chain
+     * of 4 into a 2x2x2 chain of 2 is the source's levels 2 and 3). A
+     * no-pixel-format DXT source has its width in bytes per block row */
+    w0 = src->w;
+    if (src->nopf && dxt && bpp) {
+        w0 = src->w / bpp * 4;
+    }
+    for (skip = 0; skip < 15 && (w0 >> skip) > dst->w && skip + 1 < src->levels; skip++) {
+    }
+    levels = dst->levels < src->levels - skip ? dst->levels : src->levels - skip;
     if (levels > 16) {
         levels = 16;
     }
-    for (lv = 0; lv < levels; lv++) {
-        ULONG_PTR smem = lv ? src->lv[lv - 1].mem : src->mem, dmem = lv ? dst->lv[lv - 1].mem : dst->mem;
-        ULONG spitch = lv ? src->lv[lv - 1].pitch : src->pitch, dpitch = lv ? dst->lv[lv - 1].pitch : dst->pitch;
-        ULONG sw = src->w >> lv, sh = src->h >> lv, sd = src->depth >> lv, dw = dst->w >> lv, dh = dst->h >> lv, dd = dst->depth >> lv;
-        ULONG x0 = b[5] >> lv, y0 = b[6] >> lv, z0 = b[9] >> lv, x1 = b[2] >> lv, y1 = b[3] >> lv, z1 = b[4] >> lv;
-        ULONG cw = (b[7] - b[5]) >> lv, ch = (b[8] - b[6]) >> lv, cd = (b[10] - b[9]) >> lv;
+    for (lv = 0; lv < levels && lv + skip < 16; lv++) {
+        ULONG sl = lv + skip;
+        ULONG_PTR smem = sl ? src->lv[sl - 1].mem : src->mem, dmem = lv ? dst->lv[lv - 1].mem : dst->mem;
+        ULONG spitch = sl ? src->lv[sl - 1].pitch : src->pitch, dpitch = lv ? dst->lv[lv - 1].pitch : dst->pitch;
+        ULONG sw = src->w >> sl, sh = src->h >> sl, sd = src->depth >> sl, dw = dst->w >> lv, dh = dst->h >> lv, dd = dst->depth >> lv;
+        ULONG x0 = b[5] >> sl, y0 = b[6] >> sl, z0 = b[9] >> sl, x1 = b[2] >> lv, y1 = b[3] >> lv, z1 = b[4] >> lv;
+        ULONG cw = (b[7] - b[5]) >> sl, ch = (b[8] - b[6]) >> sl, cd = (b[10] - b[9]) >> sl;
 
         if (!sw) sw = 1;
         if (!sh) sh = 1;

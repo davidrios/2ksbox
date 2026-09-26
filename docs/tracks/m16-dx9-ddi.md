@@ -66,7 +66,10 @@ fetch checked by a title, the 2.0-cap flag.
   d3d8 visual 142764 / 158; d3d8 device 55641 / 2; d3d8 stateblock 9283
   / 0. `reference/winetest/xp-driver.txt` was saved again from this run
   (74 keys); the checks it gained are all in the three files that used
-  to crash.
+  to crash. After findings 29 to 31: d3d9 visual 618, d3d9 device 21,
+  d3d8 visual 155, and **against the rig only finding 24 is left that
+  DXVK's own run does not share** (`depth_clamp_test`, `z_range_test`,
+  both runtimes).
 - **DXVK's own failures** (`tools/winetest-dxvk.sh`, new): the same test
   EXEs under the host's Wine on DXVK's 32-bit `d3d9.dll` / `d3d8.dll`,
   in a headless sway. d3d9 visual 209672 checks, 1291 failures, no crash;
@@ -110,9 +113,10 @@ fetch checked by a title, the 2.0-cap flag.
   until the driver works (user, 2026-09-26: "let's do the dxvk patches
   after the driver is working"). The rest is ours: `depth_clamp_test` 5
   and `z_range_test` 2 (finding 24, a DXVK patch too, in d3d8 as well),
-  `test_updatetexture` 2 in each runtime (volumes),
-  `conditional_np2_repeat_test` 2, and d3d8's
-  `test_scalar_instructions` 1.
+  `test_updatetexture` 2 in each runtime (volumes, finding 29),
+  `conditional_np2_repeat_test` 2 (finding 30), and d3d8's
+  `test_scalar_instructions` 1 (finding 31); since those, finding 24
+  alone.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
   the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
   checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device
@@ -273,6 +277,22 @@ fetch checked by a title, the 2.0-cap flag.
      `DdGetDriverState` claimed success with nothing written. It fails
      now, which the runtime returns as `S_FALSE` (d3d8 `test_get_info`,
      251 checks).
+  29. *Fixed.* A volume `UpdateTexture` from a larger chain (8x8x8 of 4
+     levels into 2x2x2 of 2) copied the source's top level into the
+     target's: `VOLUMEBLT` now leaves out the source's top levels until
+     the sizes match, the box scaled down with them, as `TEXBLT` does
+     (`test_updatetexture`'s volume cases 5 and 10, both runtimes).
+  30. *Fixed.* The DX9 caps claimed `POW2 | NONPOW2CONDITIONAL`, which
+     promises that a non-power-of-two texture is clamped; DXVK repeats it
+     (`conditional_np2_repeat_test`). They now claim any size for 2D,
+     cube and volume textures, as the rig's GeForce 6 does (the rig skips
+     that test), and `test_npot_textures` wants the three alike. The DX7 /
+     DX8 faces keep the conditional claim (doc 15 "Texture sizes").
+  31. *Fixed, in the executor.* A DX8 vertex shader's scalar instruction
+     (`rcp`, `rsq`, `exp`, `log`, `expp`, `logp`) with no source swizzle
+     reads `.w`; d3d9, which the host runs it on, reads `.x` unless the
+     swizzle replicates. The decoder gives such a source `.wwww`, as
+     DXVK's own d3d8 does (d3d8 `test_scalar_instructions`' `logp`).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
