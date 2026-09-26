@@ -177,7 +177,13 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
   `PLAYER_DUMP_SEQ` and exits, even while the window is occluded.
 - `Ctrl+Alt+S` writes the guest's own frame (native size, no geometry
   stage, no CRT chain) as `PLAYER_SHOT_DIR/2ksbox-NNNN.png`, or in the
-  working directory when that is unset.
+  working directory when that is unset. It is evidence of what the
+  machine rendered, for tests and bug reports. **It is not a picture
+  of the product**: a screenshot meant for people (a Store listing,
+  Flathub, the README) is the player's window after the shader chain,
+  at the window's resolution, taken with the OS's own screenshot with
+  the player full screen; a guest frame scaled up shows something the
+  box never draws (user, 2026-09-25).
 - `PLAYER_SHOT_EVERY=300` takes that shot every 300 presented guest
   frames, driven from the wake path so a window behind a terminal still
   shoots. This is how a headless run sees a 3D frame; a QMP screendump

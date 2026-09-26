@@ -683,7 +683,11 @@ Qt is a shared library, so every packager gained a job (ADR-015):
   `LAUNCHER_QT_SHOT=<png>`) and requires the PNG; on macOS under
   `DYLD_PRINT_LIBRARIES=1`, so the QML engine's images must be the
   app's own. The Flatpak's sandbox has its own `/tmp`, so its PNG goes
-  under `$HOME`.
+  under `$HOME`. On the Windows PC the grab of the *main* window (no
+  `LAUNCHER_QT_SCREEN`) is a blank white PNG, with or without the
+  executables' manifest (A/B on 2026-09-23, identical files; cause not
+  found), while a named screen (`LAUNCHER_QT_SCREEN=wizard`) grabs a
+  real picture: to prove the launcher runs there, grab a named screen.
 
 ### Five Qt traps, each of which cost real time
 
