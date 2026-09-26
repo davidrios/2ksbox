@@ -58,7 +58,7 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  657 failures (803 before mip generation, findings 15, 17 and 20,
+  652 failures (803 before mip generation, findings 15, 17, 20 and 21,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
@@ -74,8 +74,18 @@ fetch checked by a title, the 2.0-cap flag.
   build/winetest/wine-11.0` counts the rest per test function. Against it
   the guest's d3d9 visual has 27 keys worse. The largest: `test_fog` 48,
   `depth_blit_test` 12 (depth StretchRect), `test_updatetexture` 9
-  (finding 2), `update_surface_test` 7, `test_generate_mipmap` 7
-  (finding 18).
+  (finding 2), `test_generate_mipmap` 7 (finding 18).
+- **Where DXVK itself differs.** A guest failure DXVK shares is DXVK's
+  behaviour, and a patch in `patches/dxvk/` would be the fix. The clear
+  case: fog under a vertex shader that writes no `oFog` (most of
+  `fog_with_shader_test`'s 174), where DXVK leaves the pixel unfogged
+  and Wine's reference card (a GeForce 7600) fogs it fully; a native
+  DXVK probe answers as the guest does. DXVK also makes no autogen
+  mipmap levels after an upload, which the host works around. Rule
+  (user question, 2026-09-26): patch DXVK only where the rig's run and
+  DXVK disagree and a title could meet it, so the rig's baselines come
+  first. Part of DXVK's 1291 under Wine is Wine's (windows, GDI), not
+  DXVK's.
 - **Findings from the DX9 face:**
   6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
      with no pixel format (a DXT1 one as its block rows' bytes by block
@@ -179,6 +189,10 @@ fetch checked by a title, the 2.0-cap flag.
      that stream. Wine's `test_default_diffuse`, `test_color_vertex`,
      `test_pointsize` (an unbound PSIZE stream) and six of
      `test_updatetexture`'s checks pass since: d3d9 visual 657 (707).
+  21. *Fixed.* UpdateSurface from a system-memory DXT texture was
+     refused: such a surface has no pixel format, its width is bytes per
+     block row and its height block rows, and the blit checked a texel
+     rectangle against those. Five of `update_surface_test`'s seven pass.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

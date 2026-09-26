@@ -855,6 +855,7 @@ static void walk_blt9(DP2WALK *w, const ULONG *b, BOOL stretch)
     const LONG *sr = (const LONG *)(b + 1), *dr = (const LONG *)(b + 7);
     ULONG_PTR smem, dmem;
     ULONG spitch, dpitch, sw, sh, dw, dh, sfmt, dfmt, bpp, dbpp, x, y, cw, ch, dxt, c;
+    BOOL ok;
 
     sfmt = src ? (src->nopf && dst ? dst->fmt : src->fmt) : 0;
     dfmt = dst ? dst->fmt : 0;
@@ -871,7 +872,15 @@ static void walk_blt9(DP2WALK *w, const ULONG *b, BOOL stretch)
          * layout with an X or A channel, or what a game asked for) */
         dfmt = sfmt;
     }
-    if (!blt_level(src, b[5], &smem, &spitch, &sw, &sh) || !blt_level(dst, b[11], &dmem, &dpitch, &dw, &dh) ||
+    ok = blt_level(src, b[5], &smem, &spitch, &sw, &sh);
+    if (ok && src->nopf && fmt_is_dxt(sfmt) && fmt_row_bytes(sfmt, 4)) {
+        /* a system-memory DXT surface with no pixel format: its width is
+         * bytes per block row and its height block rows (d3d9.dll's) */
+        ULONG w0 = src->w / fmt_row_bytes(sfmt, 4) * 4, h0 = src->h * 4;
+        sw = w0 >> b[5] ? w0 >> b[5] : 1;
+        sh = h0 >> b[5] ? h0 >> b[5] : 1;
+    }
+    if (!ok || !blt_level(dst, b[11], &dmem, &dpitch, &dw, &dh) ||
         !blt_rect_ok(sr, sw, sh) || !blt_rect_ok(dr, dw, dh) || !sfmt) {
         blt_log(p, stretch ? "blt refused:" : "surfaceblt refused:", b, 13);
         return;

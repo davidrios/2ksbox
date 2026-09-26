@@ -54,7 +54,7 @@ d3d9_test_visual visual.c:14276 1
 d3d9_test_visual visual.c:14835 12
 d3d9_test_visual visual.c:1546 1
 d3d9_test_visual visual.c:16433 1
-d3d9_test_visual visual.c:17041 7
+d3d9_test_visual visual.c:17041 2
 d3d9_test_visual visual.c:18342 6
 d3d9_test_visual visual.c:18345 4
 d3d9_test_visual visual.c:19144 1
