@@ -148,7 +148,11 @@ fetch checked by a title, the 2.0-cap flag.
     also with a device window other than the focus window) and every
     step answers as on Windows, so this is the test process's state on
     Win98 (likely a background process that cannot take the foreground
-    back), for the rig's run to confirm.
+    back), for the rig's run to confirm. `test_swapchain_parameters`' 12
+    in each runtime are its full-screen cases (tests 4 to 6, 13, 14) and
+    the same state. `test_getdc`'s 61 (d3d9) are GDI's answers on Win98
+    (a top-down DIB's height of -64, the resolution fields, no DC for the
+    alpha formats), not the driver's.
     `device.c:11324` ff. "Expected no format" is `GetPixelFormat` on a
     Win98 window, likely Win98's (the rig will say).
 - **Step 5, second pass (2026-09-26).** The regression side first, all on
