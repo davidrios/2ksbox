@@ -33,7 +33,10 @@ import sys
 
 SUMMARY = re.compile(r"^[0-9a-f]{4}:(\w+):.*?(\d+) tests executed \((\d+) marked as todo, "
                      r"(\d+) as flaky, (\d+) failures?\), (\d+) skipped")
-FAIL = re.compile(r"^(\w+\.c):(\d+): .*?(Test failed|Test succeeded inside todo block|"
+# "Test marked todo" is a check that failed where Wine expects it to
+# (todo_wine, active only on Wine): a failure all the same for a run on the
+# host's Wine (tools/winetest-dxvk.sh), and never seen on Windows
+FAIL = re.compile(r"^(\w+\.c):(\d+): .*?(Test failed|Test succeeded inside todo block|Test marked todo|"
                   r"Test marked flaky|Test succeeded inside flaky todo block)")
 CRASH = re.compile(r"unhandled exception ([0-9a-f]{8})")
 WTRUN = re.compile(r"^wtrun: (\w+) (\w+): (exit \d+|timeout|cannot start)")

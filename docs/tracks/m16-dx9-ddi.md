@@ -71,9 +71,16 @@ fetch checked by a title, the 2.0-cap flag.
   A guest failure DXVK shares is DXVK's (most of `fog_with_shader_test`'s
   174: a vs 1.x that writes no `oFog` is not fogged, also on native
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
-  build/winetest/wine-11.0` counts the rest per test function. Against it
-  the guest's d3d9 visual has 19 keys worse. The largest: `test_fog` 48,
-  `depth_clamp_test` 5, `pretransformed_varying_test` 4.
+  build/winetest/wine-11.0` counts the rest per test function. A check
+  Wine marks `todo_wine` fails on its host as "Test marked todo", which
+  the summary counts as a failure since 2026-09-26 (it never appears on
+  Windows); before that, `test_fog`, `test_shademode` and
+  `pretransformed_varying_test` looked like ours and were DXVK's.
+  Against it the guest's d3d9 visual fails 22 checks beyond DXVK:
+  `test_fog` 6, `depth_clamp_test` 5 and `z_range_test` 2 (finding 24),
+  `update_surface_test` 2, `test_updatetexture` 2,
+  `conditional_np2_repeat_test` 2, and one each in `clear_test`,
+  `test_sysmem_draw` and `test_desktop_window`.
 - **Where DXVK itself differs.** A guest failure DXVK shares is DXVK's
   behaviour, and a patch in `patches/dxvk/` would be the fix. The clear
   case: fog under a vertex shader that writes no `oFog` (most of
@@ -163,11 +170,10 @@ fetch checked by a title, the 2.0-cap flag.
      first state with every light off (doc 15). Two of d3d9 visual's own
      failures went with it. Two contexts alive at once still share the
      device's lights.
-  16. *Open.* `test_fog` / `test_texture_transform_flags` on an
-     A32B32G32R32F target: 48 of `test_fog`'s checks fail beyond DXVK's
-     (a vs that writes the specular alpha, not `oFog`), and the texture
-     transform checks read alpha 0 where 1 is due (DXVK fails the same
-     count there).
+  16. *Mostly DXVK's.* `test_fog` / `test_texture_transform_flags` on an
+     A32B32G32R32F target: with Wine's todo marks counted, 6 of
+     `test_fog`'s checks fail beyond DXVK (VS_MODE_FFP, finding 24's
+     kind), and the texture transform ones are DXVK's.
   17. *Fixed.* A managed texture's SetLOD sampled its level 0 whatever
      the LOD. `d3d9.dll` sends no SETTEXLOD: it makes the video-memory
      copy again with fewer levels and TEXBLTs the full system-memory chain
@@ -215,9 +221,8 @@ fetch checked by a title, the 2.0-cap flag.
      (`BindRasterizerState`: `setDepthClip(true)`). The fix is a patch
      making depth clip follow `D3DRS_CLIPPING`, and the executor turning
      clipping off for an XYZRHW draw. It waits for the rig's run (the
-     DXVK rule above) and a user decision. Part of `test_fog`'s 48
-     (VS_MODE_FFP, a point missing entirely rather than fogged wrong)
-     may be the same.
+     DXVK rule above) and a user decision. `test_fog`'s 6 (VS_MODE_FFP,
+     a point missing entirely rather than fogged wrong) may be the same.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
