@@ -217,7 +217,7 @@ another.
 | `tools/win98-reboot-test.sh <image> [qmp\|guest\|both]` | Win98 survives a restart (patch 22): a second SeaBIOS banner on the debugcon, a boot's worth of disk reads after it, `LVT0` back to ExtINT. `QEMU=`/`BIOS=0` the stock control |
 | `pwrprobe.exe` | Windows' monitor power-down on demand (doc 19 §41): a blank reaches the driver as a screen switch only, so `switched out` then `linear mode off` within a millisecond in the QEMU log is the pass; `NO_DRIVER=1` is the control that must fail. `STAGE=…/pwrprobe.exe PULL=PWRPROBE.LOG GUEST_CMD='start /w C:\PWRPROBE.EXE 5' RUN_SECS=100 tools/win98-game-test.sh <image> pwr` |
 | `DRIVER\SETMODE.EXE` | lists / switches XP display modes from a script |
-| `DRIVER\DDTEST.EXE` | DirectDraw 7 through our driver: HAL caps, VRAM flip chain, windowed blit, fps, palette rotation at 8 bpp; `scanout offset` lines are the page flips |
+| `DRIVER\DDTEST.EXE` | DirectDraw 7 through our driver: HAL caps, VRAM flip chain, windowed blit, fps, palette rotation at 8 bpp; `scanout offset` lines are the page flips; `sysmem blt` reads back four system-to-video blits (1:1, BltFast, stretched, colour-keyed) and says FAIL if one is wrong |
 | `DRIVER\DITEST.EXE` | a game-style DirectInput keyboard: what buffered data, state, `GetAsyncKeyState` and `WM_KEYDOWN` each see |
 | `ddprobe.exe` | a DirectDraw object's HAL/HEL caps and `WaitForVerticalBlank` (9x), `C:\2KSBOX\DDPROBE.LOG`. It, `pwrprobe.exe` and `bsod.exe` are built by `guest-tools/build-driver9x.sh` into `guest-tools/out/driver9x/` and staged by the harness, not on the ISO |
 | `tools/embed-3d-test.c` | the window-less Mesa backend without a guest (Linux): several frames per dma-buf slot, each slot's memory followed; `embed-3d` |

@@ -1,10 +1,7 @@
 # tools/winetest-summary.py winetest --save; one failing check per line
-d3d8_test_device crash 1
-d3d8_test_device device.c:3244 1
-d3d8_test_device device.c:3256 1
-d3d8_test_device device.c:3281 1
-d3d8_test_device device.c:4402 1
-d3d8_test_visual crash 1
+d3d8_test_device device.c:9748 1
+d3d8_test_device device.c:9754 1
+d3d8_test_visual visual.c:12377 1
 d3d8_test_visual visual.c:1723 119
 d3d8_test_visual visual.c:2426 1
 d3d8_test_visual visual.c:2461 1
@@ -18,7 +15,11 @@ d3d8_test_visual visual.c:5138 6
 d3d8_test_visual visual.c:5141 4
 d3d8_test_visual visual.c:6640 1
 d3d8_test_visual visual.c:6759 8
-d3d9_test_device crash 1
+d3d8_test_visual visual.c:7402 2
+d3d8_test_visual visual.c:9215 3
+d3d8_test_visual visual.c:9217 3
+d3d8_test_visual visual.c:9850 3
+d3d9_test_device device.c:13049 1
 d3d9_test_device device.c:1741 1
 d3d9_test_device device.c:1743 1
 d3d9_test_device device.c:1747 1
@@ -35,14 +36,10 @@ d3d9_test_device device.c:1848 1
 d3d9_test_device device.c:1849 1
 d3d9_test_device device.c:1850 1
 d3d9_test_device device.c:1853 1
-d3d9_test_device device.c:2164 1
-d3d9_test_device device.c:2166 1
-d3d9_test_device device.c:2169 1
-d3d9_test_device device.c:2174 1
-d3d9_test_device device.c:2177 1
-d3d9_test_device device.c:2178 1
-d3d9_test_device device.c:2180 1
-d3d9_test_device device.c:2188 1
+d3d9_test_device device.c:4661 1
+d3d9_test_device device.c:4663 1
+d3d9_test_device device.c:4680 1
+d3d9_test_device device.c:4682 1
 d3d9_test_visual visual.c:11556 9
 d3d9_test_visual visual.c:11571 9
 d3d9_test_visual visual.c:11574 9

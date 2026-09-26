@@ -694,8 +694,13 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
             if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_) {
                 f->format.dwRBitMask |= D3DFORMAT_OP_SRGBWRITE_;
             }
-            if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fcc == D3DFMT_R5G6B5_ || fcc == D3DFMT_X1R5G5B5_ ||
-                fcc == D3DFMT_A1R5G5B5_ || fcc == D3DFMT_A4R4G4B4_) {
+            /* mip generation only where the format is a render target too:
+             * the runtime answers D3D_OK for AUTOGENMIPMAP on the op alone,
+             * and real drivers say D3DOK_NOAUTOGEN for a format they cannot
+             * render to (Wine's test_mipmap_gen: A1R5G5B5, A4R4G4B4) */
+            if ((fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fcc == D3DFMT_R5G6B5_ || fcc == D3DFMT_X1R5G5B5_ ||
+                 fcc == D3DFMT_A1R5G5B5_ || fcc == D3DFMT_A4R4G4B4_) &&
+                (f->format.dwRBitMask & D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_)) {
                 f->format.dwRBitMask |= D3DFORMAT_OP_AUTOGENMIPMAP_;
             }
             /* the ARGB group, among which StretchRect converts (walk_blt9

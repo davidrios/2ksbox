@@ -61,9 +61,12 @@ fetch checked by a title, the 2.0-cap flag.
   622 failures (803 before mip generation, findings 15, 17, 18, 20 to 23, 25, 26,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
-  `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
-  again from this run, the DX9 face's (107 keys); d3d9 / d3d8 device and
-  d3d8 visual still crash where they did.
+  `patches/winetest/`). **Every file runs to its end** since findings 5
+  and 2 were fixed (2026-09-26): d3d9 device 159591 checks, 21 failures;
+  d3d8 visual 142764 / 158; d3d8 device 55641 / 2; d3d8 stateblock 9283
+  / 0. `reference/winetest/xp-driver.txt` was saved again from this run
+  (74 keys); the checks it gained are all in the three files that used
+  to crash.
 - **DXVK's own failures** (`tools/winetest-dxvk.sh`, new): the same test
   EXEs under the host's Wine on DXVK's 32-bit `d3d9.dll` / `d3d8.dll`,
   in a headless sway. d3d9 visual 209672 checks, 1291 failures, no crash;
@@ -94,19 +97,22 @@ fetch checked by a title, the 2.0-cap flag.
 - **Against the rig's XP run** (2026-09-26, `--baseline rig-xp.txt
   --split dxvk-wine.txt`): the rig fails 1448 of d3d9 visual's checks
   (a 2005 card), and `test_fog`'s 6 and `test_desktop_window`'s 1 are
-  among them. The guest fails 53 keys the rig passes. DXVK's own run
+  among them. The guest failed 53 keys the rig passes, 41 since
+  findings 5, 2, 27 and 28 (the device files run whole, and pass
+  wherever the rig does). DXVK's own run
   fails the same checks in `fog_with_shader_test` (174, and d3d8's
   119), `test_pointsize` 27, `test_shademode` 10, `fog_special_test` 8,
   `test_table_fog_zw` 8, `pretransformed_varying_test` 5, `test_ffp_w`
   4, `test_format_conversion` 2, `fp_special_test` 1 and
-  `test_negative_fixedfunction_fog` 1: under the rule above these are
-  the candidates for a patch in `patches/dxvk/`, each one a user
-  decision. The rest is ours: `depth_clamp_test` 5 and `z_range_test` 2
-  (finding 24, in d3d8 too), `test_reset` 8 (finding 5),
-  `test_updatetexture` 2 (volumes), `conditional_np2_repeat_test` 2,
-  and in d3d8 `test_wndproc` 1, `test_mode_change` 1 and
-  `test_scalar_instructions` 1 (d3d8 visual and both device files crash
-  early on the guest, so their count is partial).
+  `test_negative_fixedfunction_fog` 1 (d3d8 visual adds
+  `test_shademode` 6): under the rule above these are the candidates for
+  a patch in `patches/dxvk/`, each one a user decision, and they wait
+  until the driver works (user, 2026-09-26: "let's do the dxvk patches
+  after the driver is working"). The rest is ours: `depth_clamp_test` 5
+  and `z_range_test` 2 (finding 24, a DXVK patch too, in d3d8 as well),
+  `test_updatetexture` 2 in each runtime (volumes),
+  `conditional_np2_repeat_test` 2, and d3d8's
+  `test_scalar_instructions` 1.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
   the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
   checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device
@@ -259,6 +265,14 @@ fetch checked by a title, the 2.0-cap flag.
      the buffer (`test_sysmem_draw`) was refused; the cards of the era
      draw it. The walker trims the range to what the buffer holds, and the
      host still checks every index against it.
+  27. *Fixed.* `CheckDeviceFormat(D3DUSAGE_AUTOGENMIPMAP)` said `D3D_OK`
+     for A1R5G5B5 and A4R4G4B4, which the driver cannot render to; real
+     drivers say `D3DOK_NOAUTOGEN` (d3d9 `test_mipmap_gen`). The
+     autogen op now goes only on formats that are render targets.
+  28. *Fixed.* d3d8's `GetInfo` answered `S_OK` for every id:
+     `DdGetDriverState` claimed success with nothing written. It fails
+     now, which the runtime returns as `S_FALSE` (d3d8 `test_get_info`,
+     251 checks).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
@@ -294,7 +308,17 @@ fetch checked by a title, the 2.0-cap flag.
      **0x100** (`ddk/ddrawint.h`); 0x20 is no op, and with it d3d8.dll
      dropped the HAL entirely (every call `D3DERR_NOTAVAILABLE`, SHTEST
      too). Take op values from the DDK header, never from memory.
-  2. *Open.* `UpdateTexture` faults inside the runtime, in d3d8.dll and
+  2. *Fixed* (2026-09-26, d3d8; d3d9's went with step 1). d3d8.dll hands
+     an `UpdateTexture` from system memory to the driver (a DP2 `TEXBLT`
+     / `VOLUMEBLT`) only when `dwSVBCaps` has `DDCAPS_BLT` (its check at
+     0x6df5b900 in 5.3.2600.5512; from video memory it wants `DDCAPS_BLT`
+     in `dwCaps`). Without it the runtime locks and copies each level
+     itself, and that copy indexes past the source's levels when the
+     source has fewer than the target (`test_update_volumetexture` case
+     5, a NULL read at 0x6df58c12). The driver now claims `DDCAPS_BLT` in
+     `dwSVBCaps` alone (doc 15 "Blit caps and the HEL"). What was seen
+     before:
+     `UpdateTexture` faults inside the runtime, in d3d8.dll and
      d3d9.dll alike, before any `TEXBLT` reaches the driver: the first
      instruction of a runtime routine reads a NULL object. Several
      updates succeed first, so it is one case of Wine's table (formats,
@@ -306,7 +330,14 @@ fetch checked by a title, the 2.0-cap flag.
      The DX8 probes still pass.
   4. *The DX9 work itself.* d3d9 stateblock's 182: pixel shader integer
      and boolean constants refused by a runtime that sees ps 1.4.
-  5. *Open.* The lost-device test: a fullscreen device minimized and
+  5. *Fixed* (2026-09-26). `d3d_core`, the one pointer to the PDEV
+     whose Direct3D is on, was cleared by the 640x480 PDEV's
+     `DrvDisableSurface`, and the desktop's kept PDEV came back through
+     `DrvAssertMode(TRUE)` alone, which never set it again: every context
+     call found no PDEV. `DrvAssertMode(TRUE)` now points it back at a
+     PDEV with Direct3D on. d3d9 `test_reset` passes, and both device
+     files run to their end. What was seen before the fix:
+     The lost-device test: a fullscreen device minimized and
      restored fails `Reset` with `D3DERR_INVALIDCALL` (d3d8 device.c:3244),
      and once the desktop is back in its own mode, dxg never calls
      `DrvEnableDirectDraw` on it again (QEMU log: `dd disabled`, then

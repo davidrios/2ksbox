@@ -621,6 +621,13 @@ BOOL APIENTRY DrvAssertMode(DHPDEV dhpdev, BOOL bEnable)
 
     if (bEnable) {
         dbg_puts(&p->core, "d3dptdisp: assert mode on\n");
+        /* A kept PDEV coming back (the desktop after a full-screen mode)
+         * gets no DrvGetDirectDrawInfo, so its Direct3D is on again here:
+         * the other PDEV's DrvDisableSurface left no d3d_core, and every
+         * context call failed (Reset D3DERR_INVALIDCALL, finding 5) */
+        if (p->core.d3d) {
+            d3d_core = &p->core;
+        }
         return set_mode(p);
     }
     dbg_puts(&p->core, "d3dptdisp: assert mode off\n");
@@ -1265,6 +1272,14 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
         pHalInfo->ddCaps.dwCaps |= DDCAPS_COLORKEY;
         pHalInfo->ddCaps.dwCKeyCaps = DDCKEYCAPS_SRCBLT;
     }
+    /* d3d8.dll's UpdateTexture from system memory goes to the driver (a
+     * DP2 TEXBLT / VOLUMEBLT) only with DDCAPS_BLT here; otherwise the
+     * runtime copies level by level itself, and that copy reads past the
+     * source's levels when the source has fewer than the target (Wine's
+     * test_update_volumetexture faults in d3d8.dll) */
+    if (p->core.d3d) {
+        pHalInfo->ddCaps.dwSVBCaps = DDCAPS_BLT;
+    }
     pHalInfo->ddCaps.dwVidMemTotal = dd_heap_end(&p->core) - start;
     pHalInfo->ddCaps.dwVidMemFree = dd_heap_end(&p->core) - start;
     /* dwPalCaps stays 0 at 8 bpp too. XP's dxg.sys drops the whole HAL when
@@ -1831,10 +1846,12 @@ static DWORD APIENTRY DdCreateSurfaceEx(PDD_CREATESURFACEEXDATA d)
 }
 
 /* The runtime's device-info queries (D3DDEVINFOID_*: texture manager,
- * vertex stats). Nothing to report, so the buffer stays as it was. */
+ * vertex stats). Nothing to report: a failure, which d3d8's GetInfo
+ * returns as S_FALSE (Wine's test_get_info; a success claimed every id
+ * with the buffer left as it was). */
 static DWORD APIENTRY DdGetDriverState(PDD_GETDRIVERSTATEDATA d)
 {
-    d->ddRVal = DD_OK;
+    d->ddRVal = DDERR_UNSUPPORTED;
     return DDHAL_DRIVER_HANDLED;
 }
 

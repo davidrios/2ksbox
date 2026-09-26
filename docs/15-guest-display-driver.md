@@ -567,6 +567,17 @@ with its rectangles. `DDF_CKEY_NOBLTCB` leaves it out. Windowed
 multisampling is the one feature that waits on a blitter
 ("Multisampling").
 
+**The one blit cap claimed: `DDCAPS_BLT` in `dwSVBCaps`** (M16, with
+Direct3D on). It is how d3d8.dll decides that the driver does
+`UpdateTexture` from system memory: with it the runtime sends a DP2
+`TEXBLT` / `VOLUMEBLT`, without it the runtime copies level by level
+itself, and that copy faults when the source has fewer levels than the
+target (track M16 finding 2). With no system-to-video ROPs, colour-key
+or FX caps, DirectDraw's own system-to-video blits stay in the HEL:
+DDTEST's `sysmem blt` line (Blt, BltFast, a stretched Blt, a keyed
+BltFast, each read back) passes at every depth and no call reaches
+`DdBlt`.
+
 
 ## The Direct3D DDI (M7c)
 

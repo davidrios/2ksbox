@@ -12,6 +12,10 @@
  * ddtest.log. At 8 bpp a 256-entry palette (four ramps) goes on the
  * primary and SetEntries rotates it by one entry per frame, the palette
  * animation of 2D titles; the BMP is written through that palette.
+ * Last, a system-memory surface goes to the back buffer by Blt, BltFast,
+ * a stretched Blt and a colour-keyed BltFast, the sprite path of 2D
+ * titles, each read back ("sysmem blt ... ok"): with DDCAPS_BLT in the
+ * driver's system-to-video caps these must still work.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -55,6 +59,104 @@ static void pump(void)
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }
+}
+
+static unsigned px_get(const DDSURFACEDESC2 *sd, unsigned x, unsigned y)
+{
+    const unsigned char *row = (const unsigned char *)sd->lpSurface + y * sd->lPitch;
+    switch (sd->ddpfPixelFormat.dwRGBBitCount) {
+    case 8: return row[x];
+    case 16: return ((const unsigned short *)row)[x];
+    default: return ((const unsigned *)row)[x] & 0xffffff;
+    }
+}
+
+static void px_set(const DDSURFACEDESC2 *sd, unsigned x, unsigned y, unsigned v)
+{
+    unsigned char *row = (unsigned char *)sd->lpSurface + y * sd->lPitch;
+    switch (sd->ddpfPixelFormat.dwRGBBitCount) {
+    case 8: row[x] = (unsigned char)v; break;
+    case 16: ((unsigned short *)row)[x] = (unsigned short)v; break;
+    default: ((unsigned *)row)[x] = v & 0xffffff; break;
+    }
+}
+
+/* the source pattern: never 0, which is the colour key */
+static unsigned sys_px(unsigned x, unsigned y, unsigned bpp)
+{
+    unsigned v = x * 7 + y * 13 + 1;
+    return bpp == 8 ? (v % 255) + 1 : bpp == 16 ? (v * 0x0841) % 0xffff + 1 : ((v * 0x010203) & 0xffffff) | 1;
+}
+
+/* A 32x32 system-memory surface to the video-memory back buffer by the
+ * four calls a 2D title makes, each read back: Blt and BltFast 1:1 at
+ * (0,0) and (40,0), Blt stretched 2x at (0,40), and BltFast with the
+ * source colour key (the left half 0, keyed out) at (80,0) over a filled
+ * background. */
+static void sysmem_blts(IDirectDraw7 *dd, IDirectDrawSurface7 *back)
+{
+    IDirectDrawSurface7 *sys = NULL;
+    DDSURFACEDESC2 sd, bd;
+    DDCOLORKEY ck;
+    DDBLTFX fx;
+    RECT r, dr;
+    HRESULT hr, h[4];
+    unsigned x, y, bpp, bad[4] = {0, 0, 0, 0};
+
+    memset(&sd, 0, sizeof(sd)); sd.dwSize = sizeof(sd);
+    sd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
+    sd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
+    sd.dwWidth = 32; sd.dwHeight = 32;
+    hr = dd->lpVtbl->CreateSurface(dd, &sd, &sys, NULL);
+    if (FAILED(hr)) { logp("sysmem blt: CreateSurface %08lx  FAIL\n", hr); return; }
+    memset(&sd, 0, sizeof(sd)); sd.dwSize = sizeof(sd);
+    hr = sys->lpVtbl->Lock(sys, NULL, &sd, DDLOCK_WAIT | DDLOCK_WRITEONLY, NULL);
+    if (FAILED(hr)) { logp("sysmem blt: Lock %08lx  FAIL\n", hr); sys->lpVtbl->Release(sys); return; }
+    bpp = sd.ddpfPixelFormat.dwRGBBitCount;
+    for (y = 0; y < 32; y++)
+        for (x = 0; x < 32; x++) px_set(&sd, x, y, sys_px(x, y, bpp));
+    sys->lpVtbl->Unlock(sys, NULL);
+
+    memset(&fx, 0, sizeof(fx)); fx.dwSize = sizeof(fx);
+    fx.dwFillColor = 0;
+    back->lpVtbl->Blt(back, NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &fx);
+    r.left = 0; r.top = 0; r.right = 32; r.bottom = 32;
+    dr = r;
+    h[0] = back->lpVtbl->Blt(back, &dr, sys, &r, DDBLT_WAIT, NULL);
+    h[1] = back->lpVtbl->BltFast(back, 40, 0, sys, &r, DDBLTFAST_WAIT);
+    dr.left = 0; dr.top = 40; dr.right = 64; dr.bottom = 104;
+    h[2] = back->lpVtbl->Blt(back, &dr, sys, &r, DDBLT_WAIT, NULL);
+    /* the keyed one: the source's left half becomes the key colour 0,
+     * over the target's fill of 0, which the pattern never has */
+    memset(&sd, 0, sizeof(sd)); sd.dwSize = sizeof(sd);
+    if (SUCCEEDED(sys->lpVtbl->Lock(sys, NULL, &sd, DDLOCK_WAIT, NULL))) {
+        for (y = 0; y < 32; y++)
+            for (x = 0; x < 16; x++) px_set(&sd, x, y, 0);
+        sys->lpVtbl->Unlock(sys, NULL);
+    }
+    ck.dwColorSpaceLowValue = ck.dwColorSpaceHighValue = 0;
+    sys->lpVtbl->SetColorKey(sys, DDCKEY_SRCBLT, &ck);
+    h[3] = back->lpVtbl->BltFast(back, 80, 0, sys, &r, DDBLTFAST_WAIT | DDBLTFAST_SRCCOLORKEY);
+
+    memset(&bd, 0, sizeof(bd)); bd.dwSize = sizeof(bd);
+    hr = back->lpVtbl->Lock(back, NULL, &bd, DDLOCK_WAIT | DDLOCK_READONLY, NULL);
+    if (FAILED(hr)) { logp("sysmem blt: Lock(back) %08lx  FAIL\n", hr); sys->lpVtbl->Release(sys); return; }
+    for (y = 0; y < 32; y++) {
+        for (x = 0; x < 32; x++) {
+            unsigned want = sys_px(x, y, bpp);
+            if (px_get(&bd, x, y) != want) bad[0]++;
+            if (px_get(&bd, 40 + x, y) != want) bad[1]++;
+            if (px_get(&bd, x * 2, 40 + y * 2) != want) bad[2]++;
+            if (px_get(&bd, 80 + x, y) != (x < 16 ? 0u : want)) bad[3]++;
+        }
+    }
+    back->lpVtbl->Unlock(back, NULL);
+    sys->lpVtbl->Release(sys);
+    logp("sysmem blt: Blt %08lx %s, BltFast %08lx %s, stretched Blt %08lx %s, keyed BltFast %08lx %s%s\n",
+         h[0], bad[0] ? "WRONG" : "ok", h[1], bad[1] ? "WRONG" : "ok",
+         h[2], bad[2] ? "WRONG" : "ok", h[3], bad[3] ? "WRONG" : "ok",
+         (bad[0] | bad[1] | bad[2] | bad[3] | FAILED(h[0]) | FAILED(h[1]) | FAILED(h[2]) | FAILED(h[3])) ?
+         "  FAIL" : "");
 }
 
 static PALETTEENTRY cur_pal[256];       /* what the primary's palette holds now */
@@ -338,6 +440,7 @@ int main(int argc, char **argv)
         back->lpVtbl->Unlock(back, NULL);
         logp("%s written (last back buffer)\n", bmp);
     }
+    sysmem_blts(dd, back);
 out:
     if (back && !windowed) back = NULL;      /* attached: released with the primary */
     else if (back) back->lpVtbl->Release(back);
