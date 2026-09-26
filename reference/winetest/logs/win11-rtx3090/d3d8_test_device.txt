@@ -1,0 +1,12 @@
+device.c:1613: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:3127: device_window 00c80948, focus_window 013107e2, dummy_window 00b309c0.
+device.c:3131: Test failed: Expected focus 00000000, got 00c80948.
+device.c:3133: Test failed: Expected foreground window 00b309c0, got 00280b92.
+device.c:3551: device_window 00c90948, focus_window 013207e2, dummy_window 00f009a2.
+device.c:4504: Tests skipped: Following tests require two adapters.
+device.c:6579: Tests skipped: Format D3DFMT_YUY2 not supported, skipping lockrect offset tests.
+device.c:6579: Tests skipped: Format D3DFMT_UYVY not supported, skipping lockrect offset tests.
+device.c:9464: Max user clip planes: 8.
+device.c:9464: Max user clip planes: 6.
+device.c:9979: this is the last test seen before the exception
+744c:device: unhandled exception c0000005 at 67a8983d

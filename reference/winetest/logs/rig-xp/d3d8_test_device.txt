@@ -1,0 +1,21 @@
+device.c:3127: device_window 006b0100, focus_window 00b40090, dummy_window 0158008a.
+device.c:3551: device_window 006c0100, focus_window 00b50090, dummy_window 006600b8.
+device.c:4226: Test failed: Got unexpected hr 0x8876086c.
+device.c:4228: Test failed: Got hr 0x8876086c.
+device.c:4504: Tests skipped: Following tests require two adapters.
+device.c:6579: Tests skipped: Format ATI1N not supported, skipping lockrect offset tests.
+device.c:6579: Tests skipped: Format D3DFMT_YUY2 not supported, skipping lockrect offset tests.
+device.c:6579: Tests skipped: Format D3DFMT_UYVY not supported, skipping lockrect offset tests.
+device.c:9070: Tests skipped: D3DFMT_ATI1 textures not supported, skipping tests.
+device.c:9464: Max user clip planes: 6.
+device.c:9464: Max user clip planes: 6.
+device.c:9626: Test failed: Adapter 0: Caps3 field has unexpected flags 0x320.
+device.c:9748: Test failed: Unexpected hr 0.
+device.c:9754: Test failed: info_id 4, unexpected hr 0.
+device.c:9979: Test failed: Test DS 1: Got unexpected hr 0x88760827.
+device.c:9979: Test failed: Test DS 8: Got unexpected hr 0x88760827.
+device.c:9979: Test failed: Test DS 15: Got unexpected hr 0x88760827.
+device.c:9979: Test failed: Test DS 22: Got unexpected hr 0x88760827.
+device.c:9979: Test failed: Test DS 29: Got unexpected hr 0x88760827.
+device.c:10090: Tests skipped: ATI2N texture not supported.
+0764:device: 57409 tests executed (0 marked as todo, 0 as flaky, 10 failures), 6 skipped.

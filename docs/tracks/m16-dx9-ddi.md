@@ -391,7 +391,9 @@ track builds.
   `RUNALL.BAT` from inside it under XP and under Win98 (DirectX 9.0c),
   bring back `C:\2KSBOX\WINETEST`, and save each with
   `tools/winetest-summary.py <dir> --save reference/winetest/rig-xp.txt`
-  (`rig-98.txt`). Both saved 2026-09-26. XP's is complete: every file ran
+  (`rig-98.txt`). The run's own files go in
+  `reference/winetest/logs/<name>/` beside it, so the failure text can be
+  read and the baseline saved again without the rig. Both saved 2026-09-26. XP's is complete: every file ran
   to its end (d3d9 visual 210849 checks, 1448 failures; device 161316 /
   21; d3d8 visual 142874 / 44; device 57409 / 10). **Win98's is
   partial**: the test EXEs call `EnumDisplaySettingsW` and

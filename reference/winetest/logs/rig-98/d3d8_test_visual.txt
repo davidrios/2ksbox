@@ -1,0 +1,64 @@
+visual.c:12583: Driver string: "NVDD32.DLL"
+visual.c:12584: Description string: "NVIDIA GeForce 6200"
+visual.c:12587: Driver version 4.14.10.7772
+visual.c:417: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:3425: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:572: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:981: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:1072: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:1255: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:2361: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:2729: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:2868: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:2654: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:1634: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:1964: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:3027: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:3266: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:3578: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:3716: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:3880: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:4216: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:4382: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:4801: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:4508: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:5044: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:5250: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:5367: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:5578: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:6148: Tests skipped: Failed to create a D3D device.
+visual.c:6258: Tests skipped: ATI1N textures are not supported, skipping test.
+visual.c:6415: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:6589: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:6705: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:6917: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:7165: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:7592: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:7972: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:8033: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:8332: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:8509: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:8679: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:8912: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:9109: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:9265: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:9738: Tests skipped: Failed to create a D3D device.
+visual.c:9935: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:10081: Tests skipped: Failed to create a D3D device.
+visual.c:10239: Tests skipped: Failed to create a D3D device.
+visual.c:10346: Tests skipped: Failed to create a D3D device.
+visual.c:10450: Tests skipped: Failed to create a D3D device.
+visual.c:10581: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:10777: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:10913: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:11044: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:11327: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:11436: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:11500: Tests skipped: Failed to create a 3D device.
+visual.c:11595: Tests skipped: Failed to create a D3D device, skipping tests.
+visual.c:12029: Tests skipped: Failed to create a 3D device.
+visual.c:319: Tests skipped: Failed to create a D3D device.
+visual.c:319: Tests skipped: Failed to create a D3D device.
+visual.c:319: Tests skipped: Failed to create a D3D device.
+visual.c:319: Tests skipped: Failed to create a D3D device.
+fffd333d:visual: 67 tests executed (0 marked as todo, 0 as flaky, 0 failures), 60 skipped.

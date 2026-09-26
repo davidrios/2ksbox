@@ -1,0 +1,86 @@
+visual.c:29041: Driver string: "nvldumd.dll"
+visual.c:29042: Description string: "NVIDIA GeForce RTX 3090"
+visual.c:29045: Device name string: "\\.\DISPLAY1"
+visual.c:29047: Driver version 32.0.16.1664
+visual.c:1435: sRGB writing to D3DFMT_A8R8G8B8 is supported.
+visual.c:1630: Test failed: Got unexpected color 0x00000000.
+visual.c:1633: Test failed: Got unexpected color 0x00000000.
+visual.c:1653: Tests skipped: D3DFMT_D16_LOCKABLE is not supported.
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_DXT1 surfaces not supported, skipping colorfill test
+visual.c:9890: Tests skipped: Card has unconditional NP2 support, skipping conditional NP2 tests
+visual.c:10286: Tests skipped: L6V5U5 / D3DTOP_BUMPENVMAPLUMINANCE not supported, skipping tests.
+visual.c:12885: Test failed: Input 0x00000000: Got color 0x00004500 for pixel 2/1, expected 0x00008700, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xff000000: Got color 0x00a2ff8a for pixel 2/1, expected 0x004bff1c, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x00ff0000: Got color 0x005a0000 for pixel 2/1, expected 0x00b30000, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x0000ff00: Got color 0x00004700 for pixel 2/1, expected 0x00008700, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x000000ff: Got color 0x00001872 for pixel 2/1, expected 0x000030e1, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xffff0000: Got color 0x00ffe58a for pixel 2/1, expected 0x00ffd01c, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xff00ff00: Got color 0x00a4ff8c for pixel 2/1, expected 0x004bff1c, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xff0000ff: Got color 0x00a2ffff for pixel 2/1, expected 0x004bffff, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x00ffff00: Got color 0x005c0000 for pixel 2/1, expected 0x00b30000, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x00ff00ff: Got color 0x005a0072 for pixel 2/1, expected 0x00b300e1, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x0000ffff: Got color 0x00001a74 for pixel 2/1, expected 0x001030e1, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xffffff00: Got color 0x00ffe78c for pixel 2/1, expected 0x00ffd01c, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xffff00ff: Got color 0x00ffb8ff for pixel 2/1, expected 0x00ff79ff, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xffffffff: Got color 0x00ffbaff for pixel 2/1, expected 0x00ff79ff, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x4cff4c54: Got color 0x00a62524 for pixel 2/1, expected 0x00ff0000, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0x1c6b1cff: Got color 0x000d0d8e for pixel 2/1, expected 0x000000fd, format D3DFMT_UYVY.
+visual.c:12885: Test failed: Input 0xff000000: Got color 0x00022b00 for pixel 2/1, expected 0x00b30000, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0x0000ff00: Got color 0x00005b03 for pixel 2/1, expected 0x000030e1, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xffff0000: Got color 0x00ffff1a for pixel 2/1, expected 0x00ffd01c, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xff00ff00: Got color 0x00020003 for pixel 2/1, expected 0x00b300e1, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xff0000ff: Got color 0x00042d00 for pixel 2/1, expected 0x00b30000, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0x0000ffff: Got color 0x00005d05 for pixel 2/1, expected 0x000030e1, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xffffff00: Got color 0x00fffbff for pixel 2/1, expected 0x00ff79ff, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xffff00ff: Got color 0x00ffff1c for pixel 2/1, expected 0x00ffd01c, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xffffffff: Got color 0x00fffdff for pixel 2/1, expected 0x00ff79ff, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0x4cff4c54: Got color 0x0080ff5f for pixel 2/1, expected 0x00b6ffa3, format D3DFMT_YUY2.
+visual.c:12885: Test failed: Input 0xff80ff80: Got color 0x00827e83 for pixel 2/1, expected 0x00ff00ff, format D3DFMT_YUY2.
+visual.c:15496: Tests skipped: No DF24 support, skipping Fetch4 test.
+visual.c:204: Can't create an offscreen plain surface to read the render target data, hr 0x80004005.
+visual.c:19144: Test failed: Got unexpected color 0x00adbeef.
+visual.c:17582: Tests skipped: No RESZ support, skipping RESZ test.
+visual.c:20614: Tests skipped: Format D3DFMT_L6V5U5 not supported, skipping.
+visual.c:21616: Tests skipped: Volume ATI2N textures are not supported, skipping some tests.
+visual.c:21881: Tests skipped: Depth format 71 not supported, skipping.
+visual.c:23684: Line antialiasing support: 0.
+visual.c:27752: Test failed: PS test 0: VS test 2: Got unexpected colour 00ffffff.
+visual.c:27752: Test failed: PS test 0: VS test 5: Got unexpected colour 00ffffff.
+visual.c:27752: Test failed: PS test 1: VS test 2: Got unexpected colour 00ffffff.
+visual.c:27752: Test failed: PS test 1: VS test 5: Got unexpected colour 00ffffff.
+visual.c:27752: Test failed: PS test 2: VS test 2: Got unexpected colour 00ffffff.
+visual.c:27752: Test failed: PS test 2: VS test 5: Got unexpected colour 00ffffff.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 0: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 0: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 0: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 0: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 1: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 1: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 1: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0, vs_mode 2, ortho_fog 1: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 0: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 0: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 0: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 0: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 1: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 1: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 1: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x3, vs_mode 2, ortho_fog 1: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 0: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 0: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 0: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 0: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 1: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 1: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 1: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x1, vs_mode 2, ortho_fog 1: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 0: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 0: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 0: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 0: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 1: (300, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 1: (340, 220): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 1: (300, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28488: Test failed: pixel mode 0, vertex mode 0x2, vs_mode 2, ortho_fog 1: (340, 260): Expected fog 9.59999979e-01; got colour {0.00000000e+00, 1.00000000e+00, 1.00000000e+00, 1.00000000e+00}.
+visual.c:28877: Test failed: attrib count 4, vs_mode 3, ps_mode 1, flags 0xfffffeff: Expected colour {8.00000012e-01, 2.00000003e-01, 0.00000000e+00, 0.00000000e+00}; got {5.95000029e-01, 3.95000011e-01, 0.00000000e+00, 0.00000000e+00}.
+a218:visual: 210814 tests executed (0 marked as todo, 0 as flaky, 69 failures), 9 skipped.

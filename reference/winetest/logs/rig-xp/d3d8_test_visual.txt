@@ -1,0 +1,59 @@
+visual.c:12583: Driver string: "nv4_disp.dll"
+visual.c:12584: Description string: "NVIDIA GeForce 6200  "
+visual.c:12587: Driver version 6.14.11.8120
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (160, 120), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 120), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (480, 120), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (160, 240), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (480, 240), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (160, 360), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 360), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (480, 360), got 0x00fbfbfb, case 0.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 1.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 2.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 3.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 4.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 5.
+visual.c:1040: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 6.
+visual.c:3034: Tests skipped: D3DFMT_P8 textures not supported.
+visual.c:3663: Test failed: Expected color 0x0000ff00 at 400,60, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 560,60, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x0000ff00 at 400,180, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 560,180, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x0000ff00 at 80,300, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x0000ff00 at 240,300, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x0000ff00 at 400,300, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 560,300, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 80,420, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 240,420, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 400,420, got 0x000000ff.
+visual.c:3663: Test failed: Expected color 0x00ff0000 at 560,420, got 0x000000ff.
+visual.c:3902: Tests skipped: No INTZ support, skipping INTZ test.
+visual.c:4529: Tests skipped: No INTZ support, skipping RESZ test.
+visual.c:5138: Test failed: Expected left color 0x00ff0000, got 0x0000ff00, case 0.
+visual.c:5138: Test failed: Expected left color 0x00ff0000, got 0x0000ff00, case 1.
+visual.c:5262: Tests skipped: DXT1 volume textures are not supported, skipping test.
+visual.c:5262: Tests skipped: DXT3 volume textures are not supported, skipping test.
+visual.c:5262: Tests skipped: DXT5 volume textures are not supported, skipping test.
+visual.c:5374: Tests skipped: Volume V16U16 textures are not supported, skipping test.
+visual.c:5837: Test failed: Got unexpected color 0x00ffffff.
+visual.c:6258: Tests skipped: ATI1N textures are not supported, skipping test.
+visual.c:6481: Test failed: Got unexpected color 0x0000ea15, case 2.
+visual.c:6481: Test failed: Got unexpected color 0x0000ea15, case 3.
+visual.c:6947: Tests skipped: Format D3DFMT_V16U16 not supported, skipping.
+visual.c:7202: Tests skipped: Volume ATI2N textures are not supported, skipping some tests.
+visual.c:8993: Test failed: Got unexpected color 0xff000000, case 0.
+visual.c:8993: Test failed: Got unexpected color 0xff000000, case 2.
+visual.c:9294: Test failed: Got unexpected color 0xff00ff00, position 0x0.
+visual.c:9850: Test failed: Test 5: Got color 0xffff0000, expected 0x80ff0000.
+visual.c:9850: Test failed: Test 7: Got color 0x00ff0000, expected 0x80ff0000.
+visual.c:9850: Test failed: Test 10: Got color 0xffff0000, expected 0x80ff0000.
+visual.c:10089: Edge antialiasing support: 0.
+visual.c:12373: Test failed: Got color ff003300.
+visual.c:12375: Test failed: Got color ff001a00.
+visual.c:12377: Test failed: Got color ff009900.
+visual.c:12379: Test failed: Got color ff003300.
+visual.c:12390: Test failed: Got unexpected color 0x00003300.
+visual.c:12400: Test failed: Got unexpected color 0x00470047.
+01d8:visual: 142874 tests executed (0 marked as todo, 0 as flaky, 44 failures), 10 skipped.

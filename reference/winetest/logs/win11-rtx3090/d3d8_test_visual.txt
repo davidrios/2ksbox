@@ -1,0 +1,11 @@
+visual.c:12583: Driver string: "nvldumd.dll"
+visual.c:12584: Description string: "NVIDIA GeForce RTX 3090"
+visual.c:12587: Driver version 32.0.16.1664
+visual.c:3034: Tests skipped: D3DFMT_P8 textures not supported.
+visual.c:4536: Tests skipped: No RESZ support, skipping RESZ test.
+visual.c:5541: Test failed: Failed to draw, hr 0x80004005.
+visual.c:5837: Test failed: Got unexpected color 0x0000ff00.
+visual.c:6947: Tests skipped: Format D3DFMT_L6V5U5 not supported, skipping.
+visual.c:7202: Tests skipped: Volume ATI2N textures are not supported, skipping some tests.
+visual.c:10089: Edge antialiasing support: 0x1000.
+179c:visual: 143246 tests executed (0 marked as todo, 0 as flaky, 2 failures), 4 skipped.

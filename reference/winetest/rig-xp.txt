@@ -1,4 +1,4 @@
-# tools/winetest-summary.py WINETEST_xp --save; one failing check per line
+# tools/winetest-summary.py rig-xp --save; one failing check per line
 d3d8_test_device device.c:4226 1
 d3d8_test_device device.c:4228 1
 d3d8_test_device device.c:9626 1

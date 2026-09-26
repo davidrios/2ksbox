@@ -1,0 +1,80 @@
+visual.c:29041: Driver string: "NVDD32.DLL"
+visual.c:29042: Description string: "NVIDIA GeForce 6200"
+visual.c:29045: Device name string: "\\.\Display1\U0"
+visual.c:29047: Driver version 4.14.10.7772
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (160, 120), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 120), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (480, 120), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (160, 240), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (480, 240), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (160, 360), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 360), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (480, 360), got 0x00fbfbfb, case 0.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 1.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 2.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 3.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 4.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 5.
+visual.c:1138: Test failed: Expected color 0x00ffffff at location (320, 240), got 0x00fdfdfd, case 6.
+visual.c:1435: sRGB writing to D3DFMT_A8R8G8B8 is supported.
+visual.c:1630: Test failed: Got unexpected color 0x00ff00ff.
+visual.c:1633: Test failed: Got unexpected color 0x007f7f7f.
+visual.c:1653: Tests skipped: D3DFMT_D16_LOCKABLE is not supported.
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_A16B16G16R16 surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_P8 surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_R32F surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_A32B32G32R32F surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_R16F surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_G16R16F surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_A16B16G16R16F surfaces not supported, skipping colorfill test
+visual.c:1844: Tests skipped: Offscreenplain D3DFMT_DXT1 surfaces not supported, skipping colorfill test
+visual.c:2410: Test failed: Untransformed vertex with vertex fog and z = 0.1 has color 00ff0000
+visual.c:2412: Test failed: Untransformed vertex with vertex fog and z = 1.0 has color 00ff0000
+visual.c:2597: Test failed: Rangefog with table fog returned color 0x0000ff00
+visual.c:2599: Test failed: Rangefog with table fog returned color 0x0000ff00
+visual.c:2601: Test failed: Rangefog with table fog returned color 0x0000ff00
+visual.c:2603: Test failed: Rangefog with table fog returned color 0x0000ff00
+visual.c:2827: Test failed: Got color 0x00ff0000 for addressing mode D3DTADDRESS_WRAP, expected 0x000000ff.
+visual.c:2827: Test failed: Got color 0x00ff0000 for addressing mode D3DTADDRESS_MIRROR, expected 0x000000ff.
+visual.c:2827: Test failed: Got color 0x00ff0000 for addressing mode D3DTADDRESS_CLAMP, expected 0x000000ff.
+visual.c:2827: Test failed: Got color 0x00ff0000 for addressing mode D3DTADDRESS_BORDER, expected 0x000000ff.
+visual.c:2827: Test failed: Got color 0x00ff0000 for addressing mode D3DTADDRESS_MIRRORONCE, expected 0x000000ff.
+visual.c:8460: Test failed: Format A1R5G5R5, got unexpected colour 0x00323232.
+visual.c:8478: Test failed: Format A1R5G5R5, got unexpected colour 0x00323232.
+visual.c:8496: Test failed: Format A1R5G5R5, got unexpected colour 0x00323232.
+visual.c:8460: Test failed: Format X1R5G5R5, got unexpected colour 0x00323232.
+visual.c:8478: Test failed: Format X1R5G5R5, got unexpected colour 0x00323232.
+visual.c:8496: Test failed: Format X1R5G5R5, got unexpected colour 0x00323232.
+visual.c:5056: Tests skipped: D3DFMT_R32F textures not supported
+visual.c:11920: Tests skipped: D3DFMT_R16F textures not supported as render targets.
+visual.c:11920: Tests skipped: D3DFMT_G16R16F textures not supported as render targets.
+visual.c:11920: Tests skipped: D3DFMT_A16B16G16R16F textures not supported as render targets.
+visual.c:11920: Tests skipped: D3DFMT_R32F textures not supported as render targets.
+visual.c:11920: Tests skipped: D3DFMT_G32R32F textures not supported as render targets.
+visual.c:11920: Tests skipped: D3DFMT_A32B32G32R32F textures not supported as render targets.
+visual.c:11920: Tests skipped: D3DFMT_L8 textures not supported as render targets.
+visual.c:5750: Test failed: Unexpected color 0x005a7edc.
+visual.c:5752: Test failed: Unexpected color 0x005a7edc.
+visual.c:5754: Test failed: Unexpected color 0x005a7edc.
+visual.c:5756: Test failed: Unexpected color 0x005a7edc.
+visual.c:5758: Test failed: Unexpected color 0x005a7edc.
+visual.c:5760: Test failed: Unexpected color 0x005a7edc.
+visual.c:5762: Test failed: Unexpected color 0x005a7edc.
+visual.c:5764: Test failed: Unexpected color 0x005a7edc.
+visual.c:9890: Tests skipped: Card has unconditional NP2 support, skipping conditional NP2 tests
+visual.c:11502: Test failed: Setup 10: test 11 (expected size 1): Got unexpected color 0x00000000 at (63, 64).
+visual.c:11504: Test failed: Setup 10: test 11 (expected size 1): Got unexpected color 0x0000ff00 at (65, 64).
+visual.c:11506: Test failed: Setup 10: test 11 (expected size 1): Got unexpected color 0x00ffff00 at (64, 63).
+visual.c:11508: Test failed: Setup 10: test 11 (expected size 1): Got unexpected color 0x0000ff00 at (64, 65).
+visual.c:11502: Test failed: Setup 11: test 11 (expected size 1): Got unexpected color 0x00000000 at (63, 64).
+visual.c:11504: Test failed: Setup 11: test 11 (expected size 1): Got unexpected color 0x0000ff00 at (65, 64).
+visual.c:11506: Test failed: Setup 11: test 11 (expected size 1): Got unexpected color 0x00ffff00 at (64, 63).
+visual.c:11508: Test failed: Setup 11: test 11 (expected size 1): Got unexpected color 0x0000ff00 at (64, 65).
+visual.c:11502: Test failed: Setup 12: test 11 (expected size 1): Got unexpected color 0x00000000 at (63, 64).
+visual.c:11504: Test failed: Setup 12: test 11 (expected size 1): Got unexpected color 0x0000ff00 at (65, 64).
+visual.c:11506: Test failed: Setup 12: test 11 (expected size 1): Got unexpected color 0x00ffff00 at (64, 63).
+visual.c:11508: Test failed: Setup 12: test 11 (expected size 1): Got unexpected color 0x0000ff00 at (64, 65).
+visual.c:12859: Test failed: Failed to create surface, hr 0x8876086a.
+visual.c:12859: this is the last test seen before the exception
+fffd032d:visual: unhandled exception c0000005 at 004ad92c

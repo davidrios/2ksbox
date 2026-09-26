@@ -1,0 +1,18 @@
+device.c:4188: device_window 01b90852, focus_window 01000b90, dummy_window 00b00a20.
+device.c:4188: device_window 009e09c0, focus_window 00b80948, dummy_window 005607f6.
+device.c:4657: device_window 00b90948, focus_window 008604da, dummy_window 00830612.
+device.c:5685: Tests skipped: Following tests require two adapters.
+device.c:6764: Expects 0x0000000104000000 samples.
+device.c:7289: SetPixelShaderConstantF was able to set 224 shader constants.
+device.c:7570: Tests skipped: This GPU supports SM3, skipping unsupported shader test.
+device.c:8142: Tests skipped: D3DFMT_A32B32G32R32F supports filtering, skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format R8G8B8 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format A8B8G8R8 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format X8B8G8R8 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format R3G3B2 (hr 0x8876086c), skipping tests.
+device.c:9905: Tests skipped: Dynamic D3DFMT_YUY2 textures not supported, skipping mipmap test.
+device.c:9905: Tests skipped: Dynamic D3DFMT_UYVY textures not supported, skipping mipmap test.
+device.c:13178: Max user clip planes: 8.
+device.c:13178: Max user clip planes: 6.
+device.c:13996: Tests skipped: ATI2N texture not supported.
+6344:device: 160756 tests executed (0 marked as todo, 0 as flaky, 0 failures), 10 skipped.

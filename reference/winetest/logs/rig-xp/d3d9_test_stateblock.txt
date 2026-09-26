@@ -1,0 +1,54 @@
+stateblock.c:426: Running initial read state tests
+stateblock.c:139: event 0.
+stateblock.c:429: Running write-read state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:432: Running stateblock abort state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:435: Running stateblock apply state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:438: Running stateblock capture/reapply state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:139: event 3.
+stateblock.c:139: event 4.
+stateblock.c:442: Running create stateblock capture/apply all state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:446: Running create stateblock apply state all tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:450: Running create stateblock capture/apply vertex state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:454: Running create stateblock apply vertex state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:458: Running create stateblock capture/apply pixel state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:462: Running create stateblock apply pixel state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:466: Running rendertarget switch state tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:470: Running stateblock apply over rendertarget switch interrupt tests
+stateblock.c:139: event 0.
+stateblock.c:139: event 1.
+stateblock.c:139: event 2.
+stateblock.c:139: event 3.
+stateblock.c:139: event 4.
+00c4:stateblock: 14738 tests executed (0 marked as todo, 0 as flaky, 0 failures), 0 skipped.

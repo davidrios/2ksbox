@@ -1,0 +1,17 @@
+d3d9ex.c:494: GetDisplayModeEx returned Width = 2560, Height = 1440, RefreshRate = 144, Format = 16, ScanLineOrdering = 1, rotation = 1.
+d3d9ex.c:427: Adapter luid: 00000000:0000d73c.
+d3d9ex.c:611: GetAdapterDisplayModeEx returned Width = 2560, Height = 1440, RefreshRate = 144, Format = 16, ScanLineOrdering = 1, rotation = 3
+d3d9ex.c:687: Test failed: Test 2: Got unexpected hr 0x8876086c.
+d3d9ex.c:705: Test failed: Test 2: Got unexpected surface pointer 00000000.
+d3d9ex.c:1093: Test failed: Got screen width 2560, expected 1707.
+d3d9ex.c:1094: Test failed: Got screen height 1440, expected 960.
+d3d9ex.c:1170: Test failed: Failed to change display mode, ret 0xfffffffe.
+d3d9ex.c:1173: Test failed: Got screen width 720, expected 1707.
+d3d9ex.c:1174: Test failed: Got screen height 480, expected 960.
+d3d9ex.c:1672: Test failed: Got screen width 2560, expected 720.
+d3d9ex.c:1673: Test failed: Got screen height 1440, expected 480.
+d3d9ex.c:2446: Tests skipped: This GPU supports SM3, skipping unsupported shader test.
+d3d9ex.c:2885: device_window 00590762, focus_window 016c015e, dummy_window 00670a6e.
+d3d9ex.c:2885: device_window 006c0a32, focus_window 00a40800, dummy_window 0096095e.
+d3d9ex.c:3303: device_window 00d903b4, focus_window 006c0612, dummy_window 00cf0944.
+0e7c:d3d9ex: 2989 tests executed (0 marked as todo, 0 as flaky, 9 failures), 1 skipped.

@@ -1,4 +1,4 @@
-# tools/winetest-summary.py WINETEST_11_rtx3090 --save; one failing check per line
+# tools/winetest-summary.py win11-rtx3090 --save; one failing check per line
 d3d8_test_device crash 1
 d3d8_test_device device.c:3131 1
 d3d8_test_device device.c:3133 1

@@ -1,0 +1,111 @@
+device.c:15319: Test failed: Failed to get display mode.
+device.c:15321: Test failed: Failed to get display mode.
+device.c:401: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:455: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:773: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:870: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:987: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:1060: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:5037: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:3735: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:1299: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:1545: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:1105: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:1221: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:1898: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:5362: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:4860: Tests skipped: Unable to create device. Skipping test.
+device.c:2120: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:2706: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:2842: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:2912: Tests skipped: Failed to create a d3d device
+device.c:3063: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:3132: Tests skipped: Failed to create a D3D device.
+device.c:3369: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:3441: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:3494: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:3681: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:4188: device_window 00000828, focus_window 00000824, dummy_window 0000082c.
+device.c:4208: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:4188: device_window 00000834, focus_window 00000830, dummy_window 00000838.
+device.c:4208: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:4657: device_window 00000840, focus_window 0000083c, dummy_window 00000844.
+device.c:4675: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:5176: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:5447: Test failed: EnumDisplaySettingsW failed, error 0x78.
+device.c:5450: Test failed: EnumDisplaySettingsW failed, error 0x78.
+device.c:5531: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:5951: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6013: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6082: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6186: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6267: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6334: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6404: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6473: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6563: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6823: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:6993: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7066: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7194: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7265: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7536: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7684: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7845: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:7948: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8134: Tests skipped: D3DFMT_A32B32G32R32F not supported, skipping tests.
+device.c:8221: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8272: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8317: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8386: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8487: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8596: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:8858: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:9052: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:9362: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:9402: Tests skipped: No D3DFMT_NULL support, skipping test.
+device.c:9504: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:9640: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:9961: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10043: Tests skipped: Test 0: failed to create a D3D device.
+device.c:10043: Tests skipped: Test 1: failed to create a D3D device.
+device.c:10043: Tests skipped: Test 2: failed to create a D3D device.
+device.c:10132: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10234: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10304: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10381: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10532: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10595: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:10707: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11018: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11120: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11261: Tests skipped: Failed to create device
+device.c:11391: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11476: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11643: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11821: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:11989: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:12070: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:12137: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:12250: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:12412: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:12749: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:12865: Tests skipped: Failed to create a D3D device.
+device.c:12913: Tests skipped: Failed to create a D3D device.
+device.c:12970: Tests skipped: Failed to create a D3D device.
+device.c:13038: Tests skipped: Failed to create a 3D device, skipping test.
+device.c:13074: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:13170: Tests skipped: Failed to create D3D device, flags 0.
+device.c:13170: Tests skipped: Failed to create D3D device, flags 0x8.
+device.c:13256: Tests skipped: Failed to create a 3D device.
+device.c:13319: Tests skipped: Failed to create a 3D device.
+device.c:13531: Tests skipped: Adapter 0: Failed to create a D3D device, skipping test.
+device.c:13777: Tests skipped: Failed to create a D3D device.
+device.c:14162: Tests skipped: Failed to create 3D device.
+device.c:14244: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:14346: Tests skipped: Failed to create a D3D device.
+device.c:14854: Tests skipped: Adapter 0: Failed to create a D3D device.
+device.c:14927: Tests skipped: Adapter 0: Failed to create a D3D device.
+device.c:14975: Test failed: Adapter 0: GetMonitorInfoW failed, error 0x78.
+device.c:14985: Tests skipped: Adapter 0: Failed to create a D3D device, skipping tests.
+fffde481:device: 538 tests executed (0 marked as todo, 0 as flaky, 5 failures), 102 skipped.

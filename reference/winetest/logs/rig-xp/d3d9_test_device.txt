@@ -1,0 +1,44 @@
+device.c:1741: Test failed: Invalid refcount. Expected 9 got 10
+device.c:1743: Test failed: Invalid refcount. Expected 2 got 1
+device.c:1747: Test failed: Invalid refcount. Expected 2 got 1
+device.c:1748: Test failed: Invalid refcount. Expected 3 got 2
+device.c:1749: Test failed: Invalid refcount. Expected 3 got 1
+device.c:1750: Test failed: Invalid refcount. Expected 2 got 1
+device.c:1751: Test failed: Invalid refcount. Expected 2 got 1
+device.c:1752: Test failed: Invalid refcount. Expected 1 got 0
+device.c:1842: Test failed: Invalid refcount. Expected 7 got 8
+device.c:1844: Test failed: Invalid refcount. Expected 6 got 7
+device.c:1845: Test failed: Invalid refcount. Expected 5 got 6
+device.c:1846: Test failed: Invalid refcount. Expected 4 got 5
+device.c:1848: Test failed: Invalid refcount. Expected 3 got 4
+device.c:1849: Test failed: Invalid refcount. Expected 2 got 3
+device.c:1850: Test failed: Invalid refcount. Expected 1 got 2
+device.c:1853: Test failed: Invalid refcount. Expected 0 got 1
+device.c:4188: device_window 006700ee, focus_window 00420094, dummy_window 00090100.
+device.c:4188: device_window 00430094, focus_window 000a0100, dummy_window 00c0009a.
+device.c:4208: Tests skipped: Failed to create a D3D device, skipping tests.
+device.c:4657: device_window 000b0100, focus_window 00c1009a, dummy_window 008e00ea.
+device.c:4661: Test failed: Expected focus 00000000, got 000b0100.
+device.c:4663: Test failed: Expected foreground window 008e00ea, got 001a0096.
+device.c:4680: Test failed: Expected focus 00000000, got 000b0100.
+device.c:4682: Test failed: Expected foreground window 008e00ea, got 001a0096.
+device.c:5685: Tests skipped: Following tests require two adapters.
+device.c:6764: Expects 0x0000000101000000 samples.
+device.c:7289: SetPixelShaderConstantF was able to set 224 shader constants.
+device.c:7570: Tests skipped: This GPU supports SM3, skipping unsupported shader test.
+device.c:8498: Tests skipped: Format ATI1N not supported, skipping lockrect offset tests.
+device.c:9069: Tests skipped: Failed to create surface for format R8G8B8 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format A2R10G10B10 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format A8B8G8R8 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format X8B8G8R8 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format R3G3B2 (hr 0x8876086c), skipping tests.
+device.c:9069: Tests skipped: Failed to create surface for format P8 (hr 0x8876086c), skipping tests.
+device.c:9783: Tests skipped: Format ATI1N not supported, skipping lockrect offset tests.
+device.c:9905: Tests skipped: Dynamic D3DFMT_YUY2 textures not supported, skipping mipmap test.
+device.c:9905: Tests skipped: Dynamic D3DFMT_UYVY textures not supported, skipping mipmap test.
+device.c:12768: Tests skipped: D3DFMT_ATI1 textures not supported, skipping tests.
+device.c:13049: Test failed: Failed to present, hr 0x80004005.
+device.c:13178: Max user clip planes: 6.
+device.c:13178: Max user clip planes: 6.
+device.c:13996: Tests skipped: ATI2N texture not supported.
+01fc:device: 161316 tests executed (0 marked as todo, 0 as flaky, 21 failures), 15 skipped.
