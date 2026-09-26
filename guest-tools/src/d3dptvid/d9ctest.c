@@ -11,7 +11,9 @@
  *   pitch, against the clear colour);
  *   a full-screen device at 640x480 (last, since it changes the mode).
  * `-readback` runs the readback part alone (the driver logs only the first
- * few dozen surfaces of a process).
+ * few dozen surfaces of a process). `-modechange` replays Wine's
+ * test_wndproc in short: a mode change under a full-screen device, focus
+ * dropped, then full-screen devices again.
  * Log: C:\2KSBOX\D9CTEST.LOG. Runs on XP too, where every line is the
  * answer to compare with.
  *
@@ -49,6 +51,80 @@ static const struct {
     { D3DPOOL_SYSTEMMEM, "SYSTEMMEM" },
     { D3DPOOL_SCRATCH, "SCRATCH" },
 };
+
+/* A full-screen device of 640x480 on the focus window */
+static HRESULT fullscreen2(IDirect3D9 *d3d, HWND focus, HWND wnd, IDirect3DDevice9 **dev);
+
+static HRESULT fullscreen(IDirect3D9 *d3d, HWND wnd, IDirect3DDevice9 **dev)
+{
+    return fullscreen2(d3d, wnd, wnd, dev);
+}
+
+/* the same with a device window other than the focus window, as Wine's tests */
+static HRESULT fullscreen2(IDirect3D9 *d3d, HWND focus, HWND wnd, IDirect3DDevice9 **dev)
+{
+    D3DPRESENT_PARAMETERS pp;
+
+    memset(&pp, 0, sizeof pp);
+    pp.BackBufferWidth = 640;
+    pp.BackBufferHeight = 480;
+    pp.BackBufferFormat = D3DFMT_A8R8G8B8;
+    pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    pp.hDeviceWindow = wnd;
+    pp.EnableAutoDepthStencil = TRUE;
+    pp.AutoDepthStencilFormat = D3DFMT_D24S8;
+    return IDirect3D9_CreateDevice(d3d, 0, D3DDEVTYPE_HAL, focus, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, dev);
+}
+
+/* Wine's test_wndproc in short: the mode changed under a full-screen
+ * device, focus dropped, the device released; then full-screen devices
+ * again (on Win98 every one after it failed D3DERR_NOTAVAILABLE) */
+static void modechange(IDirect3D9 *d3d, HWND wnd)
+{
+    IDirect3DDevice9 *dev = NULL;
+    DEVMODEA dm;
+    HRESULT hr;
+    LONG ret;
+    unsigned i;
+
+    hr = fullscreen(d3d, wnd, &dev);
+    say("modechange: CreateDevice fullscreen: 0x%08lx\n", hr);
+    if (FAILED(hr))
+        return;
+    memset(&dm, 0, sizeof dm);
+    dm.dmSize = sizeof dm;
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    dm.dmPelsWidth = 1024;
+    dm.dmPelsHeight = 768;
+    ret = ChangeDisplaySettingsA(&dm, CDS_FULLSCREEN);
+    say("modechange: ChangeDisplaySettings 1024x768: %ld\n", ret);
+    say("modechange: TestCooperativeLevel: 0x%08lx\n", IDirect3DDevice9_TestCooperativeLevel(dev));
+    SetForegroundWindow(GetDesktopWindow());
+    say("modechange: after focus loss: 0x%08lx\n", IDirect3DDevice9_TestCooperativeLevel(dev));
+    say("modechange: Release: %lu\n", IDirect3DDevice9_Release(dev));
+    dev = NULL;
+    ret = ChangeDisplaySettingsA(NULL, 0);
+    say("modechange: ChangeDisplaySettings back: %ld\n", ret);
+    for (i = 0; i < 2; i++) {
+        HWND w2 = CreateWindowA("D9CTEST", "D9CTEST 2", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 640, 480, NULL,
+                                NULL, NULL, NULL);
+
+        SetForegroundWindow(wnd);
+        hr = fullscreen2(d3d, wnd, w2, &dev);
+        say("modechange: CreateDevice fullscreen, another device window: 0x%08lx\n", hr);
+        if (SUCCEEDED(hr)) {
+            IDirect3DDevice9_Release(dev);
+            dev = NULL;
+        }
+        DestroyWindow(w2);
+        hr = fullscreen(d3d, wnd, &dev);
+        say("modechange: CreateDevice fullscreen again: 0x%08lx\n", hr);
+        if (SUCCEEDED(hr)) {
+            IDirect3DDevice9_Release(dev);
+            dev = NULL;
+        }
+    }
+}
 
 static void textures(IDirect3DDevice9 *dev)
 {
@@ -166,6 +242,13 @@ int main(int argc, char **argv)
     wnd = CreateWindowA("D9CTEST", "D9CTEST", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 640, 480, NULL, NULL, NULL,
                         NULL);
 
+    if (argc >= 2 && !strcmp(argv[1], "-modechange")) {
+        modechange(d3d, wnd);
+        IDirect3D9_Release(d3d);
+        DestroyWindow(wnd);
+        say("D9CTEST: done\n");
+        return 0;
+    }
     memset(&pp, 0, sizeof pp);
     pp.BackBufferWidth = 640;
     pp.BackBufferHeight = 480;

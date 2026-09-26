@@ -138,7 +138,17 @@ fetch checked by a title, the 2.0-cap flag.
   - **Full-screen devices fail** `D3DERR_NOTAVAILABLE` inside the tests
     (A8R8G8B8 back buffer, D24S8, 640x480 / 800x600, `device.c:234` and
     `305`), while `D9CTEST.EXE`'s full-screen devices of the same formats
-    are made. Open; the difference is the tests' focus / device windows.
+    are made. ddraw says why (gdbstub on its error mapper during
+    `d3d9:device`): `DDERR_HWNDALREADYSET` from the cooperative-level
+    call, from the second case of `test_wndproc` on. The first case's
+    device is lost and never comes back (Reset `DEVICELOST` at
+    `device.c:4303` / `4312`), and an exclusive-mode window stays set in
+    that process. `D9CTEST -modechange` replays the case (a mode change
+    under the device, focus dropped, release, full-screen devices again,
+    also with a device window other than the focus window) and every
+    step answers as on Windows, so this is the test process's state on
+    Win98 (likely a background process that cannot take the foreground
+    back), for the rig's run to confirm.
     `device.c:11324` ff. "Expected no format" is `GetPixelFormat` on a
     Win98 window, likely Win98's (the rig will say).
 - **Step 5, second pass (2026-09-26).** The regression side first, all on
@@ -154,7 +164,8 @@ fetch checked by a title, the 2.0-cap flag.
   visual's excess over XP is finding 35 (`test_fog` 280,
   `test_texture_transform_flags` 644, both reading float targets back).
   `D9CTEST.EXE` (new) creates the resources the tests found failing,
-  one line each; `-readback` runs the float readbacks alone.
+  one line each; `-readback` runs the float readbacks alone,
+  `-modechange` the focus-loss case.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
   the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
   checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device
