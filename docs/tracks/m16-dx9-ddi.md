@@ -154,9 +154,10 @@ fetch checked by a title, the 2.0-cap flag.
     (a top-down DIB's height of -64, the resolution fields, no DC for the
     alpha formats), not the driver's. d3d9 visual's `visual.c:21788` and
     d3d8's `7402` (`test_updatetexture`, a volume update between A8R8G8B8
-    and X8R8G8B8) are Win98's runtime too: it sends no `VOLUMEBLT` at
-    all and copies volumes itself, where XP's goes through the driver,
-    which refuses the format pair.
+    and X8R8G8B8) look like Win98's runtime too: no run's log shows a
+    `VOLUMEBLT` (the per-process log caps leave that short of proof), so
+    it seems to copy volumes itself, where XP's goes through the driver,
+    which refuses the format pair. Unconfirmed; the rig will say.
     `device.c:11324` ff. "Expected no format" is `GetPixelFormat` on a
     Win98 window, likely Win98's (the rig will say).
 - **Step 5, second pass (2026-09-26).** The regression side first, all on
