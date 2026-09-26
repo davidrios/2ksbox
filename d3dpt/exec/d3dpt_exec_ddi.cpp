@@ -205,6 +205,7 @@ struct Ddi {
     D3DFORMAT stage_fmt = D3DFMT_UNKNOWN;
     std::vector<uint16_t> idx;
     std::vector<uint8_t> ilv;               /* a multi-stream DRAW8's vertices, interleaved (v10) */
+    std::vector<uint8_t> zeros;             /* a stream the declaration reads and the draw did not carry */
     /* one device serves every context, and a new context must not find the
      * last one's state: the device's own at its first context, and the
      * lights enabled since (a state block of the fresh device knows no
@@ -1509,8 +1510,17 @@ struct Dp2 {
             if (it == c.vshaders.end()) { if (d.warn_once(0xc0000)) x.log("ddi: dp2: vertex shader handle 0x%x unknown (draws with it are skipped)", h.fvf); return true; }
             VShader8 &s = it->second;
             if (s.streams & ~carried) {
-                if (d.warn_once(0xc0001)) x.log("ddi: dp2: vertex shader 0x%x reads streams 0x%x, the draw carried 0x%x: draw skipped", h.fvf, s.streams, carried);
-                return true;
+                /* a stream the declaration reads and nothing is bound to
+                 * reads as zeros, as Direct3D 9 draws it (Wine's
+                 * test_default_diffuse: black where the colour stream is
+                 * missing), rather than the draw being skipped */
+                if (d.warn_once(0xc0001)) x.log("ddi: dp2: vertex shader 0x%x reads streams 0x%x, the draw carried 0x%x: the others read as zeros", h.fvf, s.streams, carried);
+                uint32_t zb = 0;
+                for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
+                    if ((s.streams & ~carried & (1u << i)) && s.stream_bytes[i] > zb) zb = s.stream_bytes[i];
+                d.zeros.assign((size_t)(inst > h.nverts ? inst : h.nverts) * zb, 0);
+                for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
+                    if (s.streams & ~carried & (1u << i)) { sd[i] = d.zeros.data(); ss[i] = s.stream_bytes[i]; }
             }
             for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
                 if ((s.streams & (1u << i)) && s.stream_bytes[i] > ss[i]) {

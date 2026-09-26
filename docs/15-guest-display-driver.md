@@ -1354,6 +1354,10 @@ the 9x layer not yet.
   and makes the levels after each upload of level 0 and before sampling
   a target drawn into since (DXVK does neither on its own), and at the
   stream's GENERATEMIPSUBLEVELS, which the walker passes through.
+- **An unbound stream reads as zeros.** A declaration that reads a
+  stream nothing is bound to draws with that stream's elements zero, as
+  Direct3D 9 does (black for a missing colour, the point size of a
+  missing PSIZE element), instead of the host skipping the draw.
 - **A new context starts on a fresh device.** One host device serves
   every context, and the runtime sends a new context its render and
   stage states but never a light it has not enabled. So the host captures

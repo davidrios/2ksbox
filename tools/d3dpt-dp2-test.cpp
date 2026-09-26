@@ -700,11 +700,12 @@ int main(int argc, char **argv) {
             hr = send_dp2(&enc, m5, vtx);
             hr |= readback(&enc, H_RT);
             CHECK(hr == 0 && near_(px(100, 100), 0x00ffff, 2), "a stream the declaration does not read: carried, ignored 0x%06x", px(100, 100));
-            /* hostile, skipped: the declaration reads stream 1, the draw carries
-             * only stream 2; stream 1's stride shorter than what it reads (a
-             * FLOAT4 colour in 4 bytes); stream 1's VRAM range beyond its
-             * buffer. Then the good draw, so the frame proves the skips were
-             * skips and the stream stayed in sync */
+            /* hostile: the declaration reads stream 1 and the draw carries
+             * only stream 2 (stream 1 reads as zeros, as Direct3D 9 draws an
+             * unbound stream); skipped: stream 1's stride shorter than what it
+             * reads (a FLOAT4 colour in 4 bytes), stream 1's VRAM range beyond
+             * its buffer. Then the good draw, so the frame proves the stream
+             * stayed in sync */
             Dp2Buf m6;
             m6.set_vs(H_VS2);
             m6.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
@@ -719,7 +720,7 @@ int main(int argc, char **argv) {
             hr = send_dp2(&enc, m6, vtx);
             hr |= readback(&enc, H_RT);
             CHECK(hr == 0 && near_(px(100, 100), 0x00ff00, 2),
-                  "stream missing / too short / beyond its buffer: skipped, not fatal; the good draw after them lands 0x%06x", px(100, 100));
+                  "stream missing (zeros) / too short / beyond its buffer (skipped): not fatal; the good draw after them lands 0x%06x", px(100, 100));
             /* hostile, refused (COMMAND_UNPARSED): stream 0 in the list, streams
              * out of order, a count of 16, an unknown stream flag, stream data
              * running past the record */

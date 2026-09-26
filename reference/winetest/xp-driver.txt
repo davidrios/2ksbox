@@ -43,12 +43,9 @@ d3d9_test_device device.c:2177 1
 d3d9_test_device device.c:2178 1
 d3d9_test_device device.c:2180 1
 d3d9_test_device device.c:2188 1
-d3d9_test_visual visual.c:11498 7
-d3d9_test_visual visual.c:11556 14
-d3d9_test_visual visual.c:11564 6
-d3d9_test_visual visual.c:11567 6
-d3d9_test_visual visual.c:11571 14
-d3d9_test_visual visual.c:11574 14
+d3d9_test_visual visual.c:11556 9
+d3d9_test_visual visual.c:11571 9
+d3d9_test_visual visual.c:11574 9
 d3d9_test_visual visual.c:14268 1
 d3d9_test_visual visual.c:14270 1
 d3d9_test_visual visual.c:14272 1
@@ -67,10 +64,8 @@ d3d9_test_visual visual.c:21788 9
 d3d9_test_visual visual.c:2410 1
 d3d9_test_visual visual.c:2412 1
 d3d9_test_visual visual.c:24589 1
-d3d9_test_visual visual.c:25313 7
 d3d9_test_visual visual.c:25518 1
 d3d9_test_visual visual.c:25891 1
-d3d9_test_visual visual.c:27752 9
 d3d9_test_visual visual.c:28031 2
 d3d9_test_visual visual.c:28120 2
 d3d9_test_visual visual.c:28144 2

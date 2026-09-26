@@ -58,7 +58,7 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  707 failures (803 before mip generation, findings 15 and 17,
+  657 failures (803 before mip generation, findings 15, 17 and 20,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
@@ -72,11 +72,10 @@ fetch checked by a title, the 2.0-cap flag.
   174: a vs 1.x that writes no `oFog` is not fogged, also on native
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
   build/winetest/wine-11.0` counts the rest per test function. Against it
-  the guest's d3d9 visual has 36 keys worse. The largest: `test_fog` 48, `test_pointsize` 28 (sprite
-  coordinates under ps 2.0, a PSIZE element on an unbound stream),
-  `test_updatetexture` 15 (finding 2),
-  `depth_blit_test` 12 (depth StretchRect), `test_default_diffuse` 9,
-  `test_generate_mipmap` 7 (finding 18).
+  the guest's d3d9 visual has 27 keys worse. The largest: `test_fog` 48,
+  `depth_blit_test` 12 (depth StretchRect), `test_updatetexture` 9
+  (finding 2), `update_surface_test` 7, `test_generate_mipmap` 7
+  (finding 18).
 - **Findings from the DX9 face:**
   6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
      with no pixel format (a DXT1 one as its block rows' bytes by block
@@ -175,6 +174,11 @@ fetch checked by a title, the 2.0-cap flag.
   19. *Fixed.* DXT volume textures from `d3d9.dll` came out black: the
      driver's VOLUMEBLT refused DXT, and a source with no pixel format.
      Wine's `volume_dxtn_test` and `volume_srgb_test` pass since.
+  20. *Fixed.* A declaration that reads a stream nothing is bound to
+     skipped the draw on the host; Direct3D 9 draws it with zeros from
+     that stream. Wine's `test_default_diffuse`, `test_color_vertex`,
+     `test_pointsize` (an unbound PSIZE stream) and six of
+     `test_updatetexture`'s checks pass since: d3d9 visual 657 (707).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
