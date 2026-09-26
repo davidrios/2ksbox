@@ -16,7 +16,6 @@ d3d8_test_visual visual.c:3512 1
 d3d8_test_visual visual.c:3514 1
 d3d8_test_visual visual.c:5138 6
 d3d8_test_visual visual.c:5141 4
-d3d8_test_visual visual.c:640 1
 d3d8_test_visual visual.c:6640 1
 d3d8_test_visual visual.c:6759 8
 d3d9_test_device crash 1
@@ -78,8 +77,6 @@ d3d9_test_visual visual.c:28144 2
 d3d9_test_visual visual.c:28482 144
 d3d9_test_visual visual.c:28488 88
 d3d9_test_visual visual.c:28877 132
-d3d9_test_visual visual.c:29014 1
-d3d9_test_visual visual.c:29018 1
 d3d9_test_visual visual.c:3350 174
 d3d9_test_visual visual.c:3879 1
 d3d9_test_visual visual.c:3914 1

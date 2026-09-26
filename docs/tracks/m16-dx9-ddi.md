@@ -58,8 +58,8 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  709 failures (803 before mip generation, finding 17, instancing and DXT
-  volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
+  707 failures (803 before mip generation, findings 15 and 17,
+  instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
   again from this run, the DX9 face's (107 keys); d3d9 / d3d8 device and
@@ -147,11 +147,14 @@ fetch checked by a title, the 2.0-cap flag.
      captured the 4x4 viewport on the host, and each EXECUTE put it back
      (the occlusion query counted 1 pixel). A DX9 context's viewport now
      stays the stream's across EXECUTE.
-  15. *Open.* The host device's state is shared by every context: d3d8
-     visual's `lighting_test` (`visual.c:640`) fails only after d3d9
-     visual has run in the same boot, most likely a light the previous
-     process left enabled. The runtime sends a new context its render
-     and stage states, not every light.
+  15. *Fixed.* The host device's state is shared by every context: d3d8
+     visual's `lighting_test` (`visual.c:640`) failed only after d3d9
+     visual had run in the same boot, a light the previous process left
+     enabled. The runtime sends a new context its render and stage
+     states, not every light, so a new context now gets the device's
+     first state with every light off (doc 15). Two of d3d9 visual's own
+     failures went with it. Two contexts alive at once still share the
+     device's lights.
   16. *Open.* `test_fog` / `test_texture_transform_flags` on an
      A32B32G32R32F target: 48 of `test_fog`'s checks fail beyond DXVK's
      (a vs that writes the specular alpha, not `oFog`), and the texture

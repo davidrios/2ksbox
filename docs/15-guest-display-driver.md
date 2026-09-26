@@ -1354,6 +1354,12 @@ the 9x layer not yet.
   and makes the levels after each upload of level 0 and before sampling
   a target drawn into since (DXVK does neither on its own), and at the
   stream's GENERATEMIPSUBLEVELS, which the walker passes through.
+- **A new context starts on a fresh device.** One host device serves
+  every context, and the runtime sends a new context its render and
+  stage states but never a light it has not enabled. So the host captures
+  the device's state at its first context and gives each later new
+  context that state with every light it saw enabled turned off (d3d8
+  visual's `lighting_test` found a light d3d9 visual had left on).
 - **Volumes from d3d9.dll.** A VOLUMEBLT takes DXT volumes in whole
   blocks (a slice is its block rows apart), and a system-memory source
   with no pixel format as the target's format, as TEXBLT does.

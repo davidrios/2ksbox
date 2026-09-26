@@ -30,6 +30,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include "d3dpt_exec_int.h"
+#include <bitset>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -204,6 +205,12 @@ struct Ddi {
     D3DFORMAT stage_fmt = D3DFMT_UNKNOWN;
     std::vector<uint16_t> idx;
     std::vector<uint8_t> ilv;               /* a multi-stream DRAW8's vertices, interleaved (v10) */
+    /* one device serves every context, and a new context must not find the
+     * last one's state: the device's own at its first context, and the
+     * lights enabled since (a state block of the fresh device knows no
+     * light created later), M16 finding 15 */
+    IDirect3DStateBlock9 *fresh = nullptr;
+    std::bitset<1024> lights_on;
     std::vector<uint32_t> warned;           /* one log line per unsupported state / token */
     /* DX8 state sets (STATESET tokens) as d3d9 state blocks, by the runtime's handle */
     std::unordered_map<uint32_t, IDirect3DStateBlock9 *> sblocks;
@@ -2136,6 +2143,7 @@ struct Dp2 {
                         e += 104;
                     } else if (ok) {
                         x.dev->LightEnable(index, type == 0);
+                        d.lights_on[index] = type == 0;
                     }
                 }
                 need = e - q;
@@ -2482,6 +2490,8 @@ void exec_ddi_release(Exec &x)
     for (auto &kv : x.ddi->ctxs) kv.second.release_shaders();
     for (auto &kv : x.ddi->sblocks) if (kv.second) kv.second->Release();
     x.ddi->sblocks.clear();
+    if (x.ddi->fresh) { x.ddi->fresh->Release(); x.ddi->fresh = nullptr; }
+    x.ddi->lights_on.reset();
     x.ddi->drop_stage();
     delete x.ddi;
     x.ddi = nullptr;
@@ -2508,6 +2518,8 @@ void exec_ddi_device_reset(Exec &x)
     for (auto &kv : x.ddi->ctxs) kv.second.release_shaders();
     for (auto &kv : x.ddi->sblocks) if (kv.second) kv.second->Release();
     x.ddi->sblocks.clear();
+    if (x.ddi->fresh) { x.ddi->fresh->Release(); x.ddi->fresh = nullptr; }
+    x.ddi->lights_on.reset();
     x.ddi->recording = false;
     x.ddi->drop_stage();
     x.ddi->bound_rt = x.ddi->bound_z = 0;
@@ -2725,6 +2737,20 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         }
         VramSurf *rt = surf(x, a->rt);
         if (!rt) { r->hr = (uint32_t)D3DERR_INVALIDCALL; x.log("ddi: context %u: render target %u unknown", a->handle, a->rt); return true; }
+        /* the device as it was new: its state then, no light on (the
+         * runtime sends the new context's own render and stage states,
+         * never a light it has not enabled) */
+        if (x.dev) {
+            if (!d.fresh && d.ctxs.empty()) x.dev->CreateStateBlock(D3DSBT_ALL, &d.fresh);
+            else if (d.fresh) {
+                for (uint32_t i = 0; i < d.lights_on.size(); i++) if (d.lights_on[i]) x.dev->LightEnable(i, FALSE);
+                d.lights_on.reset();
+                d.fresh->Apply();
+                memset(d.stage_tex, 0, sizeof d.stage_tex);
+                d.bound_rt = d.bound_z = 0;
+                memset(d.bound_mrt, 0, sizeof d.bound_mrt);
+            }
+        }
         Ctx cx;
         cx.rt = a->rt;
         cx.z = surf(x, a->z) ? a->z : 0;
