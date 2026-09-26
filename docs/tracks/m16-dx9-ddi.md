@@ -37,8 +37,10 @@ change); D3DFEAT9's frame **and every getter line** match the native run.
 Step 3 has its formats: the DX9 formats (float, 10-bit, 16-bit), sRGB,
 the ARGB group's conversions and the DX9 samplers (doc 15 "The DX9
 formats", "Samplers"), and mip generation (protocol v15, doc 15 "Mip
-generation") with a managed texture's SetLOD, and instancing (v16, doc
-15 "Instancing"). Several render targets are still to do.
+generation") with a managed texture's SetLOD, instancing (v16, doc 15
+"Instancing") and four render targets (v17). What step 3 has left: a
+render-target texture's levels on the host (finding 18), vertex texture
+fetch checked by a title, the 2.0-cap flag.
 
 - **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
   `xp-driver-test.sh d3dgame9`): 600 frames on a hardware-vertex-processing
@@ -55,8 +57,9 @@ generation") with a managed texture's SetLOD, and instancing (v16, doc
   ColorFill on a default-pool texture without `D3DUSAGE_RENDERTARGET`
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
-  checks, **0** failures. d3d9 visual **runs to its end**: 201654 checks,
-  746 failures (803 before mip generation, finding 17 and instancing) (the crash at `visual.c:25891` was the test's own, a
+  checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
+  745 failures (803 before mip generation, finding 17 and instancing;
+  `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
   again from this run, the DX9 face's (107 keys); d3d9 / d3d8 device and

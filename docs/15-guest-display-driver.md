@@ -14,7 +14,7 @@ The driver came in three stages, which still name the parts: **M7a** the
 framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
 (a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L, and
 since M16 a DirectX 9 DDI with shader model 3.0). The
-register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v16**
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v17**
 (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
 GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
@@ -1330,7 +1330,11 @@ the 9x layer not yet.
   `CREATEVERTEXSHADERDECL` into a vertex declaration and applies the
   context's current `SETVERTEXSHADERFUNC` over it (0 = fixed function).
   `SETSTREAMSOURCE2`'s offset is the walker's. `SETRENDERTARGET2`
-  (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair.
+  (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair;
+  targets 1..3 (v17, `NumSimultaneousRTs` 4 with independent write masks,
+  bit depths and blending) go to the host as the runtime's token, which
+  keeps them per context, binds them with the context's target, marks
+  them drawn into for the readback, and forgets one that is released.
   Integer / boolean constants and the scissor go to the host.
 - **Instancing** (v16). SETSTREAMSOURCEFREQ's dividers are context state
   like the stream bindings. An indexed draw under a declaration with

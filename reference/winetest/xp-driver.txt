@@ -62,7 +62,7 @@ d3d9_test_visual visual.c:17041 7
 d3d9_test_visual visual.c:18342 6
 d3d9_test_visual visual.c:18345 4
 d3d9_test_visual visual.c:18472 6
-d3d9_test_visual visual.c:18631 24
+d3d9_test_visual visual.c:18631 23
 d3d9_test_visual visual.c:19144 1
 d3d9_test_visual visual.c:20054 1
 d3d9_test_visual visual.c:20383 8

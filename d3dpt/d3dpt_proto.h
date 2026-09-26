@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   16u
+#define D3DPT_PROTO_VERSION   17u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -401,7 +401,11 @@ typedef struct d3dpt_dp2 {
  * be 0), and a stream's freq its own (D3DSTREAMSOURCE_INSTANCEDATA | d:
  * element k / d for instance k; 0 = read per vertex). An instance stream
  * carries ceil(n / d) elements from its first one instead of the draw's
- * vertex range. Only an indexed draw under a declaration is instanced. */
+ * vertex range. Only an indexed draw under a declaration is instanced.
+ *
+ * v17: several render targets. The DP2 stream carries the runtime's own
+ * SETRENDERTARGET2 (op 85, {index, surface handle}) for targets 1..3;
+ * target 0 stays DX7's SETRENDERTARGET pair. */
 #define D3DPT_DP2_DRAW8 200u
 #define D3DPT_DRAW8_VRAM_VB 0x1u
 #define D3DPT_DRAW8_VRAM_IB 0x2u

@@ -47,7 +47,7 @@ guest (XP / Win98)                      host (QEMU process)
   thread under the BQL; a decoder thread waits until a measurement asks
   for it.
 - **Protocol.** `d3dpt/d3dpt_proto.h` is the one header for guest DLL,
-  QEMU device and executor (`D3DPT_PROTO_VERSION`, 16 today). Bump it on
+  QEMU device and executor (`D3DPT_PROTO_VERSION`, 17 today). Bump it on
   any wire change and rebuild the executor and the ISO, which do not say
   they are stale; the suite then fails as `protocol mismatch` or a guest
   that never attaches. The guest encoder is `d3dpt/d3dpt_enc.h`. The

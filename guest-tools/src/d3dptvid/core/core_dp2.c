@@ -1446,8 +1446,8 @@ static BOOL walk(DP2WALK *w)
         case 85: case 86: {                                     /* SETRENDERTARGET2 (index, target) / SETDEPTHSTENCIL (z) */
             /* DX9 sets the two apart; the host takes DX7's pair, so each
              * becomes a SETRENDERTARGET with the other half as it stands.
-             * A target past index 0 (multiple render targets) is dropped:
-             * the caps say one */
+             * Targets 1..3 (multiple render targets, v17) go to the host
+             * as the runtime's own token, one entry each */
             D3DHAL_DP2COMMAND_ h;
             ULONG pair[2];
             BOOL any = FALSE;
@@ -1459,10 +1459,12 @@ static BOOL walk(DP2WALK *w)
                 } else if (((const ULONG *)(q + i * 8))[0] == 0) {
                     w->rt = ((const ULONG *)(q + i * 8))[1];
                     any = TRUE;
-                } else if (!w->out && w->p->parse_lines < 8) {
-                    w->p->parse_lines++;
-                    dbg_hex(w->p, "d3dptdisp: render target index ", ((const ULONG *)(q + i * 8))[0]);
-                    dbg_puts(w->p, " dropped (one target claimed)\n");
+                } else if (((const ULONG *)(q + i * 8))[0] < 4) {
+                    h.bCommand = 85;
+                    h.bReserved = 0;
+                    h.wPrimitiveCount = 1;
+                    walk_put(w, &h, sizeof(h));
+                    walk_put(w, q + i * 8, 8);
                 }
             }
             if (any) {

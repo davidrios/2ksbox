@@ -622,7 +622,11 @@ void d3d_caps_init(d3dpt_core *p)
     d3d_caps9.DevCaps2 = D3DDEVCAPS2_STREAMOFFSET_ | D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET_ |
                          D3DDEVCAPS2_CAN_STRETCHRECT_FROM_TEXTURES_;
     d3d_caps9.DeclTypes = 0x3ff;                /* UBYTE4 .. FLOAT16_4: DXVK reads every one */
-    d3d_caps9.NumSimultaneousRTs = 1;           /* SETRENDERTARGET2 beyond index 0 is not walked yet */
+    /* four targets (v17), each its own format and write mask, blended
+     * after the pixel shader, as DXVK has them */
+    d3d_caps9.NumSimultaneousRTs = 4;
+    d3d_caps9.c8.PrimitiveMiscCaps |= D3DPMISCCAPS_INDEPENDENTWRITEMASKS_ | D3DPMISCCAPS_MRTINDEPENDENTBITDEPTHS_ |
+                                      D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING_;
     d3d_caps9.NumberOfAdaptersInGroup = 1;
 }
 

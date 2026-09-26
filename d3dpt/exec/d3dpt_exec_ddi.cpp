@@ -79,7 +79,7 @@ enum {
     DP2_CREATEVERTEXSHADERDECL = 71, DP2_DELETEVERTEXSHADERDECL = 72, DP2_SETVERTEXSHADERDECL = 73,
     DP2_CREATEVERTEXSHADERFUNC = 74, DP2_DELETEVERTEXSHADERFUNC = 75, DP2_SETVERTEXSHADERFUNC = 76,
     DP2_SETVERTEXSHADERCONSTI = 77, DP2_SETSCISSORRECT = 79, DP2_SETVERTEXSHADERCONSTB = 83,
-    DP2_GENERATEMIPSUBLEVELS = 89, DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
+    DP2_SETRENDERTARGET2 = 85, DP2_GENERATEMIPSUBLEVELS = 89, DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
 };
 #define D3DERR_COMMAND_UNPARSED_ 0x88760BB8u
 
@@ -168,6 +168,7 @@ struct VShader8 {
 
 struct Ctx {
     uint32_t rt = 0, z = 0;
+    uint32_t mrt[4] = {};               /* v17: targets 1..3 (SETRENDERTARGET2), 0 = none; mrt[0] unused */
     D3DVIEWPORT9 vp = { 0, 0, 0, 0, 0.0f, 1.0f };
     /* the DX8 shaders by the runtime's handle (per device = per context);
      * a DX9 declaration (CREATEVERTEXSHADERDECL) is one of these with no
@@ -196,6 +197,7 @@ struct Ddi {
     std::unordered_map<uint32_t, VramSurf> surfs;
     std::unordered_map<uint32_t, Ctx> ctxs;
     uint32_t bound_rt = 0, bound_z = 0;     /* what the device's targets are set to */
+    uint32_t bound_mrt[4] = {};             /* v17: and its targets 1..3 */
     IDirect3DSurface9 *stage = nullptr;     /* system-memory staging for readback / upload */
     IDirect3DSurface9 *stage_def = nullptr; /* default-pool hop for uploads into render targets */
     uint32_t stage_w = 0, stage_h = 0;
@@ -767,6 +769,23 @@ static bool bind_ctx(Exec &x, Ddi &d, Ctx &c, Batch &b, bool for_draw) {
         x.dev->SetDepthStencilSurface(z ? z->rt : nullptr);
         d.bound_rt = c.rt; d.bound_z = c.z;
         if (c.vp.Width && c.vp.Height) x.dev->SetViewport(&c.vp);
+    }
+    /* v17: targets 1..3, each where it still names a target (a context
+     * switch leaves the other context's bound until this one says) */
+    for (uint32_t i = 1; i < 4; i++) {
+        VramSurf *m = c.mrt[i] ? surf(x, c.mrt[i]) : nullptr;
+        if (m && (!ensure_object(x, *m) || !m->rt)) m = nullptr;
+        uint32_t h = m ? c.mrt[i] : 0;
+        if (d.bound_mrt[i] != h) {
+            x.dev->SetRenderTarget(i, m ? m->rt : nullptr);
+            d.bound_mrt[i] = h;
+        }
+        if (m && for_draw) {
+            if (m->dirty) upload_target(x, d, *m);
+            m->rendered = true;
+            m->checked = true;
+            if (m->d.caps & D3DPT_VS_AUTOGEN) m->mips_stale = true;
+        }
     }
     if (for_draw) {
         /* once per frame, before its first draw: VRAM the guest changed
@@ -2395,6 +2414,24 @@ struct Dp2 {
                 }
                 break;
             }
+            case DP2_SETRENDERTARGET2:
+                /* v17: render targets 1..3 {index, surface handle; 0 = none}
+                 * (the driver turns index 0 into SETRENDERTARGET) */
+                need = count * 8u;
+                if (need > left) return fail("truncated SETRENDERTARGET2");
+                for (uint32_t i = 0; i < count; i++) {
+                    uint32_t idx = u32(q + 8 * i), h = u32(q + 8 * i + 4);
+                    VramSurf *m = h ? surf(x, h) : nullptr;
+                    tr("render target %u: %u%s", idx, h, h && !m ? " (unknown)" : "");
+                    if (idx < 1 || idx > 3) return fail("SETRENDERTARGET2 index");
+                    if (h && (!m || !(m->d.caps & (D3DPT_VS_RENDER_TARGET | D3DPT_VS_PRIMARY)) || (m->d.caps & D3DPT_VS_ZBUFFER))) {
+                        if (d.warn_once(0x60001)) x.log("ddi: dp2: render target %u: surface %u is no target, unbound", idx, h);
+                        h = 0;
+                    }
+                    c.mrt[idx] = h;
+                }
+                if (surf(x, c.rt)) bind_ctx(x, d, c, b, false);
+                break;
             case DP2_GENERATEMIPSUBLEVELS:
                 /* surface handle, D3DTEXTUREFILTERTYPE: an autogen texture's
                  * levels from its level 0, uploaded first if the guest wrote
@@ -2616,7 +2653,13 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         for (auto &kv : x.ddi->ctxs) {
             if (kv.second.rt == a->handle) kv.second.rt = 0;
             if (kv.second.z == a->handle) kv.second.z = 0;
+            for (uint32_t &m : kv.second.mrt) if (m == a->handle) m = 0;
         }
+        for (uint32_t i = 1; i < 4; i++)
+            if (x.ddi->bound_mrt[i] == a->handle) {
+                if (x.dev) x.dev->SetRenderTarget(i, nullptr);
+                x.ddi->bound_mrt[i] = 0;
+            }
         VramSurf &gone = it->second;
         for (uint32_t f = 0; f < D3DPT_CUBE_FACES; f++) {   /* a cube: its faces' surfaces of it go too */
             VramSurf *fs = gone.face_h[f] ? surf(x, gone.face_h[f]) : nullptr;

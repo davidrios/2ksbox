@@ -969,6 +969,55 @@ int main(int argc, char **argv) {
         send_dp2(&enc, r, vtx);
     }
 
+    /* --- several render targets (v17): a second 640x480 target at index 1
+     * (the runtime's SETRENDERTARGET2), a ps 2.0 writing c0 to oC0 and c1
+     * to oC1: red in the first target, green in the second, each read
+     * back. Then target 1 unbound, and the hostile ones: index 0 and 4
+     * refused, a texture that is no target unbound with a line --- */
+    {
+        enum { H_MRT = 340, H_PS_MRT = 0x241 };
+        const uint32_t ps_mrt[] = { 0xFFFF0200u, 0x02000001u, 0x800F0800u, 0xA0E40000u,    /* mov oC0, c0 */
+                                    0x02000001u, 0x800F0801u, 0xA0E40001u, 0x0000FFFFu };  /* mov oC1, c1 */
+        std::vector<tlv> quad(vtx.begin(), vtx.begin() + 6);
+        memset(vram + RT2_OFF, 0, (size_t)RT_PITCH * H);
+        vram_surface(&enc, H_MRT, RT2_OFF, W, H, RT_PITCH, D3DFMT_X8R8G8B8, D3DPT_VS_RENDER_TARGET);
+        Dp2Buf m;
+        m.create_ps(H_PS_MRT, std::vector<uint32_t>(ps_mrt, ps_mrt + 8));
+        m.set_ps(H_PS_MRT);
+        m.ps_const(0, 1, 0, 0, 1);
+        m.ps_const(1, 0, 1, 0, 1);
+        m.cmd(85, 1); m.u32(1); m.u32(H_MRT);
+        m.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+        m.draw8(4, 2, FVF_TLVERTEX, quad);
+        m.cmd(85, 1); m.u32(1); m.u32(0);
+        m.set_ps(0);
+        hr = send_dp2(&enc, m, vtx);
+        hr |= readback(&enc, H_RT);
+        hr |= readback(&enc, H_MRT);
+        uint32_t c0 = hr ? 0xdeadbe : px(124, 84), c1;
+        memcpy(&c1, vram + RT2_OFF + 84 * RT_PITCH + 124 * 4, 4);
+        c1 &= 0xffffff;
+        uint32_t cleared;
+        memcpy(&cleared, vram + RT2_OFF + 400 * RT_PITCH + 600 * 4, 4);
+        CHECK(near_(c0, 0xff0000, 2) && near_(c1, 0x00ff00, 2) && (cleared & 0xffffff) == (CLEAR_COLOR & 0xffffff),
+              "two render targets: oC0 0x%06x (want 0xff0000), oC1 0x%06x (want 0x00ff00), the second cleared 0x%06x", c0, c1, cleared & 0xffffff);
+        for (uint32_t bad : { 0u, 4u }) {
+            Dp2Buf mb;
+            mb.cmd(85, 1); mb.u32(bad); mb.u32(H_MRT);
+            hr = send_dp2(&enc, mb, vtx, 0, &err_off);
+            CHECK(hr == 0x88760BB8u && err_off == 0, "SETRENDERTARGET2 index %u -> D3DERR_COMMAND_UNPARSED at %u (0x%08x)", bad, err_off, hr);
+        }
+        Dp2Buf mt;
+        mt.cmd(85, 1); mt.u32(1); mt.u32(H_TEX);
+        mt.clear(D3DCLEAR_TARGET, CLEAR_COLOR, 1.0f);
+        mt.cmd(85, 1); mt.u32(1); mt.u32(0);
+        hr = send_dp2(&enc, mt, vtx);
+        CHECK(hr == 0, "a texture as target 1: unbound, not fatal (0x%08x)", hr);
+        { d3dpt_handle *hh = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_RELEASE, sizeof *hh, 0); *hh = { H_MRT, 0 }; }
+        Dp2Buf md; md.delete_ps(H_PS_MRT);
+        send_dp2(&enc, md, vtx);
+    }
+
     /* --- the luminance bump maps (BUMPENVMAPLUMINANCE): a uniform bump map
      * (du = dv = 0, L = one half) at stage 0 over a uniform green
      * environment map at stage 1, a zero bump matrix and a luminance scale
