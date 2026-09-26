@@ -527,8 +527,11 @@ static bool ensure_object(Exec &x, VramSurf &s) {
     } else if ((s.d.caps & D3DPT_VS_TEXTURE) && (s.d.caps & D3DPT_VS_RENDER_TARGET)) {
         /* render-to-texture: a default-pool render-target texture, level 0
          * is the target; an autogen one's levels are DXVK's (v15) */
+        /* every level the guest's texture has (a sublevel no draw reached
+         * reads black, as a new texture's memory does on the cards of the
+         * era, Wine's test_generate_mipmap) */
         bool gen = (s.d.caps & D3DPT_VS_AUTOGEN) != 0;
-        hr = x.dev->CreateTexture(s.d.width, s.d.height, gen ? 0 : 1, D3DUSAGE_RENDERTARGET | (gen ? D3DUSAGE_AUTOGENMIPMAP : 0),
+        hr = x.dev->CreateTexture(s.d.width, s.d.height, gen ? 0 : s.d.levels, D3DUSAGE_RENDERTARGET | (gen ? D3DUSAGE_AUTOGENMIPMAP : 0),
                                   (D3DFORMAT)s.d.format, D3DPOOL_DEFAULT, &s.tex, nullptr);
         if (SUCCEEDED(hr)) hr = s.tex->GetSurfaceLevel(0, &s.rt);
         if (FAILED(hr)) x.log("ddi: render-target texture %ux%u fmt %u: 0x%08x", s.d.width, s.d.height, s.d.format, (unsigned)hr);

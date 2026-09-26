@@ -74,13 +74,6 @@ d3d9_test_visual visual.c:28877 132
 d3d9_test_visual visual.c:3350 174
 d3d9_test_visual visual.c:3879 1
 d3d9_test_visual visual.c:3914 1
-d3d9_test_visual visual.c:5750 1
-d3d9_test_visual visual.c:5752 1
-d3d9_test_visual visual.c:5756 1
-d3d9_test_visual visual.c:5758 1
-d3d9_test_visual visual.c:5760 1
-d3d9_test_visual visual.c:5762 1
-d3d9_test_visual visual.c:5764 1
 d3d9_test_visual visual.c:7589 5
 d3d9_test_visual visual.c:8852 5
 d3d9_test_visual visual.c:8854 5

@@ -39,7 +39,7 @@ the ARGB group's conversions and the DX9 samplers (doc 15 "The DX9
 formats", "Samplers"), and mip generation (protocol v15, doc 15 "Mip
 generation") with a managed texture's SetLOD, instancing (v16, doc 15
 "Instancing") and four render targets (v17). What step 3 has left: a
-render-target texture's levels on the host (finding 18), vertex texture
+render-target texture's sublevel as a target (finding 18), vertex texture
 fetch checked by a title, the 2.0-cap flag.
 
 - **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
@@ -58,7 +58,7 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  640 failures (803 before mip generation, findings 15, 17, 20 to 22,
+  633 failures (803 before mip generation, findings 15, 17, 18, 20 to 22,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
@@ -72,9 +72,9 @@ fetch checked by a title, the 2.0-cap flag.
   174: a vs 1.x that writes no `oFog` is not fogged, also on native
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
   build/winetest/wine-11.0` counts the rest per test function. Against it
-  the guest's d3d9 visual has 26 keys worse. The largest: `test_fog` 48,
+  the guest's d3d9 visual has 19 keys worse. The largest: `test_fog` 48,
   `test_updatetexture` 9
-  (finding 2), `test_generate_mipmap` 7 (finding 18).
+  (finding 2).
 - **Where DXVK itself differs.** A guest failure DXVK shares is DXVK's
   behaviour, and a patch in `patches/dxvk/` would be the fix. The clear
   case: fog under a vertex shader that writes no `oFog` (most of
@@ -176,11 +176,14 @@ fetch checked by a title, the 2.0-cap flag.
      matches the levels by size (doc 15 "SetLOD and UpdateTexture");
      Wine's `maxmip_test` passes and `test_updatetexture` went from 18
      failures to 15.
-  18. *Open.* `test_generate_mipmap` samples the sublevels of a
+  18. *Half fixed.* `test_generate_mipmap` samples the sublevels of a
      render-target texture the application never filled (black on real
-     hardware): the host makes every render-target texture with one level,
-     so level 0 shows through. Several levels of a target texture need a
-     handle per level on the host, as a render-target cube's faces have.
+     hardware): the host made every render-target texture with one level,
+     so level 0 showed through. It makes them with the guest's levels now,
+     and the test passes. Still open: a sublevel as a render target is a
+     surface of its own on the host, so drawing into one does not reach
+     the texture; that needs a handle per level, as a render-target
+     cube's faces have.
   19. *Fixed.* DXT volume textures from `d3d9.dll` came out black: the
      driver's VOLUMEBLT refused DXT, and a source with no pixel format.
      Wine's `volume_dxtn_test` and `volume_srgb_test` pass since.
