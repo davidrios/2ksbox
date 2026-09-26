@@ -14,7 +14,7 @@ The driver came in three stages, which still name the parts: **M7a** the
 framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
 (a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L, and
 since M16 a DirectX 9 DDI with shader model 3.0). The
-register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v15**
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v16**
 (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
 GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
@@ -1332,8 +1332,15 @@ the 9x layer not yet.
   `SETSTREAMSOURCE2`'s offset is the walker's. `SETRENDERTARGET2`
   (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair.
   Integer / boolean constants and the scissor go to the host.
-  SETSTREAMSOURCEFREQ is dropped with a `dx9 token N not walked yet`
-  line (M16 step 3).
+- **Instancing** (v16). SETSTREAMSOURCEFREQ's dividers are context state
+  like the stream bindings. An indexed draw under a declaration with
+  stream 0 at `INDEXEDDATA | n` is instanced: the DRAW8 carries stream
+  0's value in its stream-count word pair and each stream's own in the
+  word that was padding, and an `INSTANCEDATA | d` stream sends its first
+  ceil(n / d) elements instead of the draw's vertex range. The host draws
+  through `DrawIndexedPrimitiveUP`, which has no stream frequency, so it
+  draws the geometry n times with instance k's element interleaved into
+  every vertex (element k / d).
 - **Mip generation** (v15). The driver claims `D3DCAPS2_CANAUTOGENMIPMAP`
   and `D3DFORMAT_OP_AUTOGENMIPMAP` on the 16- and 32-bit RGB formats. A
   `D3DUSAGE_AUTOGENMIPMAP` texture is one video-memory surface with

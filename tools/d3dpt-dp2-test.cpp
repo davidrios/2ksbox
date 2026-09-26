@@ -123,7 +123,7 @@ struct Dp2Buf {
     /* v10: a DRAW8 with more streams than stream 0 (the vertices above, inline):
      * each either inline (its bytes, nverts * stride) or in a VRAM buffer
      * (vb != 0: handle + byte offset); the lies make hostile records */
-    struct Strm { uint32_t stream, stride, vb, voff; std::vector<uint8_t> data; uint32_t flags_lie; };
+    struct Strm { uint32_t stream, stride, vb, voff; std::vector<uint8_t> data; uint32_t flags_lie; uint32_t freq = 0; };
     template <class T> static Strm strm(uint32_t n, const std::vector<T> &v) {
         Strm s = { n, (uint32_t)sizeof(T), 0, 0, {}, 0 };
         s.data.assign((const uint8_t *)v.data(), (const uint8_t *)(v.data() + v.size()));
@@ -131,7 +131,7 @@ struct Dp2Buf {
     }
     static Strm strm_vram(uint32_t n, uint32_t stride, uint32_t vb, uint32_t voff) { return { n, stride, vb, voff, {}, 0 }; }
     template <class T> void draw8m(uint32_t prim, uint32_t prims, uint32_t fvf, const std::vector<T> &v, const std::vector<uint16_t> &idx,
-                                   uint32_t min_index, const std::vector<Strm> &st, uint32_t count_lie = 0) {
+                                   uint32_t min_index, const std::vector<Strm> &st, uint32_t count_lie = 0, uint32_t freq0 = 0) {
         cmd(D3DPT_DP2_DRAW8, 0);
         u32(prim); u32(prims); u32(fvf); u32((uint32_t)sizeof(T));
         u32((uint32_t)v.size()); u32((uint32_t)idx.size()); u32(min_index); u32(D3DPT_DRAW8_STREAMS);
@@ -139,9 +139,9 @@ struct Dp2Buf {
         while (b.size() % 4) b.push_back(0xcc);
         for (uint16_t i : idx) u16(i);
         while (b.size() % 4) b.push_back(0xcc);
-        u32(count_lie ? count_lie : (uint32_t)st.size()); u32(0);
+        u32(count_lie ? count_lie : (uint32_t)st.size()); u32(freq0);     /* v16: stream 0's frequency */
         for (const Strm &s : st) {
-            u32(s.stream); u32(s.stride); u32(s.flags_lie ? s.flags_lie : s.vb ? D3DPT_DRAW8_VRAM_VB : 0); u32(0);
+            u32(s.stream); u32(s.stride); u32(s.flags_lie ? s.flags_lie : s.vb ? D3DPT_DRAW8_VRAM_VB : 0); u32(s.freq);
             if (s.vb) { u32(s.vb); u32(s.voff); }
             else { b.insert(b.end(), s.data.begin(), s.data.end()); while (b.size() % 4) b.push_back(0xcc); }
         }
@@ -736,6 +736,46 @@ int main(int argc, char **argv) {
                 mb.draw8m(4, 2, H_VS2, p4, {}, 0, c.st, c.count_lie);
                 hr = send_dp2(&enc, mb, vtx, 0, &err_off);
                 CHECK(hr == 0x88760BB8u && err_off == 0, "DRAW8 with %s -> D3DERR_COMMAND_UNPARSED at %u (0x%08x)", c.what, err_off, hr);
+            }
+            /* instancing (v16): the quad indexed, three instances added up
+             * (blend ONE + ONE over black), each coloured by its element of an
+             * instance stream: 0x400000 + 0x004000 + 0x000040. At a divider
+             * of 2 instances 0 and 1 take the first element and instance 2
+             * the second: 0x400000 * 2 + 0x004000. Then
+             * the hostile ones: an instance count on a draw with no indices,
+             * an instance stream on a draw that is not instanced */
+            {
+                std::vector<uint16_t> ix = { 0, 1, 2, 3, 4, 5 };
+                std::vector<col8> ic = { { 0xff400000u, 0 }, { 0xff004000u, 0 }, { 0xff000040u, 0 } };
+                uint32_t sums[2];
+                for (int dv = 1; dv <= 2; dv++) {
+                    /* ceil(3 / divider) elements, as the driver sends them */
+                    Strm is = Dp2Buf::strm(1, std::vector<col8>(ic.begin(), ic.begin() + (3 + dv - 1) / dv));
+                    is.freq = D3DSTREAMSOURCE_INSTANCEDATA | (uint32_t)dv;
+                    Dp2Buf mi;
+                    mi.set_vs(H_VS2);
+                    mi.vs_const(0, 1, 1, 1, 1);
+                    mi.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000u, 1.0f);
+                    mi.rs(D3DRS_ALPHABLENDENABLE, 1); mi.rs(D3DRS_SRCBLEND, D3DBLEND_ONE); mi.rs(D3DRS_DESTBLEND, D3DBLEND_ONE);
+                    mi.rs(D3DRS_ZENABLE, 0);
+                    mi.draw8m(4, 2, H_VS2, p4, ix, 0, { is }, 0, D3DSTREAMSOURCE_INDEXEDDATA | 3);
+                    mi.rs(D3DRS_ALPHABLENDENABLE, 0); mi.rs(D3DRS_ZENABLE, 1);
+                    hr = send_dp2(&enc, mi, vtx);
+                    hr |= readback(&enc, H_RT);
+                    sums[dv - 1] = hr ? 0xdeadbe : px(100, 100);
+                }
+                CHECK(near_(sums[0], 0x404040, 2) && near_(sums[1], 0x804000, 2),
+                      "three instances, an instance colour each: 0x%06x (want 0x404040), at a divider of 2 0x%06x (want 0x804000)", sums[0], sums[1]);
+                Strm is = Dp2Buf::strm(1, ic);
+                is.freq = D3DSTREAMSOURCE_INSTANCEDATA | 1;
+                Dp2Buf h1;
+                h1.draw8m(4, 2, H_VS2, p4, {}, 0, { Dp2Buf::strm(1, cols(0, 6)) }, 0, D3DSTREAMSOURCE_INDEXEDDATA | 3);
+                hr = send_dp2(&enc, h1, vtx, 0, &err_off);
+                CHECK(hr == 0x88760BB8u && err_off == 0, "an instance count on a draw with no indices -> D3DERR_COMMAND_UNPARSED at %u (0x%08x)", err_off, hr);
+                Dp2Buf h2;
+                h2.draw8m(4, 2, H_VS2, p4, ix, 0, { is });
+                hr = send_dp2(&enc, h2, vtx, 0, &err_off);
+                CHECK(hr == 0x88760BB8u && err_off == 0, "an instance stream on a draw not instanced -> D3DERR_COMMAND_UNPARSED at %u (0x%08x)", err_off, hr);
             }
             Dp2Buf m7;
             m7.delete_vs(H_VS2); m7.delete_vs(H_VS02); m7.delete_vs(H_FF2); m7.delete_vs(0x11b);

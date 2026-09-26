@@ -70,6 +70,8 @@
 #define DDSCAPS2_VERTEXBUFFER_ 0x02000000
 #define DDSCAPS3_MULTISAMPLE_MASK_ 0x1f   /* ddsCapsEx.dwCaps3: a multisampled surface's sample count */
 #define DDSCAPS3_LIGHTWEIGHTMIPMAP_ 0x400 /* ddsCapsEx.dwCaps3: the driver keeps a texture's mip levels inside its one surface (DX9) */
+#define D3DSTREAMSOURCE_INDEXEDDATA_  0x40000000u   /* d3d9types.h: SetStreamSourceFreq's two kinds */
+#define D3DSTREAMSOURCE_INSTANCEDATA_ 0x80000000u
 #define DDSCAPS3_AUTOGENMIPMAP_ 0x800     /* ddsCapsEx.dwCaps3: a D3DUSAGE_AUTOGENMIPMAP texture, level 0 alone (DX9) */
 #define DDSCAPS2_INDEXBUFFER_  0x04000000
 
@@ -213,6 +215,7 @@ typedef struct _D3DCTX {
                                  * Lock with DISCARD gives a buffer new memory, CreateSurfaceEx again) */
     ULONG st_stride[D3D_MAX_STREAMS], ib_stride;
     ULONG st_off[D3D_MAX_STREAMS];   /* SETSTREAMSOURCE2's offsets (DX9, M16) */
+    ULONG st_freq[D3D_MAX_STREAMS];  /* SETSTREAMSOURCEFREQ's dividers (DX9 instancing) */
 } D3DCTX;
 
 /* The device, as the core sees it. The per-OS layer's own device object

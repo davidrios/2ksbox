@@ -1379,6 +1379,18 @@ struct Dp2 {
         s.ilv.push_back(n);
         return decl;
     }
+    /* the streams a declaration reads interleaved into d.ilv, vertex by
+     * vertex; an instance stream (sdiv, v16) gives every vertex its element
+     * k / divider of instance k */
+    void ilv_fill(uint32_t streams, const uint8_t *const *sd, const uint32_t *ss, const uint32_t *sdiv, uint32_t nverts, uint32_t k) {
+        uint8_t *o = d.ilv.data();
+        for (uint32_t v = 0; v < nverts; v++)
+            for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
+                if (streams & (1u << i)) {
+                    memcpy(o, sd[i] + (size_t)(sdiv[i] ? k / sdiv[i] : v) * ss[i], ss[i]);
+                    o += ss[i];
+                }
+    }
     /* the driver's self-contained DX8 draw: vertices and 16-bit indices
      * inline, or (v9) in VRAM buffers it names by handle and offset; (v10)
      * under a vertex shader, the other streams it had bound after them */
@@ -1394,13 +1406,19 @@ struct Dp2 {
         if (need > left) return fail("truncated DRAW8 data");
         /* the other streams, all parsed before anything can skip the draw
          * (the next token starts after the last of them) */
-        struct Ext { uint32_t stream, stride, flags; const uint8_t *p; } ext[D3DPT_DRAW8_MAX_STREAMS];
-        uint32_t next = 0;
+        struct Ext { uint32_t stream, stride, flags, elems, div; const uint8_t *p; } ext[D3DPT_DRAW8_MAX_STREAMS];
+        uint32_t next = 0, inst = 0;
         if (h.flags & D3DPT_DRAW8_STREAMS) {
             if (need + 8 > left) return fail("truncated DRAW8 streams");
-            uint32_t n = u32(q + need), last = 0;
+            uint32_t n = u32(q + need), freq0 = u32(q + need + 4), last = 0;
             need += 8;
-            if (!n || n >= D3DPT_DRAW8_MAX_STREAMS) return fail("bad DRAW8 stream count");
+            /* v16: instanced, stream 0 INDEXEDDATA | n on an indexed draw */
+            if (freq0) {
+                inst = freq0 & 0x3fffffffu;
+                if ((freq0 & 0xc0000000u) != D3DSTREAMSOURCE_INDEXEDDATA || !inst || inst > 0x10000 || !h.nindices)
+                    return fail("bad DRAW8 instance count");
+            }
+            if ((!n && !inst) || n >= D3DPT_DRAW8_MAX_STREAMS) return fail("bad DRAW8 stream count");
             for (uint32_t i = 0; i < n; i++) {
                 d3dpt_dp2_draw8_stream e;
                 if (need + sizeof e > left) return fail("truncated DRAW8 stream");
@@ -1408,10 +1426,17 @@ struct Dp2 {
                 need += sizeof e;
                 if (e.stream <= last || e.stream >= D3DPT_DRAW8_MAX_STREAMS || !e.stride || e.stride > 1024 || (e.flags & ~D3DPT_DRAW8_VRAM_VB))
                     return fail("bad DRAW8 stream");
+                /* v16: an instance stream, ceil(inst / d) elements */
+                uint32_t div = 0, elems = 0;
+                if (e.freq) {
+                    div = e.freq & 0x3fffffffu;
+                    if (!inst || (e.freq & 0xc0000000u) != D3DSTREAMSOURCE_INSTANCEDATA || !div) return fail("bad DRAW8 stream frequency");
+                    elems = (inst + div - 1) / div;
+                }
                 last = e.stream;
-                size_t sz = (e.flags & D3DPT_DRAW8_VRAM_VB) ? 8 : ((size_t)h.nverts * e.stride + 3) & ~(size_t)3;
+                size_t sz = (e.flags & D3DPT_DRAW8_VRAM_VB) ? 8 : ((size_t)(elems ? elems : h.nverts) * e.stride + 3) & ~(size_t)3;
                 if (need + sz > left) return fail("truncated DRAW8 stream data");
-                ext[next++] = { e.stream, e.stride, e.flags, q + need };
+                ext[next++] = { e.stream, e.stride, e.flags, elems, div, q + need };
                 need += sz;
             }
         }
@@ -1436,16 +1461,19 @@ struct Dp2 {
          * their VRAM range resolves (one that does not only matters if the
          * declaration reads it) */
         const uint8_t *sd[D3DPT_DRAW8_MAX_STREAMS] = { vd };
-        uint32_t ss[D3DPT_DRAW8_MAX_STREAMS] = { h.stride }, carried = 1;
+        uint32_t ss[D3DPT_DRAW8_MAX_STREAMS] = { h.stride }, sdiv[D3DPT_DRAW8_MAX_STREAMS] = {}, carried = 1;
         for (uint32_t i = 0; i < next; i++) {
             const uint8_t *p = ext[i].p;
-            if (ext[i].flags & D3DPT_DRAW8_VRAM_VB) p = vram_range(u32(p), u32(p + 4), (size_t)h.nverts * ext[i].stride, "stream");
+            if (ext[i].flags & D3DPT_DRAW8_VRAM_VB)
+                p = vram_range(u32(p), u32(p + 4), (size_t)(ext[i].elems ? ext[i].elems : h.nverts) * ext[i].stride, "stream");
             if (!p) continue;
             sd[ext[i].stream] = p;
             ss[ext[i].stream] = ext[i].stride;
+            sdiv[ext[i].stream] = ext[i].div;
             carried |= 1u << ext[i].stream;
         }
-        uint32_t stride = h.stride;
+        if (inst) tr("  instanced: %u instances", inst);
+        uint32_t stride = h.stride, ilv_streams = 0;
         IDirect3DVertexDeclaration9 *ilv = nullptr;
         if (shader) {
             /* the vertices are read through the shader's declaration: it
@@ -1475,12 +1503,10 @@ struct Dp2 {
                     return true;
                 }
                 d.ilv.resize((size_t)h.nverts * total);
-                uint8_t *o = d.ilv.data();
-                for (uint32_t v = 0; v < h.nverts; v++)
-                    for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
-                        if (s.streams & (1u << i)) { memcpy(o, sd[i] + (size_t)v * ss[i], ss[i]); o += ss[i]; }
+                ilv_fill(s.streams, sd, ss, sdiv, h.nverts, 0);
                 vd = d.ilv.data();
                 stride = total;
+                ilv_streams = s.streams;
             }
         } else if (d.trace) trv(vd, h.nverts, h.stride, h.fvf);
         apply_vs(h.fvf);
@@ -1502,6 +1528,12 @@ struct Dp2 {
                 d.idx[i] = (uint16_t)(v - h.min_index);
             }
             x.dev->DrawIndexedPrimitiveUP(t, 0, h.nverts, h.prim_count, d.idx.data(), D3DFMT_INDEX16, vd, stride);
+            /* v16: the other instances, each with its instance streams'
+             * element (a UP draw has no stream frequency of its own) */
+            for (uint32_t k = 1; k < inst; k++) {
+                if (ilv_streams) ilv_fill(ilv_streams, sd, ss, sdiv, h.nverts, k);
+                x.dev->DrawIndexedPrimitiveUP(t, 0, h.nverts, h.prim_count, d.idx.data(), D3DFMT_INDEX16, vd, stride);
+            }
         }
         d.draws++;
         snap();

@@ -50,10 +50,6 @@ d3d9_test_visual visual.c:11564 6
 d3d9_test_visual visual.c:11567 6
 d3d9_test_visual visual.c:11571 14
 d3d9_test_visual visual.c:11574 14
-d3d9_test_visual visual.c:12464 16
-d3d9_test_visual visual.c:12466 14
-d3d9_test_visual visual.c:12468 12
-d3d9_test_visual visual.c:12470 9
 d3d9_test_visual visual.c:14268 1
 d3d9_test_visual visual.c:14270 1
 d3d9_test_visual visual.c:14272 1

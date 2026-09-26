@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   15u
+#define D3DPT_PROTO_VERSION   16u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -393,7 +393,15 @@ typedef struct d3dpt_dp2 {
  * carries more than stream 0 (an FVF reads stream 0 alone), and the driver
  * sends every stream bound at the time it can resolve: the host takes the
  * ones the shader's declaration reads and skips the draw when one of those
- * is missing. */
+ * is missing.
+ *
+ * v16: DX9 instancing. The {count, 0} word pair's second word is stream
+ * 0's SetStreamSourceFreq value (D3DSTREAMSOURCE_INDEXEDDATA | n: the
+ * indexed geometry drawn n times; 0 = not instanced, and count may then
+ * be 0), and a stream's freq its own (D3DSTREAMSOURCE_INSTANCEDATA | d:
+ * element k / d for instance k; 0 = read per vertex). An instance stream
+ * carries ceil(n / d) elements from its first one instead of the draw's
+ * vertex range. Only an indexed draw under a declaration is instanced. */
 #define D3DPT_DP2_DRAW8 200u
 #define D3DPT_DRAW8_VRAM_VB 0x1u
 #define D3DPT_DRAW8_VRAM_IB 0x2u
@@ -407,7 +415,8 @@ typedef struct d3dpt_dp2_draw8 {
 } d3dpt_dp2_draw8;
 typedef struct d3dpt_dp2_draw8_stream { /* v10: one more stream of a DRAW8 */
     uint32_t stream, stride;            /* 1..15; its stride */
-    uint32_t flags, pad;                /* D3DPT_DRAW8_VRAM_VB: its vertices in a VRAM buffer */
+    uint32_t flags;                     /* D3DPT_DRAW8_VRAM_VB: its vertices in a VRAM buffer */
+    uint32_t freq;                      /* v16: its SetStreamSourceFreq value, 0 = per vertex (was padding) */
 } d3dpt_dp2_draw8_stream;
 
 #endif /* D3DPT_PROTO_H */

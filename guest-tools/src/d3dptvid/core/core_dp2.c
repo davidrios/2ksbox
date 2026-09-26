@@ -40,6 +40,7 @@ typedef struct _DP2WALK {
     ULONG vall;                 /* the whole buffer from vtx on (a dxg buffer's linear size) */
     ULONG fvf;                  /* the current vertex format (SETVERTEXSHADER): an FVF, or a vertex shader handle (bit 0) */
     DP2STREAM st[D3D_MAX_STREAMS], ib;  /* the streams and the index buffer */
+    ULONG freq[D3D_MAX_STREAMS]; /* SETSTREAMSOURCEFREQ's dividers (DX9 instancing, v16; 0 = never set) */
     ULONG st_um;                /* bit n: stream n is the DP2 vertex buffer */
     BOOL shader;                /* fvf is a vertex shader handle: the host reads the vertices through its declaration */
     BOOL one_stream;            /* DDF_ONE_STREAM: a draw carries stream 0 alone (the A/B) */
@@ -205,6 +206,19 @@ static void walk_stream_data(DP2WALK *w, const DP2STREAM *s, ULONG off, ULONG by
     }
 }
 
+/* an instanced draw's (inst instances) elements of a stream at frequency
+ * f: one per divider instances for INSTANCEDATA; 0 for a stream read per
+ * vertex, or when the draw is not instanced */
+static ULONG inst_elements(ULONG f, ULONG inst)
+{
+    ULONG div = f & 0x3fffffff;
+
+    if (!inst || !(f & D3DSTREAMSOURCE_INSTANCEDATA_) || !div) {
+        return 0;
+    }
+    return (inst + div - 1) / div;
+}
+
 /* one self-contained draw for the host: the vertex range and the indices
  * copied into the record, or (v9) a VRAM buffer's handle and offset each.
  * Under a vertex shader (v10) every other stream bound whose range is
@@ -219,7 +233,7 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     d3dpt_dp2_draw8 t;
     d3dpt_dp2_draw8_stream sh;
     d3dpt_u32x2 ref;
-    ULONG stride = vs->stride, vbytes, first = 0, ext[D3D_MAX_STREAMS], next = 0, i;
+    ULONG stride = vs->stride, vbytes, first = 0, ext[D3D_MAX_STREAMS], next = 0, i, inst;
 
     /* A long non-indexed draw goes to the host in pieces. The host takes at
      * most 0x10000 vertices a draw while the caps allow 0xffff primitives.
@@ -279,12 +293,21 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
      * stream that is bound but short, a stale binding a stream-0 shader
      * does not read, is left out, and the host skips the draw if its
      * declaration wanted it) */
+    /* DX9 instancing (v16): stream 0 INDEXEDDATA | n on an indexed draw
+     * under a declaration draws the geometry n times; a stream with
+     * INSTANCEDATA | d goes along from its first element, one per d
+     * instances, whatever the draw's vertex range */
+    inst = nindices && w->shader && (w->freq[0] & D3DSTREAMSOURCE_INDEXEDDATA_) && (w->freq[0] & 0x3fffffff) ?
+           (w->freq[0] & 0x3fffffff) : 0;
     if (w->shader && !w->one_stream && vs == &w->st[0] && voff % stride == 0) {
         first = voff / stride;
         for (i = 1; i < D3D_MAX_STREAMS; i++) {
             const DP2STREAM *s = &w->st[i];
-            if (s->mem && s->stride && s->stride <= 1024 && first <= s->bytes / s->stride &&
-                nverts <= (s->bytes - first * s->stride) / s->stride) {
+            ULONG n = inst_elements(w->freq[i], inst);
+            if (n && s->mem && s->stride && s->stride <= 1024 && n <= s->bytes / s->stride) {
+                ext[next++] = i;
+            } else if (!n && s->mem && s->stride && s->stride <= 1024 && first <= s->bytes / s->stride &&
+                       nverts <= (s->bytes - first * s->stride) / s->stride) {
                 ext[next++] = i;
             }
         }
@@ -301,7 +324,7 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     t.nindices = nindices;
     t.min_index = min_index;
     t.flags = (vs->vram ? D3DPT_DRAW8_VRAM_VB : 0) | (nindices && w->ib.vram ? D3DPT_DRAW8_VRAM_IB : 0) |
-              (next ? D3DPT_DRAW8_STREAMS : 0);
+              (next || inst ? D3DPT_DRAW8_STREAMS : 0);
     walk_put(w, &h, sizeof(h));
     walk_put(w, &t, sizeof(t));
     walk_stream_data(w, vs, voff, vbytes);
@@ -315,18 +338,23 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
             walk_pad(w);
         }
     }
-    if (next) {
+    if (next || inst) {
         ref.a = next;
-        ref.b = 0;
+        ref.b = inst ? w->freq[0] : 0;              /* v16: stream 0's frequency */
         walk_put(w, &ref, sizeof(ref));
         for (i = 0; i < next; i++) {
             const DP2STREAM *s = &w->st[ext[i]];
+            ULONG n = inst_elements(w->freq[ext[i]], inst);
             sh.stream = ext[i];
             sh.stride = s->stride;
             sh.flags = s->vram ? D3DPT_DRAW8_VRAM_VB : 0;
-            sh.pad = 0;
+            sh.freq = n ? w->freq[ext[i]] : 0;
             walk_put(w, &sh, sizeof(sh));
-            walk_stream_data(w, s, first * s->stride, nverts * s->stride);
+            if (n) {
+                walk_stream_data(w, s, 0, n * s->stride);
+            } else {
+                walk_stream_data(w, s, first * s->stride, nverts * s->stride);
+            }
         }
     }
 }
@@ -1477,14 +1505,12 @@ static BOOL walk(DP2WALK *w)
                 for (i = 0; i < count; i++) walk_query_issue(w, (const ULONG *)(q + i * 8));
             }
             break;
-        case 95:
-            /* DX9 tokens not walked yet (M16 step 3): instancing. Said
-             * once, dropped */
-            if (!w->out && !(w->p->dx9_unwalked & (1u << (op - 64))) && w->p->parse_lines < 64) {
-                w->p->dx9_unwalked |= 1u << (op - 64);
-                w->p->parse_lines++;
-                dbg_hex(w->p, "d3dptdisp: dx9 token ", op);
-                dbg_puts(w->p, " not walked yet, dropped\n");
+        case 95:                                                /* SETSTREAMSOURCEFREQ: stream, divider (v16) */
+            for (i = 0; i < count; i++) {
+                const ULONG *e = (const ULONG *)(q + i * 8);
+                if (e[0] < D3D_MAX_STREAMS) {
+                    w->freq[e[0]] = e[1];
+                }
             }
             break;
         default:                                                /* the DX7 state tokens and the shader tokens (45, 46, 48, 54..57) */
@@ -1541,6 +1567,9 @@ static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, UL
     w0.rt = c->rt;
     w0.z = c->z;
     for (i = 0; i < D3D_MAX_STREAMS; i++) {
+        w0.freq[i] = c->st_freq[i];
+    }
+    for (i = 0; i < D3D_MAX_STREAMS; i++) {
         if (c->st_um & (1u << i)) {
             stream_bind_um(&w0, i, c->st_stride[i]);
         } else {
@@ -1592,6 +1621,7 @@ static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, UL
             c->st_handle[i] = w.st[i].handle;
             c->st_stride[i] = w.st[i].stride;
             c->st_off[i] = w.st[i].off;
+            c->st_freq[i] = w.freq[i];
         }
         c->ib_handle = w.ib.handle;
         c->ib_stride = w.ib.stride;
