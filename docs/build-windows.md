@@ -389,8 +389,10 @@ pastes the same words.
    `docs/privacy.md` on GitHub) and the system requirements;
    *Age ratings* is the IARC questionnaire (all "no"); *Pricing* is
    free; *Store listing* takes the text and at least one screenshot of
-   1366×768 or more (`scripts/store-screenshots.ps1` scales the player's
-   Ctrl+Alt+S shots up by a whole factor); *Submission options* takes
+   1366×768 or more, a shot of the player's window with the shader
+   chain on it (Windows' Win+PrtScn with the player full screen), never
+   the player's Ctrl+Alt+S guest frame scaled up (the listing file says
+   why); *Submission options* takes
    one sentence per restricted capability (`runFullTrust`, in the
    listing file).
 5. Submit; certification takes up to a few days, and its report names
@@ -443,7 +445,7 @@ emulated regardless.
   not yet read back from the installed package (`win-sideload.ps1
   -Check`). What is left needs the user: the Partner Center account and
   the name reservation (the identity triple), a version of 1.0.0 or
-  later, and screenshots of the games.
+  later, and screenshots of the player's window with games in it.
 - **No Windows check that boots a guest**, in the shape of
   `tools/xp-driver-test.sh`.
 

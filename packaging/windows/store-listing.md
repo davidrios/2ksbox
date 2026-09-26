@@ -121,12 +121,15 @@ the package.
 ## Screenshots
 
 The Store wants PNGs of at least 1366 × 768 (up to 3840 × 2160), at
-least one, up to ten, no added text or logos. The player's own
-screenshot (Ctrl+Alt+S, `2ksbox-NNNN.png` in the working directory, or
-`PLAYER_SHOT_DIR`) is the guest's frame at the guest's resolution, so
-`scripts/store-screenshots.ps1` scales each by the smallest whole factor
-that reaches the minimum, with no smoothing, into
-`build/win/package/store/`. A good set:
+least one, up to ten, no added text or logos. They are shots of the
+**player's window**, what the user sees: the guest's frame after the
+geometry stage and the CRT shader chain, at the window's resolution.
+Take them with Windows' own screenshot (Win+PrtScn saves a PNG of the
+whole screen to `Pictures\Screenshots`; Win+Shift+S for a region) with
+the player full screen on a 1920×1080 or larger display. **Not the
+player's own Ctrl+Alt+S shot**: that is the guest's frame at the guest's
+resolution, before the shader, and scaling it up would show something
+the box never draws (user, 2026-09-25). A good set:
 
 1. The launcher with a few machines in the library.
 2. A Windows 98 desktop.

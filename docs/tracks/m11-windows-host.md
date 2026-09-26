@@ -26,7 +26,7 @@ keeps scope, test loop, traps and open items. The design:
 - Package: `scripts/package-windows.sh`; the Store's MSIX: `scripts/package-msix.sh`,
   `packaging/windows/AppxManifest.xml.in`, `packaging/windows/Assets/`,
   `scripts/win-sideload.ps1`; the submission: `packaging/windows/store-listing.md`,
-  `docs/privacy.md`, `scripts/store-screenshots.ps1`; the executables'
+  `docs/privacy.md`; the executables'
   manifest `packaging/windows/app.manifest` (with the icon, `win-icon.rs`).
 - The Qt reproducer `tools/qtmin/` (its README has the `__once_proxy`
   diagnosis); the fix is `launcher-qt/src/once_proxy.cpp`.

@@ -306,10 +306,11 @@ tracks, plus the items no track owns.
    but the user's part is done (2026-09-23: the package installs and
    runs on the PC through `scripts/win-sideload.ps1`, the certification
    kit passes it, the listing text, the privacy
-   policy and the screenshot tool exist; `build-windows.md` "The
+   policy exist; `build-windows.md` "The
    submission"), and the user's part is the Partner Center account, the
    name reservation, a version of 1.0.0 or later (the Store refuses a
-   first number of 0) and screenshots of the games; the packaged
+   first number of 0) and screenshots of the player's window with
+   games in it (never the guest-frame shot scaled up); the packaged
    library at `%USERPROFILE%\2ksbox` has been checked with
    `LAUNCHER_PACKAGED=1` only (`win-sideload.ps1 -Check` reads it back
    from the installed app). And an installer for users outside the
