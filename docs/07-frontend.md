@@ -22,7 +22,7 @@ commands `docs/development.md` and `docs/build-macos.md` /
   bars. Ctrl+Alt+Shift+F is borderless full screen.
 - **Input** is doc 03's model (tablet or PS/2 grab, Ctrl+Alt+G,
   Ctrl+Alt+K, Ctrl+Alt+Shift+D for Ctrl+Alt+Del, Ctrl+Alt+S for a shot
-  of the guest's frame). Alt+F4 asks first, in a panel the player draws
+  of the guest's frame, Ctrl+Alt+Shift+S for one of the window's). Alt+F4 asks first, in a panel the player draws
   over the picture (`player/src/prompt.rs`), since the player has no
   toolkit and Linux has no message box that works inside the Flatpak and
   over a full-screen window. A gamepad (M13, `docs/tracks/m13-gamepads.md`)
