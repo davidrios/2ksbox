@@ -532,8 +532,16 @@ static BOOL BuildHalInfo(void)
         pHal->fourcc[3] = 0x32545844;      /* 'DXT2' */
         pHal->fourcc[4] = 0x34545844;      /* 'DXT4' */
         pHal->fourcc[5] = 63;              /* D3DFMT_Q8W8V8U8: d3d8.dll creates it as this FOURCC (core_caps.c) */
+        /* d3d9.dll's (M16): A16B16G16R16, A2W10V10U10, Q16W16V16U16 and
+         * the six float formats, as on NT */
+        pHal->fourcc[6] = 36;
+        pHal->fourcc[7] = 67;
+        for (i = 0; i < 7; i++) pHal->fourcc[8 + i] = 110 + i;
         hi->lpdwFourCC = (LPDWORD)HALFIELD(DWORD, fourcc);
-        hi->ddCaps.dwNumFourCCCodes = 6;
+        hi->ddCaps.dwNumFourCCCodes = 15;
+        /* d3d8.dll's UpdateTexture from system memory goes to the driver
+         * (a DP2 TEXBLT / VOLUMEBLT) only with DDCAPS_BLT here, as on NT */
+        hi->ddCaps.dwSVBCaps = DDCAPS_BLT;
 
         *(DWORD __far *)&hi->lpD3DGlobalDriverData = pHal->d3dhal_global;
         *(DWORD __far *)&hi->lpD3DHALCallbacks = pHal->d3dhal_callbacks;

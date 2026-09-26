@@ -1,0 +1,29 @@
+diff --git include/wine/test.h include/wine/test.h
+index 0bc361e..143a47e 100644
+--- include/wine/test.h
++++ include/wine/test.h
+@@ -825,6 +825,24 @@ static LONG CALLBACK exc_filter( EXCEPTION_POINTERS *ptrs )
+     printf( "%04x:%s:%s unhandled exception %08x at %p\n",
+             (UINT)GetCurrentProcessId(), current_test->name, winetest_elapsed( elapsed ),
+             (UINT)ptrs->ExceptionRecord->ExceptionCode, ptrs->ExceptionRecord->ExceptionAddress );
++    {
++        /* 2ksbox: the module the address is in, and the offset into it */
++        MEMORY_BASIC_INFORMATION mbi;
++        char mod[MAX_PATH];
++
++        if (VirtualQuery( ptrs->ExceptionRecord->ExceptionAddress, &mbi, sizeof(mbi) ) &&
++            GetModuleFileNameA( (HMODULE)mbi.AllocationBase, mod, sizeof(mod) ))
++            printf( "exception in %s+%#lx (loaded at %p)\n", mod,
++                    (unsigned long)((char *)ptrs->ExceptionRecord->ExceptionAddress - (char *)mbi.AllocationBase),
++                    mbi.AllocationBase );
++        else
++            printf( "exception address in no module\n" );
++        if (ptrs->ContextRecord)
++            printf( "eax %08lx ebx %08lx ecx %08lx edx %08lx esi %08lx edi %08lx ebp %08lx esp %08lx\n",
++                    ptrs->ContextRecord->Eax, ptrs->ContextRecord->Ebx, ptrs->ContextRecord->Ecx,
++                    ptrs->ContextRecord->Edx, ptrs->ContextRecord->Esi, ptrs->ContextRecord->Edi,
++                    ptrs->ContextRecord->Ebp, ptrs->ContextRecord->Esp );
++    }
+     if (winetest_color) printf( winetest_color_reset );
+     fflush( stdout );
+     winetest_print_unlock();

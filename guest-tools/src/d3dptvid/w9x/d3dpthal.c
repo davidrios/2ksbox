@@ -159,8 +159,8 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
     out->caps2 = (s->lpSurfMore) ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0;
     out->depth = (out->caps2 & DDSCAPS2_VOLUME_) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0;
     out->samples = (s->lpSurfMore) ? (s->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_MULTISAMPLE_MASK_) : 0;
-    out->lwmip = 0;             /* the 9x HAL does not size a lightweight mipmap yet (M16 step 5) */
-    out->autogen = 0;
+    out->lwmip = s->lpSurfMore && (s->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_LIGHTWEIGHTMIPMAP_);
+    out->autogen = s->lpSurfMore && (s->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_AUTOGENMIPMAP_);
     out->flags = s->dwFlags;
     out->w = s->lpGbl->wWidth;
     out->h = s->lpGbl->wHeight;
@@ -226,10 +226,16 @@ void *d3dpt_os_next_mip(void *os)
     LPATTACHLIST a;
 
     if (!s) return NULL;
+    /* lpAttachList holds the surfaces attached to s, never its parent, so a
+     * level of the same size is the next one (a DXT chain's last levels are
+     * all one block, as on NT); a cube's root lists its other faces too, of
+     * the same size, so the next level is the same face's */
     for (a = s->lpAttachList; a; a = a->lpLink) {
         LPDDRAWI_DDRAWSURFACE_LCL t = surf_lcl(a->lpAttached);
-        if (t && t->lpGbl && (t->ddsCaps.dwCaps & DDSCAPS_MIPMAP) && t != s &&
-            (t->lpGbl->wWidth < s->lpGbl->wWidth || t->lpGbl->wHeight < s->lpGbl->wHeight)) {
+        ULONG sf = s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_CUBEMAP_ALLFACES_ : 0;
+        ULONG tf = (t && t->lpSurfMore) ? t->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_CUBEMAP_ALLFACES_ : 0;
+        if (t && t->lpGbl && (t->ddsCaps.dwCaps & DDSCAPS_MIPMAP) && t != s && sf == tf &&
+            t->lpGbl->wWidth <= s->lpGbl->wWidth && t->lpGbl->wHeight <= s->lpGbl->wHeight) {
             return t;
         }
     }
@@ -343,6 +349,46 @@ static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
             g->dwBlockSizeY = pitch * rows;
             g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
         }
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
+    if (sd && d->dwSCnt == 1 && surf_lcl(d->lplpSList[0]) && surf_lcl(d->lplpSList[0])->lpGbl &&
+        surf_lcl(d->lplpSList[0])->lpSurfMore &&
+        (surf_lcl(d->lplpSList[0])->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_LIGHTWEIGHTMIPMAP_) &&
+        (surf_lcl(d->lplpSList[0])->ddsCaps.dwCaps & DDSCAPS_TEXTURE) &&
+        !(surf_lcl(d->lplpSList[0])->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+        /* A lightweight mipmap (surf_lw_layout): one surface that holds its
+         * whole mip chain, as on NT (DdCreateSurface in d3dptdisp.c).
+         * d3d9.dll leaves out the pixel format when it is the desktop's. */
+        LPDDRAWI_DDRAWSURFACE_GBL g = surf_lcl(d->lplpSList[0])->lpGbl;
+        ULONG fmt = (sd->dwFlags & DDSD_PIXELFORMAT) ? pf_format(&sd->ddpfPixelFormat) : 0, n = 0, size, pitch[16];
+
+        if (!fmt) {
+            fmt = core.bpp == 32 ? D3DFMT_X8R8G8B8_ : D3DFMT_R5G6B5_;
+        }
+        size = surf_lw_layout(fmt, g->wWidth, g->wHeight, NULL, pitch, &n);
+        if (said < 48) {
+            dbg_hex(&core, "d3dpthal: create lightweight mipmap, w ", g->wWidth);
+            dbg_hex(&core, " h ", g->wHeight);
+            dbg_hex(&core, " fmt ", fmt);
+            dbg_hex(&core, " levels ", n);
+            dbg_hex(&core, " -> ", size);
+            dbg_puts(&core, "\n");
+        }
+        if (!size) {
+            return DDHAL_DRIVER_NOTHANDLED;
+        }
+        if (fmt_is_dxt(fmt)) {
+            g->dwLinearSize = surf_dxt_size(fmt, g->wWidth, g->wHeight);   /* the lPitch union, as for any DXT surface */
+            sd->dwFlags |= DDSD_LINEARSIZE;
+            sd->dwLinearSize = g->dwLinearSize;
+        } else {
+            g->lPitch = pitch[0];
+            sd->dwFlags |= DDSD_PITCH;
+            sd->lPitch = pitch[0];
+        }
+        g->dwBlockSizeX = size;
+        g->dwBlockSizeY = 1;
+        g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
         return DDHAL_DRIVER_NOTHANDLED;
     }
     if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC)) {
@@ -1020,10 +1066,14 @@ static DWORD __stdcall DrawPrimitives2_32(D3DHAL_DRAWPRIMITIVES2DATA *d)
     call.vertex_type = d->dwVertexType;
     call.eb = (d->dwFlags & D3DHALDP2_EXECUTEBUFFER) != 0;
     call.rstates = d->lpdwRStates;
+    call.resp = (UCHAR *)cmds->lpGbl->fpVidMem;
+    call.resp_max = cmds->lpGbl->dwLinearSize;
 
     dp2_run(&core, &call, &res);
     d->ddrval = res.hr;
-    d->dwErrorOffset = res.bounce ? d->dwCommandOffset + res.offset : res.offset;
+    /* On success a DX9 runtime reads dwErrorOffset as the bytes of query
+     * responses at the buffer's start (dp2_run), as on NT */
+    d->dwErrorOffset = res.bounce ? d->dwCommandOffset + res.offset : res.hr == DD_OK ? res.resp_bytes : res.offset;
     cmd_lock_release();
     return DDHAL_DRIVER_HANDLED;
 }
@@ -1041,9 +1091,11 @@ static DWORD __stdcall CreateSurfaceEx32(DDHAL_CREATESURFACEEXDATA *d)
     return DDHAL_DRIVER_HANDLED;
 }
 
+/* The runtime's device-info queries (D3DDEVINFOID_*). Nothing to report: a
+ * failure, which d3d8's GetInfo returns as S_FALSE (NT's DdGetDriverState) */
 static DWORD __stdcall GetDriverState32(DDHAL_GETDRIVERSTATEDATA *d)
 {
-    d->ddRVal = DD_OK;
+    d->ddRVal = DDERR_UNSUPPORTED;
     return DDHAL_DRIVER_HANDLED;
 }
 
@@ -1149,8 +1201,7 @@ static void info_copy(DDHAL_GETDRIVERINFODATA *d, const void *src, ULONG n)
     d->ddRVal = DD_OK;
 }
 
-/* the runtime's GetDriverInfo2 queries: the core answers (core_caps.c;
- * core.dx9 stays off here until M16's Win98 step) */
+/* the runtime's GetDriverInfo2 queries: the core answers (core_caps.c) */
 static void gdi2_answer(d3dpt_core *p, DDHAL_GETDRIVERINFODATA *d)
 {
     ULONG actual;
@@ -1265,6 +1316,7 @@ DWORD __stdcall DriverInit(LPVOID ptr)
      * (ebtest 5/5 failed, with no `ddi:` line on the host). */
     core.cmd_offset = (regs[D3DPT_FB_REG_CAPS / 4] & D3DPT_FB_CAP_D3D) ?
                       regs[D3DPT_FB_REG_CMD_OFFSET / 4] : 0;
+    core.dx9 = TRUE;            /* the DirectX 9 face (M16 step 5): d3d9.dll's GETDDIVERSION / GETD3DCAPS9 */
     d3d_init(&core);
 
     dbg_hex(&core, "d3dpthal: DriverInit, block at ", (ULONG)(ULONG_PTR)h);

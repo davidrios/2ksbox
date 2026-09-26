@@ -11,6 +11,9 @@
  *
  *   SETBPP 32            32 bpp, current resolution
  *   SETBPP 16 800 600    16 bpp at 800x600
+ *   SETBPP -save 32      32 bpp, written to the registry too: the mode a
+ *                        full-screen Direct3D device restores when it goes
+ *                        (tools/win98-winetest.sh, on its copy of the image)
  *
  * It writes C:\2KSBOX\SETBPP.LOG (guestlog.h), not the console, because the
  * harness starts it from WIN.INI's `run=` where nothing reads stdout. The
@@ -41,9 +44,15 @@ int main(int argc, char **argv)
     FILE *f = guest_log_open("SETBPP.LOG", "w");
     DEVMODE dm;
     LONG rc;
+    DWORD cds = 0;
 
+    if (argc >= 2 && !strcmp(argv[1], "-save")) {
+        cds = CDS_UPDATEREGISTRY;
+        argc--;
+        argv++;
+    }
     if (argc < 2) {
-        if (f) { fprintf(f, "setbpp: usage: SETBPP <bpp> [width height]\n"); fclose(f); }
+        if (f) { fprintf(f, "setbpp: usage: SETBPP [-save] <bpp> [width height]\n"); fclose(f); }
         return 2;
     }
     memset(&dm, 0, sizeof(dm));
@@ -57,7 +66,7 @@ int main(int argc, char **argv)
     }
     if (f) fprintf(f, "setbpp: before %d bpp, asking for %ld\n", screen_bpp(), (long)dm.dmBitsPerPel);
 
-    rc = ChangeDisplaySettings(&dm, 0);
+    rc = ChangeDisplaySettings(&dm, cds);
 
     /* Give the driver's ReEnable and the shell's repaint a moment: a game
      * started in the same batch line otherwise creates its surfaces against

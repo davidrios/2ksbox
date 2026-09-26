@@ -30,6 +30,10 @@
 #   CDS="a.cue:b.mds"   discs after the disk, colon-separated. .cue/.mds/.ccd
 #                       go through our own cdimage driver (doc 17).
 #   RUN_SECS=n          how long to let it run after the desktop is up (180)
+#   UNTIL="text"        end the run early once COM1 (OUT/com1.log) prints this
+#                       text; RUN_SECS is then the cap. A guest program of
+#                       ours says it is done there (WTRUN's "WTDONE", a
+#                       batch's `echo X > COM1`)
 #   VOODOO_WAIT=n       when EXTRA puts a voodoo2 on the machine: 3dfx's
 #                       driver re-initialises the card at every login from a
 #                       Run entry of its own (`Voodoo2`: rundll32
@@ -342,6 +346,7 @@ MACHINE=(-L "$ROOT/qemu/pc-bios" -machine pc,hpet=off -m 256 -accel "tcg${QEMU_T
          "${DRIVES[@]}" "${VGAARGS[@]}" "${USBARGS[@]}"
          -net none -rtc base=localtime -msg timestamp=on
          -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait
+         -serial file:"$OUT/com1.log"
          "${EXTRA_ARGS[@]}")
 if [ "${PLAYER:-0}" = 1 ]; then
   # This checkout's player and this checkout's wrapper (CLAUDE.md: a build
@@ -442,6 +447,9 @@ r=0; prev=-1; r0=$(date +%s); last_shot=0
 while [ $r -lt "$RUN_SECS" ]; do
   sleep 1; prev=$r; r=$(( $(date +%s) - r0 ))
   gw_dead && { echo "==> the guest exited ${r}s into the run"; break; }
+  if [ -n "${UNTIL:-}" ] && grep -qF "$UNTIL" "$OUT/com1.log" 2>/dev/null; then
+    echo "    t+${r}s $(ts) COM1 said $UNTIL"; break
+  fi
   for spec in $(printf '%s' "${KEYS:-}" | tr ',' ' '); do
     at=${spec%%:*}
     [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ] && { echo "    t+${r}s $(ts) keys ${spec#*:}"; qmp keys "${spec#*:}"; }

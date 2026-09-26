@@ -40,7 +40,7 @@
  * know. The two halves ship together, but a stale copy of one in
  * WINDOWS\SYSTEM happens, and on 9x a wrong pointer is a silent reboot. */
 #define D3DPT_HAL9_MAGIC   0x39335044ul     /* 'DP39' */
-#define D3DPT_HAL9_VERSION 6
+#define D3DPT_HAL9_VERSION 7
 
 #define D3DPT_HAL9_MAX_MODES 32
 
@@ -132,7 +132,7 @@ typedef struct d3dpt_hal9 {
     unsigned long cb_surf[32];          /* DDHAL_DDSURFACECALLBACKS */
     unsigned long cb_pal[8];            /* DDHAL_DDPALETTECALLBACKS */
     unsigned long cb_exebuf[8];         /* DDHAL_DDEXEBUFCALLBACKS */
-    unsigned long fourcc[6];            /* FourCC codes */
+    unsigned long fourcc[15];           /* FourCC codes (DX9 formats since v7) */
     unsigned long modeinfo[D3DPT_HAL9_MAX_MODES * 9]; /* DDHALMODEINFO (32 modes * 9 dwords) */
     unsigned long heap[8];              /* VIDMEM */
 

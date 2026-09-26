@@ -117,6 +117,31 @@ fetch checked by a title, the 2.0-cap flag.
   `conditional_np2_repeat_test` 2 (finding 30), and d3d8's
   `test_scalar_instructions` 1 (finding 31); since those, finding 24
   alone.
+- **Step 5 begun (2026-09-26): Win98 on the DX9 face.** The 9x HAL
+  offers what the NT layer does: `core.dx9`, the 15 FourCCs (shared block
+  v7), `DDCAPS_BLT` in `dwSVBCaps`, lightweight mipmaps sized in
+  `CreateSurface32`, DX9 query responses in `dwErrorOffset`,
+  `GetDriverState` failing, the cube-face mip walk.
+  `tools/win98-winetest.sh` runs the suite on a raw copy of `base98-br`
+  (DirectX 9.0c) in about a minute. First results: d3d9 stateblock 14738 /
+  0 (182 failures on the DX8 face before), d3d8 stateblock 9283 / 0, d3d9
+  visual runs to its end with 1542 failures (XP 618, not yet triaged).
+  Three things found on the way:
+  - **The desktop must be 32 bpp.** On 16 bpp d3d8 refuses the tests'
+    windowed A8R8G8B8 device and every d3d8 file skips; the rig's first
+    Win98 run likely failed this way. The harness runs `SETBPP -save 32`
+    (saved, because a full-screen device restores the registry's mode).
+  - **d3d8 visual and device crash in `3DFX32V2.DLL+0x185fb`**, 3dfx's own
+    Voodoo 2 DirectDraw driver, which `base98-br` has installed: the run
+    booted without the card and d3d8 enumerated its driver anyway. Not
+    ours. A run with `EXTRA="-device voodoo2"` never reached RUN.BAT in
+    5 minutes (the login's wait on 3dfx's helper, unexplained); the other
+    way is an image without 3dfx's driver.
+  - **Full-screen devices fail** `D3DERR_NOTAVAILABLE` (A8R8G8B8 back
+    buffer at 640x480 / 800x600), and d3d9 device crashes in the test
+    after `CreateVolumeTexture` fails (`device.c:11921`, NOTAVAILABLE);
+    also `CreateCubeTexture(3, SYSTEMMEM)` fails and `device.c:11324`
+    ff. "Expected no format". Next to look at.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
   the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
   checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device

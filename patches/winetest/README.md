@@ -5,7 +5,7 @@
 checkout in `build/winetest/<tag>/`, not vendored: the tests are LGPL)
 and applies these in filename order onto restored sources before every
 build. None changes what a test checks. 01 to 03 are behind a macro the
-script defines; **04 and 05 add or remove no line** (the baselines in
+script defines; **04 and 05 add or remove no line** (06 adds lines to `test.h` only, which moves no test file's key) (the baselines in
 `reference/winetest/` are keyed by source line, so a patch that moves
 lines makes every later key read as new). Track M16
 (`docs/tracks/m16-dx9-ddi.md`).
@@ -24,6 +24,7 @@ do not move. It also defines 04's trace macro.
 | `02-d3d8-visual-no-wow64` | `WINETEST_NO_WOW64` fences the WoW64 probe in d3d8 `visual.c`'s `START_TEST` | it reads `TEB64` / `PEB64` and a `TEB` field mingw's headers do not have; a 32-bit XP or 98 guest is never WoW64 | never |
 | `04-trace-create-device` | the tests' `create_device` (d3d8 `device.c` and `visual.c`, d3d9 `device.c`) traces a failed `CreateDevice`: hr, adapter, size, format, windowed, depth format, flags (`WINETEST_TRACE_CREATE_DEVICE` in `w98compat.h`) | the rig's Win98 made no d3d8 device at all, and the tests only say they skipped | when Win98's device creation is understood |
 | `05-d3d9-visual-yuv-no-surface` | d3d9 `visual.c`'s `yuv_color_test` goes on to the next format when `CreateOffscreenPlainSurface` fails (the check still fails) | on the rig's Win98 the surface failed and the test locked the NULL pointer, ending the file at `visual.c:12859` | never |
+| `06-test-h-exception-module` | `include/wine/test.h`'s exception filter also prints the faulting module and offset and the registers | an address alone says nothing on Win98, where system DLLs live in the shared arena (it named `3DFX32V2.DLL`) | never |
 | `03-d3d9-visual-null-device-skip` | `WINETEST_NULL_DEVICE_SKIP` returns from d3d9 `visual.c`'s `test_desktop_window` when the device with a NULL window was not made | XP's runtime refuses a windowed device with neither a focus nor a device window (the documented rule), and the test then calls through the NULL device and ends the file with 17 tests unrun | never |
 
 Regenerate a patch as in `patches/qemu/README.md`: `git diff --no-index
