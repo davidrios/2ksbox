@@ -25,6 +25,28 @@ FORM = b"""<html><head><title>upload</title></head><body>
 <hr><pre>%s</pre></body></html>"""
 
 
+def lan_addresses():
+    """This machine's IPv4 addresses other than loopback. The hostname
+    lookup this used to do answers 127.0.0.1 on a Linux box whose
+    /etc/hosts names it that way, which the rig cannot reach."""
+    ips = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("192.0.2.1", 9))     # no packet is sent; it picks the route's source
+        ips.append(s.getsockname()[0])
+        s.close()
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except OSError:
+        pass
+    return ips or ["<this machine's IP>"]
+
+
 def safe_name(name):
     name = os.path.basename(name.replace("\\", "/")) or "upload"
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
@@ -90,11 +112,9 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     Handler.outdir = outdir
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    try:
-        ip = socket.gethostbyname(socket.gethostname())
-    except socket.error:
-        ip = "<this machine's IP>"
-    print("saving to %s; open http://%s:%d/ on the rig" % (os.path.abspath(outdir), ip, port), flush=True)
+    print("saving to %s; open one of these on the rig:" % os.path.abspath(outdir), flush=True)
+    for ip in lan_addresses():
+        print("  http://%s:%d/" % (ip, port), flush=True)
     srv.serve_forever()
 
 

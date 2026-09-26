@@ -343,4 +343,4 @@ Local only; each works on a raw copy or overlay of an image.
 
 `tools/bmpdiff.py` (frame diffs with masks and budgets),
 `tools/ipc-latency-spike.c` (ADR-010's process-boundary numbers),
-`tools/upload-server.py` (getting files off the rig).
+`tools/upload-server.py [dir] [port]` (getting files off the rig: one plain upload form on port 8000, files into `dir`, nothing overwritten; it prints the LAN address to open).
