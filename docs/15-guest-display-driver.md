@@ -14,7 +14,7 @@ The driver came in three stages, which still name the parts: **M7a** the
 framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
 (a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L, and
 since M16 a DirectX 9 DDI with shader model 3.0). The
-register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v14**
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v15**
 (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
 GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
@@ -1332,8 +1332,24 @@ the 9x layer not yet.
   `SETSTREAMSOURCE2`'s offset is the walker's. `SETRENDERTARGET2`
   (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair.
   Integer / boolean constants and the scissor go to the host.
-  GENERATEMIPSUBLEVELS and SETSTREAMSOURCEFREQ are dropped with a
-  `dx9 token N not walked yet` line (M16 step 3).
+  SETSTREAMSOURCEFREQ is dropped with a `dx9 token N not walked yet`
+  line (M16 step 3).
+- **Mip generation** (v15). The driver claims `D3DCAPS2_CANAUTOGENMIPMAP`
+  and `D3DFORMAT_OP_AUTOGENMIPMAP` on the 16- and 32-bit RGB formats. A
+  `D3DUSAGE_AUTOGENMIPMAP` texture is one video-memory surface with
+  `DDSCAPS3_AUTOGENMIPMAP` (0x800) in `dwCaps3`, and the application
+  sees one level, so the guest keeps level 0 alone and registers it with
+  `D3DPT_VS_AUTOGEN`. The host creates it with `D3DUSAGE_AUTOGENMIPMAP`
+  and makes the levels after each upload of level 0 and before sampling
+  a target drawn into since (DXVK does neither on its own), and at the
+  stream's GENERATEMIPSUBLEVELS, which the walker passes through.
+- **SetLOD and UpdateTexture.** `d3d9.dll` manages a managed texture's
+  LOD itself and sends no SETTEXLOD: it makes the video-memory copy again
+  without the levels above the LOD and TEXBLTs the whole system-memory
+  chain into it, the rectangle in the source's level 0. UpdateTexture
+  from a bigger chain looks the same. So a TEXBLT whose source is larger
+  than its target leaves out the source's top levels until the widths
+  match and scales the rectangle down with them.
 - **Blits.** BLT (StretchRect, and `GetRenderTargetData` into system
   memory), SURFACEBLT (UpdateSurface) and COLORFILL run in the driver on
   the surfaces' memory, like TEXBLT: the record ends before one that

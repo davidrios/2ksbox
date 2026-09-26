@@ -874,6 +874,61 @@ int main(int argc, char **argv) {
         send_dp2(&enc, r, vtx);
     }
 
+    /* --- an autogen texture (v15, M16): 64x64, its left half red and its
+     * right half green in VRAM, level 0 alone; a one-pixel quad point-sampled
+     * with point mips reads the 1x1 level the host made, the two halves
+     * averaged.
+     * The texels rewritten blue, VRAM_DIRTY and GENERATEMIPSUBLEVELS make the
+     * small quad blue. Then the hostile ones: the token on a texture that is
+     * no autogen one and on an unknown handle is skipped, and an autogen
+     * record with two levels or as a cube is refused --- */
+    {
+        enum { GEN_OFF = 0x368000, H_GEN = 330 };
+        auto fill = [&](uint32_t left, uint32_t right) {
+            for (int y = 0; y < TEX; y++)
+                for (int x = 0; x < TEX; x++) memcpy(vram + GEN_OFF + y * TEX * 4 + x * 4, x < TEX / 2 ? &left : &right, 4);
+        };
+        fill(0xffff0000u, 0xff00ff00u);
+        vram_surface(&enc, H_GEN, GEN_OFF, TEX, TEX, TEX * 4, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE | D3DPT_VS_AUTOGEN);
+        std::vector<tlv> small = { { 300, 300, 0.5f, 1, ~0u, 0, 0, 0 }, { 301, 300, 0.5f, 1, ~0u, 0, 1, 0 }, { 300, 301, 0.5f, 1, ~0u, 0, 0, 1 },
+                                   { 300, 301, 0.5f, 1, ~0u, 0, 0, 1 }, { 301, 300, 0.5f, 1, ~0u, 0, 1, 0 }, { 301, 301, 0.5f, 1, ~0u, 0, 1, 1 } };
+        auto draw = [&](Dp2Buf &g) {
+            g.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            g.tss(0, 0, H_GEN); g.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1); g.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+            g.tss(0, 16, 1); g.tss(0, 17, 1); g.tss(0, 18, 2);          /* point sampling, point mips */
+            g.draw8(4, 2, FVF_TLVERTEX, small);
+        };
+        Dp2Buf g1;
+        draw(g1);
+        hr = send_dp2(&enc, g1, vtx);
+        hr |= readback(&enc, H_RT);
+        uint32_t mixed = hr ? 0xdeadbe : px(300, 300);
+        fill(0xff0000ffu, 0xff0000ffu);
+        { d3dpt_handle *hh = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_DIRTY, sizeof *hh, 0); *hh = { H_GEN, 0 }; }
+        Dp2Buf g2;
+        g2.cmd(89, 1); g2.u32(H_GEN); g2.u32(D3DTEXF_LINEAR);
+        draw(g2);
+        hr = send_dp2(&enc, g2, vtx);
+        hr |= readback(&enc, H_RT);
+        uint32_t blue = hr ? 0xdeadbe : px(300, 300);
+        CHECK(near_(mixed, 0x7f7f00, 3) && near_(blue, 0x0000ff, 2),
+              "autogen texture: one pixel of its 64x64 0x%06x (want 0x7f7f00, the host's 1x1 level), after GENERATEMIPSUBLEVELS 0x%06x (want 0x0000ff)", mixed, blue);
+        Dp2Buf g3;
+        g3.cmd(89, 2); g3.u32(H_TEX); g3.u32(D3DTEXF_LINEAR); g3.u32(0x7777); g3.u32(D3DTEXF_POINT);
+        hr = send_dp2(&enc, g3, vtx);
+        CHECK(hr == 0, "GENERATEMIPSUBLEVELS on a plain texture and an unknown handle skipped (0x%08x)", hr);
+        d3dpt_vram_surface *two = (d3dpt_vram_surface *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_SURFACE, sizeof *two, sizeof(d3dpt_u32x2));
+        *two = { H_GEN + 1, GEN_OFF, TEX, TEX, TEX * 4, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE | D3DPT_VS_AUTOGEN, 2 };
+        *(d3dpt_u32x2 *)(two + 1) = { GEN_OFF + TEX * TEX * 4, TEX * 2 };
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "autogen texture with two levels refused (status %u)", enc.last_status);
+        vram_surface(&enc, H_GEN + 1, GEN_OFF, TEX, TEX, TEX * 4, D3DFMT_A8R8G8B8, D3DPT_VS_AUTOGEN);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "autogen without the texture cap refused (status %u)", enc.last_status);
+        Dp2Buf r; r.tss(0, 0, 0); r.tss(0, 18, 1);
+        send_dp2(&enc, r, vtx);
+    }
+
     /* --- the luminance bump maps (BUMPENVMAPLUMINANCE): a uniform bump map
      * (du = dv = 0, L = one half) at stage 0 over a uniform green
      * environment map at stage 1, a zero bump matrix and a luminance scale

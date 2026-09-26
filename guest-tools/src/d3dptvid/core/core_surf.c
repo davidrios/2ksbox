@@ -535,6 +535,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         dbg_hex(p, " pf ", s->pf_flags);
         if (s->samples > 1) dbg_hex(p, " samples ", s->samples);
         if (s->lwmip) dbg_puts(p, " lightweight mips");
+        if (s->autogen) dbg_puts(p, " autogen");
         if (s->caps2 & DDSCAPS2_VOLUME_) {
             dbg_hex(p, " volume caps2 ", s->caps2);
             dbg_hex(p, " depth ", s->depth);
@@ -557,7 +558,10 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         }
         return;
     }
-    if ((caps & D3DPT_VS_TEXTURE) && s->lwmip && !sysmem && !depth) {
+    if ((caps & D3DPT_VS_TEXTURE) && s->autogen && !sysmem && !depth && !(s->caps2 & DDSCAPS2_CUBEMAP_)) {
+        /* an autogen texture (v15): level 0 here, the rest the host's */
+        caps |= D3DPT_VS_AUTOGEN;
+    } else if ((caps & D3DPT_VS_TEXTURE) && s->lwmip && !sysmem && !depth) {
         /* a lightweight mipmap: the levels are the layer's DdCreateSurface
          * layout inside this surface (surf_lw_layout) */
         ULONG off[16], pl[16];

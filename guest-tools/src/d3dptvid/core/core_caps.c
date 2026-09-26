@@ -613,6 +613,10 @@ void d3d_caps_init(d3dpt_core *p)
     if (d3d_caps9.MaxVertexShader30InstructionSlots) {
         d3d_caps9.VertexTextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MAGFPOINT;
     }
+    /* mip generation: the runtime's GenerateMipSubLevels and its own on a
+     * D3DUSAGE_AUTOGENMIPMAP texture's update reach the driver as
+     * GENERATEMIPSUBLEVELS (core_dp2.c) */
+    d3d_caps9.c8.Caps2 |= D3DCAPS2_CANAUTOGENMIPMAP_;
     /* SETSTREAMSOURCE2's offset is the walker's (core_dp2.c); StretchRect
      * from a texture is the driver's BLT on the texture's memory */
     d3d_caps9.DevCaps2 = D3DDEVCAPS2_STREAMOFFSET_ | D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET_ |
@@ -685,6 +689,10 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
             }
             if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_) {
                 f->format.dwRBitMask |= D3DFORMAT_OP_SRGBWRITE_;
+            }
+            if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fcc == D3DFMT_R5G6B5_ || fcc == D3DFMT_X1R5G5B5_ ||
+                fcc == D3DFMT_A1R5G5B5_ || fcc == D3DFMT_A4R4G4B4_) {
+                f->format.dwRBitMask |= D3DFORMAT_OP_AUTOGENMIPMAP_;
             }
             /* the ARGB group, among which StretchRect converts (walk_blt9
              * through a D3DCOLOR); the runtime refuses a StretchRect or a

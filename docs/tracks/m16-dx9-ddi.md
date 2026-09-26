@@ -36,8 +36,10 @@ run in the driver and the event and occlusion queries answer (no wire
 change); D3DFEAT9's frame **and every getter line** match the native run.
 Step 3 has its formats: the DX9 formats (float, 10-bit, 16-bit), sRGB,
 the ARGB group's conversions and the DX9 samplers (doc 15 "The DX9
-formats", "Samplers"). Mip generation, instancing and several render
-targets are still to do (they were step 2's list; they go with step 3).
+formats", "Samplers"), and mip generation (protocol v15, doc 15 "Mip
+generation") with a managed texture's SetLOD. Instancing and several
+render targets are still to do (they were step 2's list; they go with
+step 3).
 
 - **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
   `xp-driver-test.sh d3dgame9`): 600 frames on a hardware-vertex-processing
@@ -54,8 +56,8 @@ targets are still to do (they were step 2's list; they go with step 3).
   ColorFill on a default-pool texture without `D3DUSAGE_RENDERTARGET`
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
-  checks, **0** failures. d3d9 visual **runs to its end**: 201461 checks,
-  803 failures (the crash at `visual.c:25891` was the test's own, a
+  checks, **0** failures. d3d9 visual **runs to its end**: 201654 checks,
+  797 failures (803 before mip generation and finding 17) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
   again from this run, the DX9 face's (107 keys); d3d9 / d3d8 device and
@@ -68,12 +70,12 @@ targets are still to do (they were step 2's list; they go with step 3).
   174: a vs 1.x that writes no `oFog` is not fogged, also on native
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
   build/winetest/wine-11.0` counts the rest per test function. Against it
-  the guest's d3d9 visual has 84 keys worse. The largest: `stream_test`
+  the guest's d3d9 visual has 43 keys worse. The largest: `stream_test`
   51 (instancing), `test_fog` 48, `test_pointsize` 28 (sprite
   coordinates under ps 2.0, a PSIZE element on an unbound stream),
-  `volume_dxtn_test` 24, `test_updatetexture` 17 (finding 2),
+  `volume_dxtn_test` 24, `test_updatetexture` 15 (finding 2),
   `depth_blit_test` 12 (depth StretchRect), `test_default_diffuse` 9,
-  `test_generate_mipmap` 7.
+  `test_generate_mipmap` 7 (finding 18).
 - **Findings from the DX9 face:**
   6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
      with no pixel format (a DXT1 one as its block rows' bytes by block
@@ -154,6 +156,18 @@ targets are still to do (they were step 2's list; they go with step 3).
      (a vs that writes the specular alpha, not `oFog`), and the texture
      transform checks read alpha 0 where 1 is due (DXVK fails the same
      count there).
+  17. *Fixed.* A managed texture's SetLOD sampled its level 0 whatever
+     the LOD. `d3d9.dll` sends no SETTEXLOD: it makes the video-memory
+     copy again with fewer levels and TEXBLTs the full system-memory chain
+     into it, and the driver copied level 0 onto level 0. A TEXBLT now
+     matches the levels by size (doc 15 "SetLOD and UpdateTexture");
+     Wine's `maxmip_test` passes and `test_updatetexture` went from 18
+     failures to 15.
+  18. *Open.* `test_generate_mipmap` samples the sublevels of a
+     render-target texture the application never filled (black on real
+     hardware): the host makes every render-target texture with one level,
+     so level 0 shows through. Several levels of a target texture need a
+     handle per level on the host, as a render-target cube's faces have.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

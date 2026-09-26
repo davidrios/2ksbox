@@ -474,7 +474,7 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
     SURF *dst = surf_slot(b[0], FALSE), *src = surf_slot(b[1], FALSE);
     LONG dx = (LONG)b[2], dy = (LONG)b[3], sl = (LONG)b[4], st = (LONG)b[5], sr = (LONG)b[6], sb = (LONG)b[7];
     SURF_LEVEL slv[16], dlv[16];
-    ULONG lv, levels, f, sfmt, sw, sh;
+    ULONG lv, levels, f, sfmt, sw, sh, skip, bs[8];
 
     /* A system-memory source with no pixel format of its own: d3d9.dll
      * registers its textures' system-memory copies so (a DXT1 one as its
@@ -516,7 +516,33 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
         v[4] = (dst->cube ? 2 : 0) | (src->cube ? 1 : 0); v[5] = (b[4] << 16) | (b[5] & 0xffff); v[6] = (b[6] << 16) | (b[7] & 0xffff);
         blt_log(p, "texblt (dst, src, levels dst/src, cubes, rect):", v, 7);
     }
-    levels = dst->levels < src->levels ? dst->levels : src->levels;
+    /* A source larger than the target: its top levels are left out until
+     * the sizes match, the rectangle (in the source's level 0) scaled down
+     * with them. UpdateTexture from a bigger chain does this, and so does a
+     * managed texture's SetLOD, for which d3d9.dll makes the video-memory
+     * copy again without the levels above the LOD and TEXBLTs the whole
+     * system-memory chain into it. A system-memory copy with no pixel
+     * format has a DXT's width in bytes per block row */
+    {
+        ULONG w0 = src->w;
+        if (src->nopf && fmt_is_dxt(dst->fmt) && fmt_row_bytes(dst->fmt, 4)) {
+            w0 = src->w / fmt_row_bytes(dst->fmt, 4) * 4;
+        }
+        for (skip = 0; skip < 15 && (w0 >> skip) > dst->w && skip + 1 < src->levels; skip++) {
+        }
+    }
+    if (skip) {
+        bs[0] = b[0]; bs[1] = b[1]; bs[2] = b[2]; bs[3] = b[3];
+        bs[4] = b[4] >> skip; bs[5] = b[5] >> skip;
+        bs[6] = (b[6] + (1u << skip) - 1) >> skip; bs[7] = (b[7] + (1u << skip) - 1) >> skip;
+        b = bs;
+        if (!src->nopf) {
+            sw = src->w >> skip ? src->w >> skip : 1;
+            sh = src->h >> skip ? src->h >> skip : 1;
+        }
+        /* (a no-pixel-format source already took the target's size) */
+    }
+    levels = dst->levels < src->levels - skip ? dst->levels : src->levels - skip;
     if (levels > 16) {
         levels = 16;
     }
@@ -533,16 +559,20 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
             return;
         }
         for (f = 0; f < 6; f++) {
-            blt_levels(dst->fmt, src->w, src->h, src->cube->f[f], dst->w, dst->h, dst->cube->f[f], levels, b);
+            blt_levels(dst->fmt, src->w >> skip ? src->w >> skip : 1, src->h >> skip ? src->h >> skip : 1,
+                       src->cube->f[f] + skip, dst->w, dst->h, dst->cube->f[f], levels, b);
         }
     } else {
-        slv[0].mem = src->mem;
-        slv[0].pitch = src->pitch;
         dlv[0].mem = dst->mem;
         dlv[0].pitch = dst->pitch;
-        for (lv = 1; lv < levels; lv++) {
-            slv[lv] = src->lv[lv - 1];
-            dlv[lv] = dst->lv[lv - 1];
+        for (lv = 0; lv < levels; lv++) {
+            if (lv + skip) {
+                slv[lv] = src->lv[lv + skip - 1];
+            } else {
+                slv[0].mem = src->mem;
+                slv[0].pitch = src->pitch;
+            }
+            if (lv) dlv[lv] = dst->lv[lv - 1];
         }
         blt_levels(dst->fmt, sw, sh, slv, dst->w, dst->h, dlv, levels, b);
     }
@@ -1447,9 +1477,9 @@ static BOOL walk(DP2WALK *w)
                 for (i = 0; i < count; i++) walk_query_issue(w, (const ULONG *)(q + i * 8));
             }
             break;
-        case 89: case 95:
-            /* DX9 tokens not walked yet (M16 step 2): mip generation,
-             * instancing. Said once each, dropped */
+        case 95:
+            /* DX9 tokens not walked yet (M16 step 3): instancing. Said
+             * once, dropped */
             if (!w->out && !(w->p->dx9_unwalked & (1u << (op - 64))) && w->p->parse_lines < 64) {
                 w->p->dx9_unwalked |= 1u << (op - 64);
                 w->p->parse_lines++;

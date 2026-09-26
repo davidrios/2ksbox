@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   14u
+#define D3DPT_PROTO_VERSION   15u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -326,6 +326,10 @@ typedef struct d3dpt_vram_surface {
                                           * sample count, 2..16, in these bits (0 = not multisampled). The host renders
                                           * it with that many samples and resolves it into VRAM at every readback */
 #define D3DPT_VS_SAMPLES_MASK   0x1f00u
+#define D3DPT_VS_AUTOGEN        0x80u    /* v15: a texture whose mip levels the host makes (a DX9 D3DUSAGE_AUTOGENMIPMAP
+                                          * one; with D3DPT_VS_TEXTURE, and D3DPT_VS_RENDER_TARGET for a target):
+                                          * levels 1, the guest keeps level 0 alone. The DP2 stream's
+                                          * GENERATEMIPSUBLEVELS (hSurface, D3DTEXTUREFILTERTYPE) makes them again */
 
 typedef struct d3dpt_ctx_create {
     uint32_t handle, ret_off;       /* the context handle the guest chose; ret: d3dpt_ret */

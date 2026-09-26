@@ -79,7 +79,7 @@ enum {
     DP2_CREATEVERTEXSHADERDECL = 71, DP2_DELETEVERTEXSHADERDECL = 72, DP2_SETVERTEXSHADERDECL = 73,
     DP2_CREATEVERTEXSHADERFUNC = 74, DP2_DELETEVERTEXSHADERFUNC = 75, DP2_SETVERTEXSHADERFUNC = 76,
     DP2_SETVERTEXSHADERCONSTI = 77, DP2_SETSCISSORRECT = 79, DP2_SETVERTEXSHADERCONSTB = 83,
-    DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
+    DP2_GENERATEMIPSUBLEVELS = 89, DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
 };
 #define D3DERR_COMMAND_UNPARSED_ 0x88760BB8u
 
@@ -90,6 +90,7 @@ struct VramSurf {
     IDirect3DSurface9 *rt = nullptr;    /* render target or depth stencil */
     bool dirty = true;                  /* VRAM newer than the host object */
     bool rendered = false;              /* host render target newer than VRAM */
+    bool mips_stale = false;            /* v15: an autogen target drawn into since its levels were made */
     /* a render target's VRAM as of the last time the host and VRAM agreed
      * (after an upload or a readback): what differs from it later was
      * written by the guest without a VRAM_DIRTY (GDI on the surface's DC,
@@ -514,8 +515,11 @@ static bool ensure_object(Exec &x, VramSurf &s) {
             hr = x.dev->CreateDepthStencilSurface(s.d.width, s.d.height, (D3DFORMAT)fallback[i], (D3DMULTISAMPLE_TYPE)s.ms, 0, FALSE, &s.rt, nullptr);
         if (FAILED(hr)) x.log("ddi: depth surface %ux%u fmt %u: 0x%08x", s.d.width, s.d.height, s.d.format, (unsigned)hr);
     } else if ((s.d.caps & D3DPT_VS_TEXTURE) && (s.d.caps & D3DPT_VS_RENDER_TARGET)) {
-        /* render-to-texture: a default-pool render-target texture, level 0 is the target */
-        hr = x.dev->CreateTexture(s.d.width, s.d.height, 1, D3DUSAGE_RENDERTARGET, (D3DFORMAT)s.d.format, D3DPOOL_DEFAULT, &s.tex, nullptr);
+        /* render-to-texture: a default-pool render-target texture, level 0
+         * is the target; an autogen one's levels are DXVK's (v15) */
+        bool gen = (s.d.caps & D3DPT_VS_AUTOGEN) != 0;
+        hr = x.dev->CreateTexture(s.d.width, s.d.height, gen ? 0 : 1, D3DUSAGE_RENDERTARGET | (gen ? D3DUSAGE_AUTOGENMIPMAP : 0),
+                                  (D3DFORMAT)s.d.format, D3DPOOL_DEFAULT, &s.tex, nullptr);
         if (SUCCEEDED(hr)) hr = s.tex->GetSurfaceLevel(0, &s.rt);
         if (FAILED(hr)) x.log("ddi: render-target texture %ux%u fmt %u: 0x%08x", s.d.width, s.d.height, s.d.format, (unsigned)hr);
     } else if (s.d.caps & (D3DPT_VS_RENDER_TARGET | D3DPT_VS_PRIMARY)) {
@@ -524,7 +528,11 @@ static bool ensure_object(Exec &x, VramSurf &s) {
         else if (s.ms) x.log("ddi: render target %u: %ux%u fmt %u, %u samples", s.d.handle, s.d.width, s.d.height, s.d.format, s.ms);
     } else {
         s.host_fmt = host_format(s);
-        hr = x.dev->CreateTexture(s.d.width, s.d.height, s.d.levels, 0, s.host_fmt, D3DPOOL_MANAGED, &s.tex, nullptr);
+        /* an autogen texture (v15): DXVK makes the levels below the one the
+         * guest has, again after each upload */
+        bool gen = (s.d.caps & D3DPT_VS_AUTOGEN) != 0;
+        hr = x.dev->CreateTexture(s.d.width, s.d.height, gen ? 0 : s.d.levels, gen ? D3DUSAGE_AUTOGENMIPMAP : 0, s.host_fmt,
+                                  D3DPOOL_MANAGED, &s.tex, nullptr);
         if (FAILED(hr)) x.log("ddi: texture %ux%u fmt %u (host %u) levels %u: 0x%08x", s.d.width, s.d.height, s.d.format, s.host_fmt, s.d.levels, (unsigned)hr);
     }
     return SUCCEEDED(hr);
@@ -616,6 +624,9 @@ static void upload_texture(Exec &x, Ddi &d, VramSurf &s) {
         if (s.cube) s.cube->UnlockRect((D3DCUBEMAP_FACES)f, l);
         else s.tex->UnlockRect(l);
     }
+    /* v15: an autogen texture's levels from the level 0 just written, as
+     * Direct3D 9 makes them on its own (DXVK does not after an upload) */
+    if (s.d.caps & D3DPT_VS_AUTOGEN) s.tex->GenerateMipSubLevels();
     s.dirty = false;
 }
 
@@ -772,6 +783,7 @@ static bool bind_ctx(Exec &x, Ddi &d, Ctx &c, Batch &b, bool for_draw) {
         rt->checked = true;
         if (rt->dirty) upload_target(x, d, *rt);
         rt->rendered = true;
+        if (rt->d.caps & D3DPT_VS_AUTOGEN) rt->mips_stale = true;
     }
     return true;
 }
@@ -1635,6 +1647,8 @@ struct Dp2 {
                 } else upload_texture(x, d, *s);
             }
             t = s->cube ? (IDirect3DBaseTexture9 *)s->cube : s->vol ? (IDirect3DBaseTexture9 *)s->vol : (IDirect3DBaseTexture9 *)s->tex;
+            /* v15: an autogen target drawn into since: its levels again */
+            if (s->mips_stale && s->tex) { s->tex->GenerateMipSubLevels(); s->mips_stale = false; }
         }
         x.dev->SetTexture(stage, t);
         if (sampler_slot(stage) != ~0u) d.stage_tex[sampler_slot(stage)] = t ? handle : 0;
@@ -1646,7 +1660,7 @@ struct Dp2 {
     void pre_draw() {
         for (uint32_t i = 0; i < 21; i++) {
             VramSurf *s = d.stage_tex[i] ? surf(x, d.stage_tex[i]) : nullptr;
-            if (s && (s->dirty || s->faces_dirty || !(s->tex || s->cube || s->vol))) bind_texture(i < 16 ? i : 256 + (i - 16), d.stage_tex[i]);
+            if (s && (s->dirty || s->faces_dirty || s->mips_stale || !(s->tex || s->cube || s->vol))) bind_texture(i < 16 ? i : 256 + (i - 16), d.stage_tex[i]);
         }
         /* last, after the uploads above, which each close the scene: the
          * DX7/DX8 DDI has no BeginScene of its own and Windows' own
@@ -2349,6 +2363,29 @@ struct Dp2 {
                 }
                 break;
             }
+            case DP2_GENERATEMIPSUBLEVELS:
+                /* surface handle, D3DTEXTUREFILTERTYPE: an autogen texture's
+                 * levels from its level 0, uploaded first if the guest wrote
+                 * it (v15, M16); any other surface is left as it is */
+                need = count * 8u;
+                if (need > left) return fail("truncated GENERATEMIPSUBLEVELS");
+                for (uint32_t i = 0; i < count; i++) {
+                    uint32_t h = u32(q + 8 * i), filter = u32(q + 8 * i + 4);
+                    VramSurf *s = surf(x, h);
+                    tr("generate mip sublevels of %u, filter %u%s", h, filter, s && (s->d.caps & D3DPT_VS_AUTOGEN) ? "" : " (not an autogen texture)");
+                    if (!s || !(s->d.caps & D3DPT_VS_AUTOGEN) || !ensure_object(x, *s) || !s->tex) {
+                        if (d.warn_once(0xe0000)) x.log("ddi: dp2: GENERATEMIPSUBLEVELS on surface %u, which is no autogen texture", h);
+                        continue;
+                    }
+                    if (s->dirty) {
+                        if (s->rt) upload_target(x, d, *s);
+                        else upload_texture(x, d, *s);
+                    }
+                    s->tex->SetAutoGenFilterType(filter == D3DTEXF_POINT ? D3DTEXF_POINT : D3DTEXF_LINEAR);
+                    s->tex->GenerateMipSubLevels();
+                    s->mips_stale = false;
+                }
+                break;
             case DP2_SETSCISSORRECT:
                 need = count * 16u;
                 if (need > left) return fail("truncated SETSCISSORRECT");
@@ -2445,6 +2482,9 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
             (cube && (a->width != a->height || !(a->caps & D3DPT_VS_TEXTURE) || (a->caps & (D3DPT_VS_PRIMARY | D3DPT_VS_ZBUFFER)))) ||
             (vol && (cube || !(a->caps & D3DPT_VS_TEXTURE) || (a->caps & (D3DPT_VS_PRIMARY | D3DPT_VS_ZBUFFER | D3DPT_VS_RENDER_TARGET)) ||
                      a->width > D3DPT_VOLUME_MAX_DEPTH || a->height > D3DPT_VOLUME_MAX_DEPTH)) ||
+            /* v15: an autogen texture is a 2D texture of one level the guest keeps */
+            ((a->caps & D3DPT_VS_AUTOGEN) && (cube || vol || levels != 1 || !(a->caps & D3DPT_VS_TEXTURE) ||
+                                              (a->caps & (D3DPT_VS_PRIMARY | D3DPT_VS_ZBUFFER | D3DPT_VS_SAMPLES_MASK)))) ||
             c->size < sizeof(d3dpt_cmd) + sizeof *a + (nlv + (vol ? 1 : 0)) * sizeof(d3dpt_u32x2)) { b.err = D3DPT_ERR_BAD_ARG; return true; }
         if (!row) {
             if (ddi(x).warn_once(0x70000 | a->format)) x.log("ddi: surface format %u (0x%08x) not mirrored", a->format, a->format);
