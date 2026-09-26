@@ -58,7 +58,7 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  625 failures (803 before mip generation, findings 15, 17, 18, 20 to 23,
+  622 failures (803 before mip generation, findings 15, 17, 18, 20 to 23, 25, 26,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
@@ -76,11 +76,10 @@ fetch checked by a title, the 2.0-cap flag.
   the summary counts as a failure since 2026-09-26 (it never appears on
   Windows); before that, `test_fog`, `test_shademode` and
   `pretransformed_varying_test` looked like ours and were DXVK's.
-  Against it the guest's d3d9 visual fails 21 checks beyond DXVK:
+  Against it the guest's d3d9 visual fails 18 checks beyond DXVK:
   `test_fog` 6, `depth_clamp_test` 5 and `z_range_test` 2 (finding 24),
-  `update_surface_test` 2, `test_updatetexture` 2,
-  `conditional_np2_repeat_test` 2, and one each in `test_sysmem_draw`
-  and `test_desktop_window`.
+  `test_updatetexture` 2 (the volume cases),
+  `conditional_np2_repeat_test` 2, and one in `test_desktop_window`.
 - **Where DXVK itself differs.** A guest failure DXVK shares is DXVK's
   behaviour, and a patch in `patches/dxvk/` would be the fix. The clear
   case: fog under a vertex shader that writes no `oFog` (most of
@@ -199,7 +198,8 @@ fetch checked by a title, the 2.0-cap flag.
   21. *Fixed.* UpdateSurface from a system-memory DXT texture was
      refused: such a surface has no pixel format, its width is bytes per
      block row and its height block rows, and the blit checked a texel
-     rectangle against those. Five of `update_surface_test`'s seven pass.
+     rectangle against those. Five of `update_surface_test`'s seven pass;
+     the other two since finding 25.
   22. *Fixed.* StretchRect between two depth buffers copied VRAM that the
      host never writes depth into. The walker sends such a BLT to the host
      (protocol v18), which runs DXVK's StretchRect; `depth_blit_test`
@@ -222,6 +222,17 @@ fetch checked by a title, the 2.0-cap flag.
      clipping off for an XYZRHW draw. It waits for the rig's run (the
      DXVK rule above) and a user decision. `test_fog`'s 6 (VS_MODE_FFP,
      a point missing entirely rather than fogged wrong) may be the same.
+  25. *Fixed.* The mip walk stopped early or wandered. A system-memory
+     DXT chain with no pixel format is sized in block-row bytes by block
+     rows, so its 4x4, 2x2 and 1x1 levels are all one block and the walk,
+     which wanted each level smaller, stopped at five; and a cube root
+     lists its sibling faces as attached MIPMAP surfaces of the same size.
+     `d3dpt_os_next_mip` takes a level no larger than its parent on the
+     same cube face; `update_surface_test` passes.
+  26. *Fixed.* An indexed draw whose declared vertex range runs one past
+     the buffer (`test_sysmem_draw`) was refused; the cards of the era
+     draw it. The walker trims the range to what the buffer holds, and the
+     host still checks every index against it.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
@@ -284,8 +295,13 @@ fetch checked by a title, the 2.0-cap flag.
      exclusive mode: no `DrvGetDirectDrawInfo`, no `DrvEnableDirectDraw`,
      no surface creation reaches the driver, and Reset returns
      `D3DERR_INVALIDCALL` (the test then crashes on a NULL swapchain).
-     Next: what makes dxg enable DirectDraw again on a PDEV that
-     `DrvAssertMode` brought back.
+     The desktop PDEV's DirectDraw is never disabled on the way out
+     (`DrvAssertMode(FALSE)` only), and after it is back dxg does call the
+     driver (`DdSetExclusiveMode` on and off, three times), but the flip
+     chain's creation never reaches `DdCreateSurface` and windowed devices
+     in later processes fail too. Other kept PDEVs brought back the same
+     way (640x480, 1024x768) keep working. Next: dxg's or the runtime's
+     reason, under the QEMU gdbstub (`d3d9.dll`'s Reset path).
 
 ## Why SM3 in one step
 

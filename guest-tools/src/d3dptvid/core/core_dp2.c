@@ -275,6 +275,13 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     if (!nindices) {
         nverts = prim_verts(prim, count);
     }
+    /* an indexed draw whose declared range runs past the buffer (a
+     * NumVertices one too many, Wine's test_sysmem_draw) draws on the
+     * cards of the era: its range is what the buffer has, and the host
+     * checks every index against it */
+    if (nindices && stride && voff < vs->bytes && nverts * stride > vs->bytes - voff && (vs->bytes - voff) / stride) {
+        nverts = (vs->bytes - voff) / stride;
+    }
     vbytes = nverts * stride;
     /* stream 0's stride is bounded as the other streams' are below: the host
      * refuses a draw wider than 1024 and fails the whole stream with it */
@@ -923,6 +930,17 @@ static void walk_blt9(DP2WALK *w, const ULONG *b, BOOL stretch)
     if (!ok || !blt_level(dst, b[11], &dmem, &dpitch, &dw, &dh) ||
         !blt_rect_ok(sr, sw, sh) || !blt_rect_ok(dr, dw, dh) || !sfmt) {
         blt_log(p, stretch ? "blt refused:" : "surfaceblt refused:", b, 13);
+        if (p->dp2_errors < 8) {
+            /* which half: the levels each side has, and the source's size */
+            p->dp2_errors++;
+            dbg_hex(p, "d3dptdisp:   levels src ", src ? src->levels : 0);
+            dbg_hex(p, " dst ", dst ? dst->levels : 0);
+            dbg_hex(p, " src ok ", ok);
+            dbg_hex(p, " sw ", sw);
+            dbg_hex(p, " sh ", sh);
+            dbg_hex(p, " fmt ", sfmt);
+            dbg_puts(p, "\n");
+        }
         return;
     }
     blt_log(p, stretch ? "blt" : "surfaceblt", b, 13);

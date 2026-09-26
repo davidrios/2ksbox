@@ -1598,7 +1598,13 @@ ULONG d3dpt_os_attached_all(void *os, void **out, ULONG max)
     return n;
 }
 
-/* the next mip level attached to s (smaller, DDSCAPS_MIPMAP), or NULL */
+/* the next mip level attached to s (DDSCAPS_MIPMAP, no larger, the same
+ * cube face), or NULL.
+ * lpAttachList holds the surfaces attached to s, never its parent, so a
+ * level of the same size is the next one: a system-memory DXT chain of
+ * d3d9.dll's has no pixel format and is sized in block-row bytes by block
+ * rows, so its 4x4, 2x2 and 1x1 levels are all one block (the callers stop
+ * at 16 levels) */
 void *d3dpt_os_next_mip(void *os)
 {
     PDD_SURFACE_LOCAL s = (PDD_SURFACE_LOCAL)os;
@@ -1606,8 +1612,12 @@ void *d3dpt_os_next_mip(void *os)
 
     for (a = s->lpAttachList; a; a = a->lpLink) {
         PDD_SURFACE_LOCAL t = a->lpAttached;
-        if (t && t->lpGbl && (t->ddsCaps.dwCaps & DDSCAPS_MIPMAP) && t != s &&
-            (t->lpGbl->wWidth < s->lpGbl->wWidth || t->lpGbl->wHeight < s->lpGbl->wHeight)) {
+        /* a cube's root lists its other faces too, of the same size: the
+         * next level is the same face's */
+        ULONG sf = s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_CUBEMAP_ALLFACES_ : 0;
+        ULONG tf = (t && t->lpSurfMore) ? t->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_CUBEMAP_ALLFACES_ : 0;
+        if (t && t->lpGbl && (t->ddsCaps.dwCaps & DDSCAPS_MIPMAP) && t != s && sf == tf &&
+            t->lpGbl->wWidth <= s->lpGbl->wWidth && t->lpGbl->wHeight <= s->lpGbl->wHeight) {
             return t;
         }
     }
