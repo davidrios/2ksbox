@@ -533,6 +533,12 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
         sfmt = dst->fmt;
         sw = dst->w;
         sh = dst->h;
+    } else if (dst && src && src->sysmem && dst->fmt && sfmt != dst->fmt && !fmt_is_dxt(sfmt) && !fmt_is_dxt(dst->fmt) &&
+               fmt_row_bytes(sfmt, 1) && fmt_row_bytes(sfmt, 1) == fmt_row_bytes(dst->fmt, 1)) {
+        /* UpdateTexture wants one format on both sides, so a system-memory
+         * source registered as another of the same texel size (d3d9.dll's
+         * cube faces come as the mode's X8R8G8B8) is the target's */
+        sfmt = dst->fmt;
     }
     if (!dst || !src || !dst->fmt || dst->fmt != sfmt || !src->sysmem || dst->buffer || src->buffer) {
         if (p->dp2_errors < 8) {
@@ -592,7 +598,19 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
     if (levels > 16) {
         levels = 16;
     }
-    if (dst->cube || src->cube) {
+    if (dst->cube && !src->cube) {
+        /* a cube's root is also its +X face: d3d9.dll updates a cube face
+         * by face from system-memory faces it registers as plain surfaces */
+        for (lv = 0; lv < levels; lv++) {
+            if (lv + skip) {
+                slv[lv] = src->lv[lv + skip - 1];
+            } else {
+                slv[0].mem = src->mem;
+                slv[0].pitch = src->pitch;
+            }
+        }
+        blt_levels(dst->fmt, sw, sh, slv, dst->w, dst->h, dst->cube->f[0], levels, b);
+    } else if (dst->cube || src->cube) {
         /* a cube's root names the whole cube: the rectangle on every face
          * (a face's own handle is an ordinary entry, the path below) */
         if (!dst->cube || !src->cube) {

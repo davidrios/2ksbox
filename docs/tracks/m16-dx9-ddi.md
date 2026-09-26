@@ -58,7 +58,7 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  633 failures (803 before mip generation, findings 15, 17, 18, 20 to 22,
+  626 failures (803 before mip generation, findings 15, 17, 18, 20 to 23,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
@@ -73,8 +73,7 @@ fetch checked by a title, the 2.0-cap flag.
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
   build/winetest/wine-11.0` counts the rest per test function. Against it
   the guest's d3d9 visual has 19 keys worse. The largest: `test_fog` 48,
-  `test_updatetexture` 9
-  (finding 2).
+  `depth_clamp_test` 5, `pretransformed_varying_test` 4.
 - **Where DXVK itself differs.** A guest failure DXVK shares is DXVK's
   behaviour, and a patch in `patches/dxvk/` would be the fix. The clear
   case: fog under a vertex shader that writes no `oFog` (most of
@@ -200,6 +199,13 @@ fetch checked by a title, the 2.0-cap flag.
      host never writes depth into. The walker sends such a BLT to the host
      (protocol v18), which runs DXVK's StretchRect; `depth_blit_test`
      passes.
+  23. *Fixed.* UpdateTexture into a cube: `d3d9.dll` registers a
+     system-memory cube's faces as plain surfaces in the mode's X8R8G8B8
+     and updates face by face, the +X face under the cube's root handle.
+     The driver refused both (format, and a cube root from a plain
+     source). A system-memory source of the target's texel size is the
+     target's format now, and a plain source into a cube root is its +X
+     face. `test_updatetexture` 2 failures (9).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
