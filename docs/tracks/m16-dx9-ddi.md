@@ -173,8 +173,11 @@ fetch checked by a title, the 2.0-cap flag.
   visual's excess over XP is finding 35 (`test_fog` 280,
   `test_texture_transform_flags` 644, both reading float targets back).
   Saved as the Win98 driver baseline, `reference/winetest/w98-driver.txt`
-  (165 keys, only ever shrinks; `WT_BASELINE=w98-driver.txt` checks a
-  run against it). `D9CTEST.EXE` (new) creates the resources the tests found failing,
+  (165 keys, only ever shrinks; `WT_BASELINE=w98-driver` checks a run
+  against it). `scripts/test.sh guest` / `all` run both on Win98 now
+  (`win98-dx9`, `win98-winetest`, after the XP stage, ~5 min under TCG):
+  the scenes, probes and DDTEST in one boot (`tools/win98-dx9-test.sh`),
+  then the suites against that baseline. `D9CTEST.EXE` (new) creates the resources the tests found failing,
   one line each; `-readback` runs the float readbacks alone,
   `-modechange` the focus-loss case.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,

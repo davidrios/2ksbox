@@ -95,4 +95,8 @@ mcopy -n -i "$M" '::/2KSBOX/WINETEST/*' "$OUT/winetest/" 2>/dev/null || true
 echo "=== COM1"; sed 's/\r$//; s/^/   /' "$OUT/com1.log" 2>/dev/null || true
 # a baseline by name (reference/winetest/<f>.txt) or by path
 BL="${WT_BASELINE:-}"; [ -n "$BL" ] && [ ! -f "$BL" ] && BL="$ROOT/reference/winetest/${BL%.txt}.txt"
-python3 "$ROOT/tools/winetest-summary.py" "$OUT/winetest" ${WT_SAVE:+--save "$WT_SAVE"} ${BL:+--baseline "$BL"} || true
+# with a baseline, its verdict is the exit status (scripts/test.sh guest)
+rc=0
+python3 "$ROOT/tools/winetest-summary.py" "$OUT/winetest" ${WT_SAVE:+--save "$WT_SAVE"} ${BL:+--baseline "$BL"} || rc=$?
+[ -n "$BL" ] && exit $rc
+exit 0

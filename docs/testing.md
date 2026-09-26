@@ -27,8 +27,8 @@ its design doc; the build that produces what the tools run is in
 
 ```sh
 scripts/test.sh            # host stage (~30 s): everything without a guest
-scripts/test.sh guest      # the DOS batteries and the XP guest
-scripts/test.sh all        # both (~2 min)
+scripts/test.sh guest      # the DOS batteries, the XP guest, then Win98 on the driver
+scripts/test.sh all        # both (~2 min, ~7 min with the Win98 checks)
 ```
 
 It expects `build/qemu`, `build/dxvk` and `build/d3dpt/libd3dpt_exec.*`
@@ -44,7 +44,9 @@ days behind a green `host`.
 Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 `guest-tools/out/guest-tools-3dfx-*.iso`), `TEST_ACCEL` (`kvm|tcg`),
 `D3D_GOLDEN_BUDGET` (1200), `TEST_BOOT_TIMEOUT` (300 s), `TEST_KEEP=1`
-(leave XP running on failure, QMP socket printed), `WIN98_PAD_MACHINE`.
+(leave XP running on failure, QMP socket printed), `WIN98_PAD_MACHINE`,
+`WIN98_DX9_MACHINE` (`base98-br`: the launcher machine the Win98 checks
+copy).
 
 ### Host-stage checks
 
@@ -111,6 +113,13 @@ driven through the Run dialog over QMP:
 | `guest-F9=native`, `guest-F9-log=native` | D3DFEAT9 byte-identical to native, same query/getter lines |
 | `guest-cdimage`, `guest-dirdisc` | `tools/xp-cdimage-test.sh` on a converted cue and on the same tree as a folder |
 | `pad-guest-xp`, `pad-guest-98` | `tools/pad-guest-test.py xp` / `win98` (own boots) |
+| `win98-dx9` | Win98 on the display driver through Microsoft's runtimes (M16 step 5), one boot under TCG of `tools/win98-dx9-test.sh`: D3DGAME9/8 pixel-identical to the native frame outside the HUD, D3DFEAT9 byte-identical with its lines (the A16B16G16R16F readback expected to fail, finding 35), the DX8 probes, SHTEST, CKTEST, EBTEST, DDTEST's sysmem blits; one line each in the log |
+| `win98-winetest` | Wine's suites on Win98 (`tools/win98-winetest.sh`) against `reference/winetest/w98-driver.txt` |
+
+The two Win98 checks run after the XP stage, on a raw copy of
+`WIN98_DX9_MACHINE` kept in `build/test/w98.raw` (never the machine's
+disk; delete the copy, or `FRESH=1`, after a run was killed), and skip
+where that machine does not exist. About 5 minutes together.
 
 ## Driving a guest
 
@@ -244,7 +253,8 @@ another.
 | `DRIVER\D9CTEST.EXE [-readback]` | the resources d3d9.dll creates on the driver (M16 step 5), one line and HRESULT each: textures of 10x10 and 16x16 with 0 to 2 levels, cubes of edge 3 and 4, volumes (Wine's 2x4x8 of 4 levels), per pool; a render target cleared and read back through `GetRenderTargetData` in A8R8G8B8 / A16B16G16R16F / A32B32G32R32F (texels printed); full-screen devices last. `C:\2KSBOX\D9CTEST.LOG`. On Win98: `STAGE=.../D9CTEST.EXE PULL='2KSBOX\D9CTEST.LOG' GUEST_CMD='C:\D9CTEST.EXE' tools/win98-game-test.sh <image> d9c` (with `SETBPP -save 32` first). `-readback` alone keeps the driver's per-process surface log on the readback; `-modechange` replays Wine's `test_wndproc` in short (a mode change under a full-screen device, focus dropped, then full-screen devices again, one with a separate device window) |
 | DX8 probes: `CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST MGDTEST` | one program per D3D8 feature (`guest-tools/src/d3dptvid/*.c` over `d3d8probe.h`), every draw read back. A feature the caps lack ends `(not offered: <why>)`, so the same program becomes the check the day it is offered. Verdict PASS / NOT OFFERED / FAIL; no log is a FAIL |
 | `guest-tools/build-winetests.sh` + `tools/xp-driver-test.sh <image> winetest` | Wine's d3d8 / d3d9 conformance tests (M16, the pinned tag in the script, `patches/winetest/`) through XP's own runtime on our driver. `WTRUN.EXE` runs each test file in its own process under a time cap; `tools/winetest-summary.py` gives a table per file and, against a baseline in `reference/winetest/`, exits 1 on any check failing more than there (`WT_BASELINE=`, `WT_SAVE=`, `WT_TESTS="d3d9:visual"`, `WT_CAP=`). The build's `RUNALL.BAT` runs the same set on the rig. A file that crashes stops there, so its later checks are not counted. `--by-function build/winetest/wine-<tag>` counts the worse keys per test function, and `--baseline rig-xp.txt --split dxvk-wine.txt` marks how many of them DXVK's own run fails too (`rig-xp.txt` is the oracle; `rig-98.txt` is partial, `win11-rtx3090.txt` a modern card for contrast; each one's raw output is in `reference/winetest/logs/<name>/`) |
-| `tools/win98-winetest.sh [image]` | the same tests through Win98's DirectX 9.0c runtime on the 9x driver (M16 step 5), on a raw copy of `base98-br` by default: stages them in `C:\WT`, switches the desktop to 32 bpp for the session (`SETBPP`; on 16 bpp d3d8 refuses the tests' windowed A8R8G8B8 device and every d3d8 file skips), runs each file under `WTRUN` and stops when COM1 says `WTALL` (`tools/win98-game-test.sh`'s `UNTIL=`). Without a `voodoo2` in `EXTRA` it renames 3dfx's `3DFX32V2.DLL` to `.OFF` in the raw copy (`base98-br` has 3dfx's driver installed, and d3d8.dll loaded it with no card and crashed in it). `WT_TESTS=`, `WT_CAP=`, `WT_BASELINE=` (`reference/winetest/w98-driver.txt` is the driver's Win98 baseline), `WT_SAVE=`, `WT_BPP=` (0: leave the depth), `FRESH=1` |
+| `tools/win98-dx9-test.sh [image]` | the `win98-dx9` check alone: the scenes, the probes and DDTEST in one Win98 boot, PASS / FAIL per line, exit 1 on any failure (`RAW=`, `OUT=`, `FRESH=1`, `DDFLAGS=`; `DDFLAGS=0x40000000` is a control that must fail D3DFEAT9) |
+| `tools/win98-winetest.sh [image]` | the same tests through Win98's DirectX 9.0c runtime on the 9x driver (M16 step 5), on a raw copy of `base98-br` by default: stages them in `C:\WT`, switches the desktop to 32 bpp for the session (`SETBPP`; on 16 bpp d3d8 refuses the tests' windowed A8R8G8B8 device and every d3d8 file skips), runs each file under `WTRUN` and stops when COM1 says `WTALL` (`tools/win98-game-test.sh`'s `UNTIL=`). Without a `voodoo2` in `EXTRA` it renames 3dfx's `3DFX32V2.DLL` to `.OFF` in the raw copy (`base98-br` has 3dfx's driver installed, and d3d8.dll loaded it with no card and crashed in it). `WT_TESTS=`, `WT_CAP=`, `WT_BASELINE=` (a name in `reference/winetest/` or a path; `w98-driver` is the driver's Win98 baseline, and with one the script exits 1 on a worse key), `WT_SAVE=`, `WT_BPP=` (0: leave the depth), `FRESH=1` |
 | `tools/winetest-dxvk.sh` | the same test EXEs under the host's Wine on DXVK's own 32-bit `d3d9.dll` / `d3d8.dll` (built into `build/dxvk-win32`), in a headless sway when sway is installed: what DXVK itself fails, `reference/winetest/dxvk-wine.txt` (`WT_SAVE=`, `WT_TESTS=`). A guest run compared against it (`winetest-summary.py --baseline`) leaves the failures that are the driver's or the executor's (M16) |
 | `D3DPT_DP2_TRACE=<flag file>` | QEMU env: one whole DP2 frame per `touch`: states, tokens, first vertices, bound textures' texel means, every level and the target after each draw as `.ppm` (count pixels per `draw-<n>.ppm` to name the draw that paints an artefact). `D3DPT_DDI_REREAD=1` tells a stale host texture from VRAM never written, `D3DPT_DDI_NOFOG=1` rules fog out |
 | `tools/xp-game-test.sh <image> "<dir>" <exe> [name]` | a game on the M4 DLL device headless: `CDS=a.iso:b.iso`, `FRESH_DLLS=1`, `TRACE=1`, `KEYS=8:ret,25:esc`, `SHOTS=n` (message boxes you cannot otherwise see), `DUMP_EVERY=n`, `DRW_AFTER=s` (Dr. Watson: every thread's stack; `stacks <log>` prints them), `PAGEHEAP=1`, `CPU=pentium3`, `QEMU_EXTRA=`, `NO_ATTACH=1` (a run that expects no D3D device) |

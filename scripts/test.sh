@@ -2864,12 +2864,47 @@ guest_stage() {
     skip pad-guest-xp "needs target/release/player and a display (it runs the player)"
     skip pad-guest-98 "needs target/release/player and a display (it runs the player)"
   fi
+
+}
+
+win98_checks() { # the Win98 driver's Direct3D (M16 step 5): its own boots, whatever the XP stage had
+  # Win98 on the display driver (M16 step 5), after the XP stage: Microsoft's
+  # d3d9.dll / d3d8.dll through the 9x HAL. `win98-dx9` is one boot of the
+  # reference scenes against the native frames above, the DX8 probes and
+  # DDTEST's sysmem blits (tools/win98-dx9-test.sh); `win98-winetest` is
+  # Wine's suites against the driver's Win98 baseline, which only shrinks
+  # (reference/winetest/w98-driver.txt). Both on a raw copy of a launcher
+  # machine (base98-br: DirectX 9.0c, 3dfx's driver installed), made once
+  # and kept; TCG, about 5 minutes together. Skipped where the machine
+  # does not exist.
+  log "win98 checks"
+  if [ "$OS" != Linux ] || ! command -v mcopy >/dev/null || [ ! -x build/qemu/qemu-system-i386 ] || [ ! -f "$D3DPT_EXEC_LIB" ] \
+     || [ ! -f "$OUT/g9-native.bmp" ]; then
+    skip win98-dx9 "Linux, mtools, build/qemu, the executor and the host stage's native frames first"
+    skip win98-winetest "the same"
+    return
+  fi
+  local m98="${WIN98_DX9_MACHINE:-base98-br}"
+  local d98="$HOME/.local/share/2ksbox/machines/$m98/disk.qcow2"
+  if [ -f "$d98" ] && [ -f build/winetest/out/wtrun.exe ]; then
+    run_check win98-dx9 win98-dx9.log env RAW="$OUT/w98.raw" tools/win98-dx9-test.sh "$d98" || true
+    grep "^  [PF]A[SI][SL]" "$OUT/win98-dx9.log" | sed 's/^/     /'
+    run_check win98-winetest win98-winetest.log env RAW="$OUT/w98.raw" OUT="$OUT/w98wt" WT_BASELINE=w98-driver \
+      tools/win98-winetest.sh "$d98" || true
+    tail -9 "$OUT/win98-winetest.log" | sed 's/^/     /'
+  elif [ -f "$d98" ]; then
+    skip win98-dx9 "no build/winetest/out (guest-tools/build-winetests.sh)"
+    skip win98-winetest "no build/winetest/out (guest-tools/build-winetests.sh)"
+  else
+    skip win98-dx9 "no launcher machine '$m98' (WIN98_DX9_MACHINE)"
+    skip win98-winetest "no launcher machine '$m98' (WIN98_DX9_MACHINE)"
+  fi
 }
 
 case "$STAGE" in
   host) host_stage;;
-  guest) guest_stage;;
-  all) host_stage; guest_stage;;
+  guest) guest_stage; win98_checks;;
+  all) host_stage; guest_stage; win98_checks;;
   *) echo "usage: $0 [host|guest|all]"; exit 2;;
 esac
 
