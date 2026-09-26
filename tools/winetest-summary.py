@@ -150,13 +150,16 @@ def main():
                  if n > base.get((s, k), 0)]
         better = sum(1 for sk in base if sk not in keys)
         other = read_baseline(a.split) if a.split else collections.Counter()
-        tag = f" ({os.path.basename(a.split)} too)" if a.split else ""
+        oname = os.path.basename(a.split) if a.split else ""
+        # of a key's failures beyond the baseline, how many --split's run has too
+        shared = lambda s, k, n, b: max(0, min(n, other.get((s, k), 0)) - b)
         for s, k, n, b in worse:
+            o = shared(s, k, n, b)
             print(f"WORSE {s} {k}: {n} here, {b} in the baseline" +
-                  (tag if other.get((s, k), 0) >= n else ""))
+                  (f" ({o} in {oname})" if o else ""))
         if a.by_function:
             # per test function: the checks worse than the baseline, and of
-            # those the ones --split's run fails as often
+            # those the ones --split's run fails too
             per = collections.OrderedDict()
             fn = {}
             for s, k, n, b in worse:
@@ -167,10 +170,9 @@ def main():
                 name = (s, fn[s](int(k.split(":")[1])))
                 t = per.setdefault(name, [0, 0])
                 t[0] += n - b
-                if other.get((s, k), 0) >= n:
-                    t[1] += n - b
+                t[1] += shared(s, k, n, b)
             for (s, name), (n, o) in per.items():
-                print(f"{n:6} {s} {name}" + (f"  ({o} of them {os.path.basename(a.split)}'s)"
+                print(f"{n:6} {s} {name}" + (f"  ({o} of them {oname}'s)"
                                              if a.split and o else ""))
         print(f"{len(worse)} keys worse than {os.path.basename(a.baseline)}, "
               f"{better} of its keys pass here")

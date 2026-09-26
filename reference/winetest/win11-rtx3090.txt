@@ -1,0 +1,22 @@
+# tools/winetest-summary.py WINETEST_11_rtx3090 --save; one failing check per line
+d3d8_test_device crash 1
+d3d8_test_device device.c:3131 1
+d3d8_test_device device.c:3133 1
+d3d8_test_visual visual.c:5541 1
+d3d8_test_visual visual.c:5837 1
+d3d9_test_d3d9ex d3d9ex.c:1093 1
+d3d9_test_d3d9ex d3d9ex.c:1094 1
+d3d9_test_d3d9ex d3d9ex.c:1170 1
+d3d9_test_d3d9ex d3d9ex.c:1173 1
+d3d9_test_d3d9ex d3d9ex.c:1174 1
+d3d9_test_d3d9ex d3d9ex.c:1672 1
+d3d9_test_d3d9ex d3d9ex.c:1673 1
+d3d9_test_d3d9ex d3d9ex.c:687 1
+d3d9_test_d3d9ex d3d9ex.c:705 1
+d3d9_test_visual visual.c:12885 27
+d3d9_test_visual visual.c:1630 1
+d3d9_test_visual visual.c:1633 1
+d3d9_test_visual visual.c:19144 1
+d3d9_test_visual visual.c:27752 6
+d3d9_test_visual visual.c:28488 32
+d3d9_test_visual visual.c:28877 1

@@ -107,6 +107,16 @@ fetch checked by a title, the 2.0-cap flag.
   and in d3d8 `test_wndproc` 1, `test_mode_change` 1 and
   `test_scalar_instructions` 1 (d3d8 visual and both device files crash
   early on the guest, so their count is partial).
+- **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
+  the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
+  checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device
+  crashes at `device.c:9979`, as it does on the guest. Not the oracle
+  (Windows 11's runtime is not XP's), but it is the card Wine's tests are
+  written against. Against it the guest also fails `test_fog` 6,
+  `test_refcount` 16 and `test_desktop_window` 1, which the rig fails
+  too, and three more DXVK-shared groups the rig fails:
+  `test_texture_transform_flags` 131, `fog_test` 2,
+  `test_mvp_software_vertex_shaders` 1.
 - **Findings from the DX9 face:**
   6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
      with no pixel format (a DXT1 one as its block rows' bytes by block
