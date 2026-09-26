@@ -91,6 +91,22 @@ fetch checked by a title, the 2.0-cap flag.
   DXVK disagree and a title could meet it, so the rig's baselines come
   first. Part of DXVK's 1291 under Wine is Wine's (windows, GDI), not
   DXVK's.
+- **Against the rig's XP run** (2026-09-26, `--baseline rig-xp.txt
+  --split dxvk-wine.txt`): the rig fails 1448 of d3d9 visual's checks
+  (a 2005 card), and `test_fog`'s 6 and `test_desktop_window`'s 1 are
+  among them. The guest fails 53 keys the rig passes. DXVK's own run
+  fails the same checks in `fog_with_shader_test` (174, and d3d8's
+  119), `test_pointsize` 27, `test_shademode` 10, `fog_special_test` 8,
+  `test_table_fog_zw` 8, `pretransformed_varying_test` 5, `test_ffp_w`
+  4, `test_format_conversion` 2, `fp_special_test` 1 and
+  `test_negative_fixedfunction_fog` 1: under the rule above these are
+  the candidates for a patch in `patches/dxvk/`, each one a user
+  decision. The rest is ours: `depth_clamp_test` 5 and `z_range_test` 2
+  (finding 24, in d3d8 too), `test_reset` 8 (finding 5),
+  `test_updatetexture` 2 (volumes), `conditional_np2_repeat_test` 2,
+  and in d3d8 `test_wndproc` 1, `test_mode_change` 1 and
+  `test_scalar_instructions` 1 (d3d8 visual and both device files crash
+  early on the guest, so their count is partial).
 - **Findings from the DX9 face:**
   6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
      with no pixel format (a DXT1 one as its block rows' bytes by block
@@ -219,9 +235,9 @@ fetch checked by a title, the 2.0-cap flag.
      DXVK claims the cap itself and always clips depth
      (`BindRasterizerState`: `setDepthClip(true)`). The fix is a patch
      making depth clip follow `D3DRS_CLIPPING`, and the executor turning
-     clipping off for an XYZRHW draw. It waits for the rig's run (the
-     DXVK rule above) and a user decision. `test_fog`'s 6 (VS_MODE_FFP,
-     a point missing entirely rather than fogged wrong) may be the same.
+     clipping off for an XYZRHW draw. The rig passes all seven, so it
+     meets the DXVK rule above; it waits for a user decision. `test_fog`'s
+     6 fail on the rig too and are not ours to fix.
   25. *Fixed.* The mip walk stopped early or wandered. A system-memory
      DXT chain with no pixel format is sized in block-row bytes by block
      rows, so its 4x4, 2x2 and 1x1 levels are all one block and the walk,
@@ -365,7 +381,16 @@ track builds.
   `RUNALL.BAT` from inside it under XP and under Win98 (DirectX 9.0c),
   bring back `C:\2KSBOX\WINETEST`, and save each with
   `tools/winetest-summary.py <dir> --save reference/winetest/rig-xp.txt`
-  (`rig-98.txt`).
+  (`rig-98.txt`). Both saved 2026-09-26. XP's is complete: every file ran
+  to its end (d3d9 visual 210849 checks, 1448 failures; device 161316 /
+  21; d3d8 visual 142874 / 44; device 57409 / 10). **Win98's is
+  partial**: the test EXEs call `EnumDisplaySettingsW` and
+  `GetMonitorInfoW`, which Win98 does not implement, so d3d8's files and
+  d3d9 device fail device creation and skip nearly everything, and d3d9
+  visual crashes at `visual.c:12859` (a failed CreateOffscreenPlainSurface,
+  then the test's own NULL dereference). Only d3d9 stateblock (14738, 0)
+  is whole. A useful Win98 oracle needs a `patches/winetest/` patch for
+  the W calls (or unicows) and a guard at 12859, before step 5.
 - **DXVK's own run** says which failures are DXVK's: `tools/winetest-dxvk.sh`
   runs the same EXEs on the host's Wine with DXVK's `d3d9.dll`, and
   `reference/winetest/dxvk-wine.txt` is its baseline. A guest failure

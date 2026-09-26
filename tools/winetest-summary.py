@@ -6,6 +6,9 @@
     tools/winetest-summary.py <dir> --baseline <file>    exit 1 on anything worse
     ... --baseline <file> --by-function <src>             the worse keys counted per test
                                                          function of the sources in <src>
+    ... --baseline <file> --split <other> [--by-function <src>]
+                                                         the worse keys in two halves: the
+                                                         ones <other> fails too, the rest
 
 <dir> holds what WTRUN.EXE wrote (guest-tools/src/winetest/wtrun.c):
 <exe>_<test>.txt per test file and WTRUN.LOG. A baseline
@@ -22,7 +25,11 @@ that passes on real hardware. reference/winetest/dxvk-wine.txt is DXVK's
 own (tools/winetest-dxvk.sh): a key worse than there is the driver's or
 the executor's, the rest DXVK's. With --by-function <src> (the Wine tag's
 checkout, build/winetest/wine-<tag>) the worse keys are also counted per
-test function, which is where one starts reading.
+test function, which is where one starts reading. The triage against the
+rig is --baseline rig-xp.txt --split dxvk-wine.txt: a key worse than the
+rig that DXVK's run fails as often is DXVK's behaviour (a patch in
+patches/dxvk/, under the rule in docs/tracks/m16-dx9-ddi.md), the rest is
+the driver's or the executor's.
 """
 import argparse
 import bisect
@@ -31,7 +38,8 @@ import os
 import re
 import sys
 
-SUMMARY = re.compile(r"^[0-9a-f]{4}:(\w+):.*?(\d+) tests executed \((\d+) marked as todo, "
+# the prefix is the process id: 4 hex digits on NT, 8 on Win98 (fffd333d)
+SUMMARY = re.compile(r"^[0-9a-f]{4,8}:(\w+):.*?(\d+) tests executed \((\d+) marked as todo, "
                      r"(\d+) as flaky, (\d+) failures?\), (\d+) skipped")
 # "Test marked todo" is a check that failed where Wine expects it to
 # (todo_wine, active only on Wine): a failure all the same for a run on the
@@ -117,6 +125,7 @@ def main():
     ap.add_argument("--save", metavar="BASELINE")
     ap.add_argument("--baseline", metavar="FILE")
     ap.add_argument("--by-function", metavar="SRC")
+    ap.add_argument("--split", metavar="OTHER")
     a = ap.parse_args()
 
     files, keys = read_run(a.dir)
@@ -140,9 +149,14 @@ def main():
         worse = [(s, k, n, base.get((s, k), 0)) for (s, k), n in sorted(keys.items())
                  if n > base.get((s, k), 0)]
         better = sum(1 for sk in base if sk not in keys)
+        other = read_baseline(a.split) if a.split else collections.Counter()
+        tag = f" ({os.path.basename(a.split)} too)" if a.split else ""
         for s, k, n, b in worse:
-            print(f"WORSE {s} {k}: {n} here, {b} in the baseline")
+            print(f"WORSE {s} {k}: {n} here, {b} in the baseline" +
+                  (tag if other.get((s, k), 0) >= n else ""))
         if a.by_function:
+            # per test function: the checks worse than the baseline, and of
+            # those the ones --split's run fails as often
             per = collections.OrderedDict()
             fn = {}
             for s, k, n, b in worse:
@@ -151,9 +165,13 @@ def main():
                 if s not in fn:
                     fn[s] = functions(a.by_function, s)
                 name = (s, fn[s](int(k.split(":")[1])))
-                per[name] = per.get(name, 0) + n - b
-            for (s, name), n in per.items():
-                print(f"{n:6} {s} {name}")
+                t = per.setdefault(name, [0, 0])
+                t[0] += n - b
+                if other.get((s, k), 0) >= n:
+                    t[1] += n - b
+            for (s, name), (n, o) in per.items():
+                print(f"{n:6} {s} {name}" + (f"  ({o} of them {os.path.basename(a.split)}'s)"
+                                             if a.split and o else ""))
         print(f"{len(worse)} keys worse than {os.path.basename(a.baseline)}, "
               f"{better} of its keys pass here")
         return 1 if worse else 0
