@@ -138,17 +138,22 @@ fetch checked by a title, the 2.0-cap flag.
   - **Full-screen devices fail** `D3DERR_NOTAVAILABLE` inside the tests
     (A8R8G8B8 back buffer, D24S8, 640x480 / 800x600, `device.c:234` and
     `305`), while `D9CTEST.EXE`'s full-screen devices of the same formats
-    are made. ddraw says why (gdbstub on its error mapper during
-    `d3d9:device`): `DDERR_HWNDALREADYSET` from the cooperative-level
-    call, from the second case of `test_wndproc` on. The first case's
-    device is lost and never comes back (Reset `DEVICELOST` at
-    `device.c:4303` / `4312`), and an exclusive-mode window stays set in
-    that process. `D9CTEST -modechange` replays the case (a mode change
-    under the device, focus dropped, release, full-screen devices again,
-    also with a device window other than the focus window) and every
-    step answers as on Windows, so this is the test process's state on
-    Win98 (likely a background process that cannot take the foreground
-    back), for the rig's run to confirm. `test_swapchain_parameters`' 12
+    are made. Found (2026-09-26, `D9CTEST -modechange`, which replays the
+    first `test_wndproc` case with the test's message pumping, and runs on
+    XP too): with the device window apart from the focus window, a mode
+    change and focus handed to the desktop, **Win98's foreground lock**
+    refuses the test's `SetForegroundWindow` back to the focus window (XP
+    allows it). With the lock lifted (`-nolock`,
+    `SPI_SETFOREGROUNDLOCKTIMEOUT` 0) the window is foreground again, but
+    Win98's runtime still reports `DEVICELOST` where XP's says
+    `DEVICENOTRESET` and resets. Every mode switch reaches the driver as
+    asked, so the lost device is above it, in Win98's DirectDraw and
+    USER (the tests never see `WM_ACTIVATEAPP` there either). That
+    process then keeps DirectDraw's "focus window set" bit, and every
+    later full-screen create fails `DDERR_HWNDALREADYSET`: ddraw's
+    `SetCooperativeLevel` with `DDSCL_SETFOCUSWINDOW` refuses whenever
+    the bit is on (`0xbaad2a6d`), whatever the window. The rig's run
+    should show the same. `test_swapchain_parameters`' 12
     in each runtime are its full-screen cases (tests 4 to 6, 13, 14) and
     the same state. `test_getdc`'s 61 (d3d9) are GDI's answers on Win98
     (a top-down DIB's height of -64, the resolution fields, no DC for the
@@ -179,7 +184,8 @@ fetch checked by a title, the 2.0-cap flag.
   the scenes, probes and DDTEST in one boot (`tools/win98-dx9-test.sh`),
   then the suites against that baseline. `D9CTEST.EXE` (new) creates the resources the tests found failing,
   one line each; `-readback` runs the float readbacks alone,
-  `-modechange` the focus-loss case.
+  `-modechange` the focus-loss case (`-modechange -nolock` with Win98's
+  foreground lock off).
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
   the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
   checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device

@@ -12,8 +12,11 @@
  *   a full-screen device at 640x480 (last, since it changes the mode).
  * `-readback` runs the readback part alone (the driver logs only the first
  * few dozen surfaces of a process). `-modechange` replays Wine's
- * test_wndproc in short: a mode change under a full-screen device, focus
- * dropped, then full-screen devices again.
+ * test_wndproc's first case: a device window apart from the focus window,
+ * a mode change under the full-screen device, focus to the desktop and
+ * back (messages pumped, as the test's flush_events), Reset, then new
+ * full-screen devices; `-modechange -nolock` with Win98's foreground lock
+ * off first.
  * Log: C:\2KSBOX\D9CTEST.LOG. Runs on XP too, where every line is the
  * answer to compare with.
  *
@@ -76,19 +79,53 @@ static HRESULT fullscreen2(IDirect3D9 *d3d, HWND focus, HWND wnd, IDirect3DDevic
     return IDirect3D9_CreateDevice(d3d, 0, D3DDEVTYPE_HAL, focus, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, dev);
 }
 
+/* Wine's flush_events: messages for 200 ms (d3d9 learns of activation
+ * through the focus window's own) */
+static void pump(void)
+{
+    DWORD end = GetTickCount() + 200;
+    MSG msg;
+
+    while ((LONG)(end - GetTickCount()) > 0) {
+        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        Sleep(10);
+    }
+}
+
+static HRESULT reset640(IDirect3DDevice9 *dev, HWND wnd)
+{
+    D3DPRESENT_PARAMETERS pp;
+
+    memset(&pp, 0, sizeof pp);
+    pp.BackBufferWidth = 640;
+    pp.BackBufferHeight = 480;
+    pp.BackBufferFormat = D3DFMT_A8R8G8B8;
+    pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    pp.hDeviceWindow = wnd;
+    pp.EnableAutoDepthStencil = TRUE;
+    pp.AutoDepthStencilFormat = D3DFMT_D24S8;
+    return IDirect3DDevice9_Reset(dev, &pp);
+}
+
 /* Wine's test_wndproc in short: the mode changed under a full-screen
  * device, focus dropped, the device released; then full-screen devices
  * again (on Win98 every one after it failed D3DERR_NOTAVAILABLE) */
 static void modechange(IDirect3D9 *d3d, HWND wnd)
 {
     IDirect3DDevice9 *dev = NULL;
+    HWND devwnd;
     DEVMODEA dm;
     HRESULT hr;
     LONG ret;
     unsigned i;
 
-    hr = fullscreen(d3d, wnd, &dev);
-    say("modechange: CreateDevice fullscreen: 0x%08lx\n", hr);
+    devwnd = CreateWindowA("D9CTEST", "D9CTEST device", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 640, 480, NULL, NULL,
+                           NULL, NULL);
+    hr = fullscreen2(d3d, wnd, devwnd, &dev);
+    say("modechange: CreateDevice fullscreen, device window apart from the focus window: 0x%08lx\n", hr);
     if (FAILED(hr))
         return;
     memset(&dm, 0, sizeof dm);
@@ -96,12 +133,27 @@ static void modechange(IDirect3D9 *d3d, HWND wnd)
     dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
     dm.dmPelsWidth = 1024;
     dm.dmPelsHeight = 768;
+    pump();
     ret = ChangeDisplaySettingsA(&dm, CDS_FULLSCREEN);
+    pump();
     say("modechange: ChangeDisplaySettings 1024x768: %ld\n", ret);
     say("modechange: TestCooperativeLevel: 0x%08lx\n", IDirect3DDevice9_TestCooperativeLevel(dev));
     SetForegroundWindow(GetDesktopWindow());
+    pump();
     say("modechange: after focus loss: 0x%08lx\n", IDirect3DDevice9_TestCooperativeLevel(dev));
+    /* the test's way back: minimize, restore, SetForegroundWindow twice */
+    ShowWindow(wnd, SW_SHOWMINNOACTIVE);
+    pump();
+    ShowWindow(wnd, SW_RESTORE);
+    SetForegroundWindow(wnd);
+    pump();
+    SetForegroundWindow(wnd);
+    pump();
+    say("modechange: foreground %s, after restore: 0x%08lx\n", GetForegroundWindow() == wnd ? "ours" : "not ours",
+        IDirect3DDevice9_TestCooperativeLevel(dev));
+    say("modechange: Reset: 0x%08lx\n", reset640(dev, devwnd));
     say("modechange: Release: %lu\n", IDirect3DDevice9_Release(dev));
+    DestroyWindow(devwnd);
     dev = NULL;
     ret = ChangeDisplaySettingsA(NULL, 0);
     say("modechange: ChangeDisplaySettings back: %ld\n", ret);
@@ -112,6 +164,14 @@ static void modechange(IDirect3D9 *d3d, HWND wnd)
         SetForegroundWindow(wnd);
         hr = fullscreen2(d3d, wnd, w2, &dev);
         say("modechange: CreateDevice fullscreen, another device window: 0x%08lx\n", hr);
+        if (SUCCEEDED(hr)) {
+            IDirect3DDevice9_Release(dev);
+            dev = NULL;
+        }
+        /* Wine's test_wndproc makes a new focus window per case */
+        SetForegroundWindow(w2);
+        hr = fullscreen2(d3d, w2, w2, &dev);
+        say("modechange: CreateDevice fullscreen, another focus window: 0x%08lx\n", hr);
         if (SUCCEEDED(hr)) {
             IDirect3DDevice9_Release(dev);
             dev = NULL;
@@ -242,6 +302,11 @@ int main(int argc, char **argv)
     wnd = CreateWindowA("D9CTEST", "D9CTEST", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 640, 480, NULL, NULL, NULL,
                         NULL);
 
+    if (argc >= 3 && !strcmp(argv[2], "-nolock")) {
+        /* Win98's foreground lock off, as for a user at the machine */
+        BOOL r = SystemParametersInfoA(0x2001 /* SPI_SETFOREGROUNDLOCKTIMEOUT */, 0, (PVOID)0, SPIF_SENDCHANGE);
+        say("foreground lock timeout 0: %s\n", r ? "set" : "refused");
+    }
     if (argc >= 2 && !strcmp(argv[1], "-modechange")) {
         modechange(d3d, wnd);
         IDirect3D9_Release(d3d);
