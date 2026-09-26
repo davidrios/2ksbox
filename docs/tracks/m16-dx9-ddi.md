@@ -152,7 +152,11 @@ fetch checked by a title, the 2.0-cap flag.
     in each runtime are its full-screen cases (tests 4 to 6, 13, 14) and
     the same state. `test_getdc`'s 61 (d3d9) are GDI's answers on Win98
     (a top-down DIB's height of -64, the resolution fields, no DC for the
-    alpha formats), not the driver's.
+    alpha formats), not the driver's. d3d9 visual's `visual.c:21788` and
+    d3d8's `7402` (`test_updatetexture`, a volume update between A8R8G8B8
+    and X8R8G8B8) are Win98's runtime too: it sends no `VOLUMEBLT` at
+    all and copies volumes itself, where XP's goes through the driver,
+    which refuses the format pair.
     `device.c:11324` ff. "Expected no format" is `GetPixelFormat` on a
     Win98 window, likely Win98's (the rig will say).
 - **Step 5, second pass (2026-09-26).** The regression side first, all on
