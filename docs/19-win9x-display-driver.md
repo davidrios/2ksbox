@@ -1235,3 +1235,36 @@ error, so nothing complained. The buffer hooks are now shared in
 On the game: 206 frames with the hooks, 29 ending black without.
 `embed-3d` (`tools/embed-3d-test.c`) guards it with no guest, and any
 GL program that presents by a front-buffer flush needs it still.
+
+### 45. DirectX 9 on 9x: what DirectDraw refuses before the driver
+
+On Win98, DirectX 9.0c's `d3d9.dll` creates every surface through
+`ddraw.dll`'s own create path (its `DdEntryN` exports). That path checks
+the request itself and maps any failure except out-of-memory to
+`D3DERR_NOTAVAILABLE` (the mapper at `0xbaac0213` in 4.09.00.0904). So a
+refused texture never reaches `CanCreateSurface32` and the HAL's log is
+silent. Found with the QEMU gdbstub (`EXTRA="-gdb tcp:127.0.0.1:12345"`
+on `tools/win98-game-test.sh`; system DLLs sit at one address in every
+process, so a breakpoint on the mapper, conditional on a nonzero `hr`,
+names the caller) and `D9CTEST.EXE` (M16):
+
+- **Power-of-two mip chains.** A `DDSCAPS_MIPMAP` surface must have a
+  power-of-two width and height (`0xbaacbd70`, the test at `0xbaacb341`),
+  a cube map must be a power-of-two square, and the mip count may not
+  exceed log2(max(w, h)) + 1, with a volume's depth left out (Wine's
+  2x4x8 volume of 4 levels fails). This is the OS's rule, whatever card
+  is in the machine. A full chain in the default pool is one lightweight
+  surface with no `MIPMAP` caps and is not checked. So the DX9 caps
+  claim the POW2 flags on 9x (`core.pow2_mips`, doc 15 "Texture sizes").
+- **Video-memory vertex and index buffers.** A request with
+  `DDSCAPS_EXECUTEBUFFER` needs that bit in the HALINFO's `ddsCaps`
+  (code 593 otherwise, `0xbaacc4ee`), and the 9x layer does not claim
+  it. So every buffer on 9x is in system memory, and the protocol v9
+  video-memory buffers (doc 15) are NT's alone. Claiming the bit made
+  `CreateDevice` fail with out-of-video-memory: the runtime then asks for
+  its command buffers in video memory too. Open.
+- **Float system-memory surfaces.** `CreateOffscreenPlainSurface` in
+  `D3DPOOL_SYSTEMMEM` fails for A16B16G16R16F and A32B32G32R32F with no
+  driver call, so a float render target cannot be read back
+  (D3DFEAT9's readback line, most of Wine's `test_fog` on 9x). Where it
+  fails is not found yet.

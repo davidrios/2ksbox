@@ -678,7 +678,15 @@ guest (XP)                                      host
   (`DDF_TEX_ANYSIZE`) is the A/B. **The DX9 caps claim any size** for
   2D, cube and volume textures (M16): a GeForce 6, the rig's card, claims
   none of the POW2 flags there, and a conditional claim promises a clamp
-  DXVK does not do (Wine's `conditional_np2_repeat_test`).
+  DXVK does not do (Wine's `conditional_np2_repeat_test`). **Not on
+  Win98**: 9x DirectDraw itself refuses a mipmapped surface with a width
+  or height that is not a power of two, a cube map that is not a
+  power-of-two square and a mip count above log2(max(w, h)) + 1 (depth
+  not counted), before any driver call. `d3d9.dll` returns that as
+  `D3DERR_NOTAVAILABLE` whatever the caps said. So the 9x layer sets
+  `core.pow2_mips` and the DX9 caps keep the DX8 face's `POW2 |
+  NONPOW2CONDITIONAL` with `CUBEMAP_POW2` / `VOLUMEMAP_POW2` (M16 finding
+  33). The price is `conditional_np2_repeat_test`'s 2 checks there.
 - **A Z buffer written through a Lock.** Some titles reset depth by
   writing the Z buffer, and the HEL performs an application's depth fill
   through `DdLock` too, since the driver claims no blits. Both write VRAM

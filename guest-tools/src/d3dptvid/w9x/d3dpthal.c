@@ -1317,6 +1317,7 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     core.cmd_offset = (regs[D3DPT_FB_REG_CAPS / 4] & D3DPT_FB_CAP_D3D) ?
                       regs[D3DPT_FB_REG_CMD_OFFSET / 4] : 0;
     core.dx9 = TRUE;            /* the DirectX 9 face (M16 step 5): d3d9.dll's GETDDIVERSION / GETD3DCAPS9 */
+    core.pow2_mips = TRUE;      /* 9x DirectDraw's rule, whatever the caps say (core_caps.c) */
     d3d_init(&core);
 
     dbg_hex(&core, "d3dpthal: DriverInit, block at ", (ULONG)(ULONG_PTR)h);

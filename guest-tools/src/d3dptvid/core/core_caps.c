@@ -607,9 +607,23 @@ void d3d_caps_init(d3dpt_core *p)
      * and no mip chain for such a texture, which DXVK does not do (Wine's
      * conditional_np2_repeat_test), and test_npot_textures wants the three
      * restrictions equal. The DX7 / DX8 faces keep the conditional claim
-     * their titles branch on (Crimson Skies, above) */
-    d3d_caps9.c8.TextureCaps &= ~(D3DPTEXTURECAPS_POW2_ | D3DPTEXTURECAPS_NONPOW2CONDITIONAL_ |
-                                  D3DPTEXTURECAPS_CUBEMAP_POW2_ | D3DPTEXTURECAPS_VOLUMEMAP_POW2_);
+     * their titles branch on (Crimson Skies, above).
+     *
+     * Not on 9x (pow2_mips): Win98's DirectDraw refuses, before any driver
+     * call, a DDSCAPS_MIPMAP surface whose width or height is not a power
+     * of two, a cube map that is not a power-of-two square, and a mip
+     * count above log2 of the larger of width and height plus one (a
+     * volume's depth is not counted). d3d9.dll returns that as
+     * D3DERR_NOTAVAILABLE, so a 10x10 chain, an edge-3 cube or Wine's
+     * 2x4x8 volume of 4 levels failed in every pool while the caps
+     * promised them. The DX8 face's claim there is what the OS can make:
+     * a non-power-of-two texture without mips (one surface) works. The
+     * rule is ddraw.dll's (4.09.00.0904, the check at 0xbaacbd70, the
+     * power-of-two test at 0xbaacb341), so a real card meets it too */
+    if (!p->pow2_mips) {
+        d3d_caps9.c8.TextureCaps &= ~(D3DPTEXTURECAPS_POW2_ | D3DPTEXTURECAPS_NONPOW2CONDITIONAL_ |
+                                      D3DPTEXTURECAPS_CUBEMAP_POW2_ | D3DPTEXTURECAPS_VOLUMEMAP_POW2_);
+    }
     d3d_caps9.c8.GuardBandLeft = -8192.0f;
     d3d_caps9.c8.GuardBandTop = -8192.0f;
     d3d_caps9.c8.GuardBandRight = 8192.0f;

@@ -58,6 +58,17 @@ mcopy -o -i "$M" "$WT/d3d8_test.exe" ::/WT/D3D8_TEST.EXE
 mcopy -o -i "$M" "$WT/d3d9_test.exe" ::/WT/D3D9_TEST.EXE
 mdel -i "$M" '::/2KSBOX/WINETEST/*' 2>/dev/null || true
 
+# **3dfx's Voodoo 2 DirectDraw driver out of the way when the machine has no
+# card.** base98-br has 3dfx's driver installed; booted without the card,
+# d3d8.dll still loaded `3DFX32V2.DLL` and d3d8 visual and device crashed
+# inside it. Renamed in the raw copy only (`.OFF`), and back when EXTRA puts
+# a voodoo2 on the machine.
+case " ${EXTRA:-} " in
+  *voodoo2*) mren -i "$M" ::/WINDOWS/SYSTEM/3DFX32V2.OFF ::/WINDOWS/SYSTEM/3DFX32V2.DLL 2>/dev/null || true ;;
+  *) mren -i "$M" ::/WINDOWS/SYSTEM/3DFX32V2.DLL ::/WINDOWS/SYSTEM/3DFX32V2.OFF 2>/dev/null \
+       && echo "==> 3dfx's 3DFX32V2.DLL renamed .OFF in the raw copy (no voodoo2 on this machine)" || true ;;
+esac
+
 # **The desktop at 32 bpp first.** The tests ask for a windowed A8R8G8B8
 # back buffer, which d3d8 refuses on a 16 bpp desktop: every d3d8 file then
 # fails device creation and skips (the rig's first Win98 run did). Saved in

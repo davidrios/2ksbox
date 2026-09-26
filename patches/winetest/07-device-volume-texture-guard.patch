@@ -1,0 +1,44 @@
+diff --git dlls/d3d8/tests/device.c dlls/d3d8/tests/device.c
+index 7059e82..d56274f 100644
+--- dlls/d3d8/tests/device.c
++++ dlls/d3d8/tests/device.c
+@@ -8319,7 +8319,7 @@ static void test_resource_type(void)
+     {
+         hr = IDirect3DDevice8_CreateVolumeTexture(device, 2, 4, 8, 4, 0, D3DFMT_X8R8G8B8,
+                 D3DPOOL_SYSTEMMEM, &volume_texture);
+-        ok(SUCCEEDED(hr), "CreateVolumeTexture failed, hr %#lx.\n", hr);
++        ok(SUCCEEDED(hr), "CreateVolumeTexture failed, hr %#lx.\n", hr); if (SUCCEEDED(hr)) {
+         type = IDirect3DVolumeTexture8_GetType(volume_texture);
+         ok(type == D3DRTYPE_VOLUMETEXTURE, "Expected type D3DRTYPE_VOLUMETEXTURE, got %u.\n", type);
+ 
+@@ -8359,7 +8359,7 @@ static void test_resource_type(void)
+         ok(volume_desc.Height == 1, "Expected height 1, got %u.\n", volume_desc.Height);
+         ok(volume_desc.Depth == 2, "Expected depth 2, got %u.\n", volume_desc.Depth);
+         IDirect3DVolume8_Release(volume);
+-        IDirect3DVolumeTexture8_Release(volume_texture);
++        IDirect3DVolumeTexture8_Release(volume_texture); }
+     }
+     else
+         skip("Mipmapped volume maps not supported.\n");
+diff --git dlls/d3d9/tests/device.c dlls/d3d9/tests/device.c
+index b782833..2100749 100644
+--- dlls/d3d9/tests/device.c
++++ dlls/d3d9/tests/device.c
+@@ -11913,7 +11913,7 @@ static void test_resource_type(void)
+     {
+         hr = IDirect3DDevice9_CreateVolumeTexture(device, 2, 4, 8, 4, 0, D3DFMT_X8R8G8B8,
+                 D3DPOOL_SYSTEMMEM, &volume_texture, NULL);
+-        ok(SUCCEEDED(hr), "Failed to create volume texture, hr %#lx.\n", hr);
++        ok(SUCCEEDED(hr), "Failed to create volume texture, hr %#lx.\n", hr); if (SUCCEEDED(hr)) {
+         type = IDirect3DVolumeTexture9_GetType(volume_texture);
+         ok(type == D3DRTYPE_VOLUMETEXTURE, "Expected type D3DRTYPE_VOLUMETEXTURE, got %u.\n", type);
+ 
+@@ -11954,7 +11954,7 @@ static void test_resource_type(void)
+         ok(volume_desc.Height == 1, "Expected height 1, got %u.\n", volume_desc.Height);
+         ok(volume_desc.Depth == 2, "Expected depth 2, got %u.\n", volume_desc.Depth);
+         IDirect3DVolume9_Release(volume);
+-        IDirect3DVolumeTexture9_Release(volume_texture);
++        IDirect3DVolumeTexture9_Release(volume_texture); }
+     }
+     else
+         skip("Mipmapped volume maps not supported.\n");

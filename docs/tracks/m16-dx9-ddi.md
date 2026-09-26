@@ -131,17 +131,30 @@ fetch checked by a title, the 2.0-cap flag.
     windowed A8R8G8B8 device and every d3d8 file skips; the rig's first
     Win98 run likely failed this way. The harness runs `SETBPP -save 32`
     (saved, because a full-screen device restores the registry's mode).
-  - **d3d8 visual and device crash in `3DFX32V2.DLL+0x185fb`**, 3dfx's own
-    Voodoo 2 DirectDraw driver, which `base98-br` has installed: the run
-    booted without the card and d3d8 enumerated its driver anyway. Not
-    ours. A run with `EXTRA="-device voodoo2"` never reached RUN.BAT in
-    5 minutes (the login's wait on 3dfx's helper, unexplained); the other
-    way is an image without 3dfx's driver.
-  - **Full-screen devices fail** `D3DERR_NOTAVAILABLE` (A8R8G8B8 back
-    buffer at 640x480 / 800x600), and d3d9 device crashes in the test
-    after `CreateVolumeTexture` fails (`device.c:11921`, NOTAVAILABLE);
-    also `CreateCubeTexture(3, SYSTEMMEM)` fails and `device.c:11324`
-    ff. "Expected no format". Next to look at.
+  - **d3d8 visual and device crashed in `3DFX32V2.DLL+0x185fb`**, 3dfx's
+    own Voodoo 2 DirectDraw driver, which `base98-br` has installed: the
+    run booted without the card and d3d8 loaded its driver anyway. Not
+    ours (finding 32).
+  - **Full-screen devices fail** `D3DERR_NOTAVAILABLE` inside the tests
+    (A8R8G8B8 back buffer, D24S8, 640x480 / 800x600, `device.c:234` and
+    `305`), while `D9CTEST.EXE`'s full-screen devices of the same formats
+    are made. Open; the difference is the tests' focus / device windows.
+    `device.c:11324` ff. "Expected no format" is `GetPixelFormat` on a
+    Win98 window, likely Win98's (the rig will say).
+- **Step 5, second pass (2026-09-26).** The regression side first, all on
+  Win98 through Microsoft's runtimes: D3DGAME9 and D3DGAME8 frames **0
+  pixels** from the native one, D3DFEAT9's **byte-identical** (its
+  A16B16G16R16F readback line fails, finding 35), the ten DX8 probes,
+  SHTEST, CKTEST and EBTEST pass (PATCHTST not offered, as on XP), and
+  DDTEST's four sysmem blits succeed (9x's HEL keeps them with
+  `DDCAPS_BLT` in `dwSVBCaps`). Then findings 32 to 35: **every Win98
+  test file runs to its end** (d3d9 visual 201827 checks / 1544
+  failures, device 57209 / 152, stateblock 14738 / 0; d3d8 visual
+  142764 / 156, device 55352 / 60, stateblock 9283 / 0). Most of d3d9
+  visual's excess over XP is finding 35 (`test_fog` 280,
+  `test_texture_transform_flags` 644, both reading float targets back).
+  `D9CTEST.EXE` (new) creates the resources the tests found failing,
+  one line each; `-readback` runs the float readbacks alone.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
   the user's Windows 11 PC, RTX 3090, 2026-09-26): d3d9 visual 210814
   checks, 69 failures; device 160756 / 0; d3d8 visual 2; d3d8 device
@@ -318,6 +331,41 @@ fetch checked by a title, the 2.0-cap flag.
      reads `.w`; d3d9, which the host runs it on, reads `.x` unless the
      swizzle replicates. The decoder gives such a source `.wwww`, as
      DXVK's own d3d8 does (d3d8 `test_scalar_instructions`' `logp`).
+  32. *Worked around in the harness (Win98).* 3dfx's `3DFX32V2.DLL`,
+     installed in `base98-br`, was loaded by d3d8.dll with no card on the
+     machine and crashed d3d8 visual and device. `tools/win98-winetest.sh`
+     renames it `.OFF` in the raw copy unless `EXTRA` has a voodoo2. Both
+     device files then crashed on Wine's 2x4x8 system-memory volume
+     (finding 33): `patches/winetest/07` guards that dereference, and
+     they run whole.
+  33. *Fixed (Win98).* Mipmapped textures of a non-power-of-two size
+     (a 10x10 chain in every pool, a 257 managed chain), cube maps of edge
+     3 and Wine's 2x4x8 volume of 4 levels failed `D3DERR_NOTAVAILABLE`
+     with no driver call. **Win98's DirectDraw refuses them itself** (doc
+     19 §45): power-of-two width and height for a `MIPMAP` surface, a
+     power-of-two square cube, and a mip count up to log2 of the larger
+     of width and height plus one. Found with a gdbstub breakpoint on
+     ddraw's error mapper. The DX9 caps claim `POW2 | NONPOW2CONDITIONAL`
+     and the cube / volume POW2 flags on 9x (`core.pow2_mips`), so the
+     runtime refuses such a texture up front with `D3DERR_INVALIDCALL`
+     and titles take their power-of-two path. `test_npot_textures` passes; the price is
+     `conditional_np2_repeat_test`'s 2 (finding 30's clamp). The volume's
+     mip-count rule has no cap. A real card meets the same rule, so the
+     rig's Win98 run should agree.
+  34. *Open (Win98, performance).* 9x DirectDraw refuses a
+     `DDSCAPS_EXECUTEBUFFER` surface in video memory unless the
+     HALINFO's `ddsCaps` claims the bit, which the 9x layer does not, so
+     the runtime keeps every vertex and index buffer in system memory
+     (protocol v9's VRAM buffers are NT's only). Claiming it made
+     `CreateDevice` fail out of video memory: the runtime's command
+     buffers then ask for video memory too, and `CreateExecuteBuffer32`
+     has to send those back to system memory.
+  35. *Open (Win98).* A system-memory float surface
+     (`CreateOffscreenPlainSurface`, A16B16G16R16F / A32B32G32R32F) fails
+     `D3DERR_NOTAVAILABLE` with no driver call, so a float render target
+     cannot be read back: D3DFEAT9's readback line and most of `test_fog`
+     / `test_texture_transform_flags` on Win98. The refusing check in
+     ddraw.dll is not found yet (the same gdbstub recipe).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

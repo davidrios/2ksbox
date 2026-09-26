@@ -116,6 +116,9 @@ for v in 8 9; do
   "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic -DDXVER=$v \
     -o "$OUT/dx${v}caps.exe" "$SRC/dx9caps.c" -lgdi32 -luser32
 done
+echo "==> d9ctest.exe (the resources d3d9.dll creates on the driver, and float render-target readback; M16)"
+"$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
+  -o "$OUT/d9ctest.exe" "$SRC/d9ctest.c" -lgdi32 -luser32
 # the DX8 feature probes (d3d8probe.h): each one says "not offered" while the
 # driver lacks its feature and is the feature's check once it has it
 for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst msaatest mgdtest gammatest; do

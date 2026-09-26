@@ -251,6 +251,7 @@ typedef struct d3dpt_core {
     HRESULT (APIENTRY *parse_unknown)(PVOID cmd, PVOID *next);
     BOOL gamma;                 /* the layer loads gamma ramps into the adapter (NT: DrvIcmSetDeviceGammaRamp) */
     BOOL dx9;                   /* the layer offers the DirectX 9 face (M16; NT first, 9x at M16 step 5) */
+    BOOL pow2_mips;             /* the OS's DirectDraw makes mip chains and cube maps of power-of-two sizes only (9x) */
     ULONG dx9_unwalked;         /* bit op - 64: a DX9 token the walker drops was reported (M16) */
     ULONG rt_dxver;             /* the last DXVERSION a runtime announced (0x802 d3d8.dll, 0x902 d3d9.dll) */
     /* DX9 queries (M16): the runtime's per-context ids, the host's handle
