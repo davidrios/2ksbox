@@ -553,7 +553,13 @@ track builds.
   `CreateDevice` is traced, to see why d3d8 made no device) and patch 05
   (the guard at 12859), all without moving a source line; XP's run is
   key for key the same. `build/winetest/rig-winetest-98.zip` is the
-  build for the rig's next Win98 run (2026-09-26, waiting on the user).
+  build for the rig's next Win98 run (remade 2026-09-26 afternoon with
+  patches 06 and 07, waiting on the user; there is no `zip` here, so the
+  archive is made with Python's `zipfile` from `build/winetest/out/`).
+  The rig's desktop must be at 32 bpp first (d3d8 skips every file on
+  16 bpp). That run settles findings 33 and 35, `test_getdc` and the
+  full-screen cases on Win98: the guest's differences from XP there look
+  like Win98's own.
 - **DXVK's own run** says which failures are DXVK's: `tools/winetest-dxvk.sh`
   runs the same EXEs on the host's Wine with DXVK's `d3d9.dll`, and
   `reference/winetest/dxvk-wine.txt` is its baseline. A guest failure
