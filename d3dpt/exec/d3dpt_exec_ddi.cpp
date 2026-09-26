@@ -210,7 +210,11 @@ struct Ddi {
      * alpha test is forced on for its key (the app's own alpha test state
      * is restored when it is not) */
     std::unordered_map<uint32_t, Palette> palettes;
-    uint32_t ckey_rs = 0, stage_tex[8] = {};    /* the surface handle bound at each stage */
+    /* the surface handle bound at each sampler: the 16 pixel samplers
+     * (DX9's ps 2.0 has 16, the fixed function 8), then the displacement
+     * map sampler and the four vertex samplers (D3DDMAPSAMPLER 256 and
+     * D3DVERTEXTEXTURESAMPLER0..3 257..260, sampler_slot) */
+    uint32_t ckey_rs = 0, stage_tex[21] = {};
     bool ckey_forced = false, ckey_alpha_ovr = false;
     /* TEXTUREMAPBLEND / TEXTUREHANDLE in effect for stage 0's colour op and
      * for its alpha op: each half follows the bound texture until the app
@@ -273,10 +277,16 @@ static uint32_t fmt_row_bytes(uint32_t f, uint32_t w) {
     case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_A8B8G8R8: case D3DFMT_X8B8G8R8:
     case D3DFMT_A2R10G10B10: case D3DFMT_D32: case D3DFMT_D24S8: case D3DFMT_D24X8: case D3DFMT_D24X4S4:
     case D3DFMT_X8L8V8U8: case D3DFMT_Q8W8V8U8:
+    case D3DFMT_A2B10G10R10: case D3DFMT_G16R16: case D3DFMT_V16U16: case D3DFMT_A2W10V10U10:
+    case D3DFMT_G16R16F: case D3DFMT_R32F:
         return w * 4;
+    case D3DFMT_A16B16G16R16: case D3DFMT_Q16W16V16U16: case D3DFMT_A16B16G16R16F: case D3DFMT_G32R32F:
+        return w * 8;
+    case D3DFMT_A32B32G32R32F:
+        return w * 16;
     case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5: case D3DFMT_A4R4G4B4:
     case D3DFMT_X4R4G4B4: case D3DFMT_A8L8: case D3DFMT_D16: case D3DFMT_D16_LOCKABLE: case D3DFMT_D15S1:
-    case D3DFMT_L16: case D3DFMT_V8U8: case D3DFMT_A8R3G3B2: case D3DFMT_L6V5U5:
+    case D3DFMT_L16: case D3DFMT_V8U8: case D3DFMT_A8R3G3B2: case D3DFMT_L6V5U5: case D3DFMT_R16F:
         return w * 2;
     case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_A4L4: case D3DFMT_P8: case D3DFMT_R3G3B2:
         return w;
@@ -730,9 +740,17 @@ static HRESULT readback(Exec &x, Ddi &d, VramSurf &s) {
  * SetRenderTarget resets); uploads a target the guest wrote since */
 static bool bind_ctx(Exec &x, Ddi &d, Ctx &c, Batch &b, bool for_draw) {
     VramSurf *rt = surf(x, c.rt);
-    if (!rt || !ensure_object(x, *rt) || !rt->rt) { b.err = D3DPT_ERR_BAD_HANDLE; return false; }
+    if (!rt || !ensure_object(x, *rt) || !rt->rt) {
+        if (d.warn_once(0x80000)) x.log("ddi: render target %u %s: the batch fails", c.rt, !rt ? "unknown" : "has no host object");
+        b.err = D3DPT_ERR_BAD_HANDLE;
+        return false;
+    }
     VramSurf *z = c.z ? surf(x, c.z) : nullptr;
-    if (c.z && (!z || !ensure_object(x, *z))) { b.err = D3DPT_ERR_BAD_HANDLE; return false; }
+    if (c.z && (!z || !ensure_object(x, *z))) {
+        if (d.warn_once(0x80001)) x.log("ddi: depth surface %u %s: the batch fails", c.z, !z ? "unknown" : "has no host object");
+        b.err = D3DPT_ERR_BAD_HANDLE;
+        return false;
+    }
     if (d.bound_rt != c.rt || d.bound_z != c.z) {
         x.dev->SetRenderTarget(0, rt->rt);
         x.dev->SetDepthStencilSurface(z ? z->rt : nullptr);
@@ -1563,6 +1581,39 @@ struct Dp2 {
         return true;
     }
 
+    /* a DDI texture stage as a stage_tex index: 0..15, then 256..260 as
+     * 16..20; ~0 for none */
+    static uint32_t sampler_slot(uint32_t stage) {
+        if (stage < 16) return stage;
+        if (stage >= 256 && stage <= 260) return 16 + (stage - 256);
+        return ~0u;
+    }
+    /* the texture stage states that are D3D9 sampler states, in the DDI's
+     * numbering: DX7's 12..21, DX8's ADDRESSW 25, and DX9's sRGB read,
+     * element index and displacement-map offset at 29..31 (d3dhal.h's
+     * D3DTSS_SRGBTEXTURE, D3DTSS_ELEMENTINDEX, D3DTSS_DMAPOFFSET) */
+    void sampler_state(uint32_t stage, uint32_t st, uint32_t v) {
+        switch (st) {
+        case 12: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSU, v); x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSV, v); break;
+        case 13: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSU, v); break;
+        case 14: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSV, v); break;
+        case 15: x.dev->SetSamplerState(stage, D3DSAMP_BORDERCOLOR, v); break;
+        /* the filters in the DDI's DX7 numbering (D3DTFG_* / D3DTFN_* / D3DTFP_*): the
+         * driver rewrites a d3d8.dll context's D3DTEXF_* values before they get here */
+        case 16: x.dev->SetSamplerState(stage, D3DSAMP_MAGFILTER, v == 1 ? D3DTEXF_POINT : v == 5 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR); break;
+        case 17: x.dev->SetSamplerState(stage, D3DSAMP_MINFILTER, v == 1 ? D3DTEXF_POINT : v == 3 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR); break;
+        case 18: x.dev->SetSamplerState(stage, D3DSAMP_MIPFILTER, v == 2 ? D3DTEXF_POINT : v == 3 ? D3DTEXF_LINEAR : D3DTEXF_NONE); break;
+        case 19: x.dev->SetSamplerState(stage, D3DSAMP_MIPMAPLODBIAS, v); break;
+        case 20: x.dev->SetSamplerState(stage, D3DSAMP_MAXMIPLEVEL, v); break;
+        case 21: x.dev->SetSamplerState(stage, D3DSAMP_MAXANISOTROPY, v); break;
+        case 25: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSW, v); break;
+        case 29: x.dev->SetSamplerState(stage, D3DSAMP_SRGBTEXTURE, v); break;
+        case 30: x.dev->SetSamplerState(stage, D3DSAMP_ELEMENTINDEX, v); break;
+        case 31: x.dev->SetSamplerState(stage, D3DSAMP_DMAPOFFSET, v); break;
+        default: break;
+        }
+    }
+
     /* a stage's texture: the surface's host object, re-read from VRAM when
      * dirty (the guest wrote it, its palette changed, its key changed) */
     void bind_texture(uint32_t stage, uint32_t handle) {
@@ -1586,16 +1637,16 @@ struct Dp2 {
             t = s->cube ? (IDirect3DBaseTexture9 *)s->cube : s->vol ? (IDirect3DBaseTexture9 *)s->vol : (IDirect3DBaseTexture9 *)s->tex;
         }
         x.dev->SetTexture(stage, t);
-        if (stage < 8) d.stage_tex[stage] = t ? handle : 0;
+        if (sampler_slot(stage) != ~0u) d.stage_tex[sampler_slot(stage)] = t ? handle : 0;
         if (stage == 0) apply_ckey();
     }
     /* before a draw: a bound texture whose VRAM / palette / key changed
      * since it was bound is uploaded again (the runtime re-sends TEXTUREMAP
      * only on a SetTexture) */
     void pre_draw() {
-        for (uint32_t st = 0; st < 8; st++) {
-            VramSurf *s = d.stage_tex[st] ? surf(x, d.stage_tex[st]) : nullptr;
-            if (s && (s->dirty || s->faces_dirty || !(s->tex || s->cube || s->vol))) bind_texture(st, d.stage_tex[st]);
+        for (uint32_t i = 0; i < 21; i++) {
+            VramSurf *s = d.stage_tex[i] ? surf(x, d.stage_tex[i]) : nullptr;
+            if (s && (s->dirty || s->faces_dirty || !(s->tex || s->cube || s->vol))) bind_texture(i < 16 ? i : 256 + (i - 16), d.stage_tex[i]);
         }
         /* last, after the uploads above, which each close the scene: the
          * DX7/DX8 DDI has no BeginScene of its own and Windows' own
@@ -1724,7 +1775,18 @@ struct Dp2 {
     }
 
     void stage_state(uint32_t stage, uint32_t st, uint32_t v) {
-        if (stage >= 8) return;
+        if (stage >= 8) {
+            /* a DX9 sampler past the fixed function's 8 stages: its texture
+             * and sampler states only */
+            if (sampler_slot(stage) == ~0u) {
+                if (d.warn_once(0x70000 | (stage & 0xffff))) x.log("ddi: dp2: texture stage %u dropped", stage);
+                return;
+            }
+            tr("sampler %u.%u = 0x%x", stage, st, v);
+            if (st == 0) bind_texture(stage, v);
+            else sampler_state(stage, st, v);
+            return;
+        }
         tr("tss %u.%u = 0x%x", stage, st, v);
         if (st < 33) { d.tss_val[stage][st] = v; d.tss_set[stage][st] = 1; }
         switch (st) {
@@ -1758,18 +1820,10 @@ struct Dp2 {
             bind_texture(stage, v);
             break;
         }
-        case 12: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSU, v); x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSV, v); break;
-        case 13: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSU, v); break;
-        case 14: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSV, v); break;
-        case 15: x.dev->SetSamplerState(stage, D3DSAMP_BORDERCOLOR, v); break;
-        /* the filters in the DDI's DX7 numbering (D3DTFG_* / D3DTFN_* / D3DTFP_*): the
-         * driver rewrites a d3d8.dll context's D3DTEXF_* values before they get here */
-        case 16: x.dev->SetSamplerState(stage, D3DSAMP_MAGFILTER, v == 1 ? D3DTEXF_POINT : v == 5 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR); break;
-        case 17: x.dev->SetSamplerState(stage, D3DSAMP_MINFILTER, v == 1 ? D3DTEXF_POINT : v == 3 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR); break;
-        case 18: x.dev->SetSamplerState(stage, D3DSAMP_MIPFILTER, v == 2 ? D3DTEXF_POINT : v == 3 ? D3DTEXF_LINEAR : D3DTEXF_NONE); break;
-        case 19: x.dev->SetSamplerState(stage, D3DSAMP_MIPMAPLODBIAS, v); break;
-        case 20: x.dev->SetSamplerState(stage, D3DSAMP_MAXMIPLEVEL, v); break;
-        case 21: x.dev->SetSamplerState(stage, D3DSAMP_MAXANISOTROPY, v); break;
+        case 12: case 13: case 14: case 15: case 16: case 17: case 18: case 19: case 20: case 21: case 25:
+        case 29: case 30: case 31:
+            sampler_state(stage, st, v);
+            break;
         default:
             if (st < 33) x.dev->SetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)st, v);
             /* the app's stage-0 alpha op while the key overrides it: re-applied or followed */
@@ -1806,7 +1860,11 @@ struct Dp2 {
     }
 
     bool run() {
-        if (!bind_ctx(x, d, c, b, true)) return false;
+        /* the context's targets, unless the target it names is gone: a
+         * DX9 application releases a render-target texture it drew into
+         * while still bound, and the runtime's SETRENDERTARGET to another
+         * one comes in this stream (set_targets binds that) */
+        if (surf(x, c.rt) && !bind_ctx(x, d, c, b, true)) return false;
         const uint8_t *p = cmd;
         while (p < cmd_end) {
             pos = (uint32_t)(p - cmd);
@@ -2080,7 +2138,17 @@ struct Dp2 {
                         if (it != d.sblocks.end()) { if (it->second) it->second->Release(); d.sblocks.erase(it); }
                         break;
                     case 3:                                             /* EXECUTE */
-                        if (it != d.sblocks.end() && it->second) { it->second->Apply(); x.dev->GetViewport(&c.vp); }
+                        /* DX9: the viewport stays the stream's. d3d9.dll sends
+                         * a SetRenderTarget and the viewport it resets at the
+                         * next draw, so a CreateStateBlock after one captured
+                         * the old target's viewport here, and executing it put
+                         * a 4x4 one under a 640x480 frame (D3DFEAT9 after its
+                         * float target). The runtime sends none after EXECUTE */
+                        if (it != d.sblocks.end() && it->second) {
+                            it->second->Apply();
+                            if (c.dx9) x.dev->SetViewport(&c.vp);
+                            else x.dev->GetViewport(&c.vp);
+                        }
                         else if (d.warn_once(0xb0000)) x.log("ddi: dp2: state set %u executed before it was recorded", handle);
                         break;
                     case 4:                                             /* CAPTURE */
@@ -2470,7 +2538,13 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
             if (x.dev) { x.dev->SetDepthStencilSurface(nullptr); }
             x.ddi->bound_rt = x.ddi->bound_z = 0;
         }
-        for (uint32_t st = 0; st < 8; st++) if (x.ddi->stage_tex[st] == a->handle) x.ddi->stage_tex[st] = 0;
+        for (uint32_t &h : x.ddi->stage_tex) if (h == a->handle) h = 0;
+        /* a context whose target or depth this was names none until the
+         * runtime's next SETRENDERTARGET (the handle may be reused first) */
+        for (auto &kv : x.ddi->ctxs) {
+            if (kv.second.rt == a->handle) kv.second.rt = 0;
+            if (kv.second.z == a->handle) kv.second.z = 0;
+        }
         VramSurf &gone = it->second;
         for (uint32_t f = 0; f < D3DPT_CUBE_FACES; f++) {   /* a cube: its faces' surfaces of it go too */
             VramSurf *fs = gone.face_h[f] ? surf(x, gone.face_h[f]) : nullptr;

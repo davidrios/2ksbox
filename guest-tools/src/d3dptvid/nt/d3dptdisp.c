@@ -1196,10 +1196,10 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     *pdwNumHeaps = 1;
     /* The FOURCC surfaces DirectDraw may create at all. It checks this list
      * before the pixel-format callbacks. The list holds the compressed
-     * textures and the DX8 format with no DDPIXELFORMAT, which d3d8.dll
-     * creates as a FOURCC of its D3DFORMAT. The first call asks for the
-     * count, the second for the codes. */
-    *pdwNumFourCCCodes = p->core.d3d ? 6 : 0;
+     * textures and the DX8 and DX9 formats with no DDPIXELFORMAT, which
+     * the runtime creates as a FOURCC of its D3DFORMAT. The first call
+     * asks for the count, the second for the codes. */
+    *pdwNumFourCCCodes = p->core.d3d ? 15 : 0;
     if (pdwFourCC && p->core.d3d) {
         pdwFourCC[0] = 0x31545844;      /* 'DXT1' (FOURCC_ is defined further down) */
         pdwFourCC[1] = 0x33545844;      /* 'DXT3' */
@@ -1207,6 +1207,11 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
         pdwFourCC[3] = 0x32545844;      /* 'DXT2' (DXT3 with premultiplied alpha: the host takes it as it is) */
         pdwFourCC[4] = 0x34545844;      /* 'DXT4' (DXT5's) */
         pdwFourCC[5] = 63;              /* D3DFMT_Q8W8V8U8 (core_caps.c) */
+        /* d3d9.dll's (M16 step 3): A16B16G16R16, A2W10V10U10, Q16W16V16U16
+         * and the six float formats */
+        pdwFourCC[6] = 36;
+        pdwFourCC[7] = 67;
+        for (i = 0; i < 7; i++) pdwFourCC[8 + i] = 110 + i;
     }
 
     for (i = 0; i < sizeof(*pHalInfo) / 4; i++) ((ULONG *)pHalInfo)[i] = 0;

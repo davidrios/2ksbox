@@ -4,6 +4,8 @@
     tools/winetest-summary.py <dir>                      a table per test file
     tools/winetest-summary.py <dir> --save <baseline>    write the run as a baseline
     tools/winetest-summary.py <dir> --baseline <file>    exit 1 on anything worse
+    ... --baseline <file> --by-function <src>             the worse keys counted per test
+                                                         function of the sources in <src>
 
 <dir> holds what WTRUN.EXE wrote (guest-tools/src/winetest/wtrun.c):
 <exe>_<test>.txt per test file and WTRUN.LOG. A baseline
@@ -16,9 +18,14 @@ line, which is stable for one pinned Wine tag:
 
 "Worse" is a key the baseline lacks, or a key failing more often than
 there. The rig's baseline is the oracle: nothing may fail on the driver
-that passes on real hardware.
+that passes on real hardware. reference/winetest/dxvk-wine.txt is DXVK's
+own (tools/winetest-dxvk.sh): a key worse than there is the driver's or
+the executor's, the rest DXVK's. With --by-function <src> (the Wine tag's
+checkout, build/winetest/wine-<tag>) the worse keys are also counted per
+test function, which is where one starts reading.
 """
 import argparse
+import bisect
 import collections
 import os
 import re
@@ -86,11 +93,27 @@ def read_baseline(path):
     return keys
 
 
+def functions(src, stem):
+    """source line -> the test function it is in, for d3d9_test_visual's visual.c"""
+    dll, test = stem.split("_test_", 1)
+    path = os.path.join(src, "dlls", dll, "tests", test + ".c")
+    starts, names = [], []
+    if os.path.exists(path):
+        with open(path, errors="replace") as f:
+            for n, line in enumerate(f, 1):
+                m = re.match(r"^(?:static )?\w[\w \*]*?\b(\w+)\s*\([^;]*$", line)
+                if m and m[1] not in ("if", "while", "for", "switch"):
+                    starts.append(n)
+                    names.append(m[1])
+    return lambda ln: names[bisect.bisect_right(starts, ln) - 1] if starts and ln >= starts[0] else "?"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dir")
     ap.add_argument("--save", metavar="BASELINE")
     ap.add_argument("--baseline", metavar="FILE")
+    ap.add_argument("--by-function", metavar="SRC")
     a = ap.parse_args()
 
     files, keys = read_run(a.dir)
@@ -116,6 +139,18 @@ def main():
         better = sum(1 for sk in base if sk not in keys)
         for s, k, n, b in worse:
             print(f"WORSE {s} {k}: {n} here, {b} in the baseline")
+        if a.by_function:
+            per = collections.OrderedDict()
+            fn = {}
+            for s, k, n, b in worse:
+                if ":" not in k:
+                    continue
+                if s not in fn:
+                    fn[s] = functions(a.by_function, s)
+                name = (s, fn[s](int(k.split(":")[1])))
+                per[name] = per.get(name, 0) + n - b
+            for (s, name), n in per.items():
+                print(f"{n:6} {s} {name}")
         print(f"{len(worse)} keys worse than {os.path.basename(a.baseline)}, "
               f"{better} of its keys pass here")
         return 1 if worse else 0

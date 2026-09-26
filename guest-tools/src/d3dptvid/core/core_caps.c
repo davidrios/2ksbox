@@ -24,8 +24,9 @@ D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 D3DCAPS8_ d3d_caps8;                        /* the DX8 DDI's caps (GetDriverInfo2) */
 D3DCAPS9_ d3d_caps9;                        /* the DX9 DDI's (M16): the DX8 ones, shader model 3.0 and the DX9 fields */
-DDPIXELFORMAT d3d_fmt8[32];                 /* its format list */
-ULONG d3d_fmt8_n;
+DDPIXELFORMAT d3d_fmt8[64];                 /* its format list: d3d8.dll's first, then the DX9 formats */
+ULONG d3d_fmt8_n;                           /* the entries d3d8.dll is told of */
+ULONG d3d_fmt9_n;                           /* and d3d9.dll (M16 step 3) */
 struct d3dpt_zformats d3d_zformats;
 
 /* the pixel format of a DirectDraw surface as a D3DFORMAT the host knows; 0 = not mirrored */
@@ -58,6 +59,10 @@ ULONG pf_format(const DDPIXELFORMAT *f)
         f->dwBumpDuBitMask == 0x00ff && f->dwBumpDvBitMask == 0xff00) {
         return D3DFMT_V8U8_;                /* a bump map (EMBM): signed du, dv, passed to the host as is */
     }
+    if ((f->dwFlags & DDPF_BUMPDUDV) && !(f->dwFlags & DDPF_BUMPLUMINANCE) && f->dwBumpBitCount == 32 &&
+        f->dwBumpDuBitMask == 0xffff && f->dwBumpDvBitMask == 0xffff0000) {
+        return D3DFMT_V16U16_;
+    }
     if ((f->dwFlags & DDPF_BUMPDUDV) && (f->dwFlags & DDPF_BUMPLUMINANCE_)) {
         /* a bump map with a luminance (BUMPENVMAPLUMINANCE): the luminance
          * mask sits in the dwBBitMask slot (dwBumpLuminanceBitMask) */
@@ -78,6 +83,7 @@ ULONG pf_format(const DDPIXELFORMAT *f)
         if (f->dwRGBBitCount == 8 && f->dwRBitMask == 0xff && !alpha) return D3DFMT_L8_;
         if (f->dwRGBBitCount == 16 && f->dwRBitMask == 0xff && alpha && f->dwRGBAlphaBitMask == 0xff00) return D3DFMT_A8L8_;
         if (f->dwRGBBitCount == 8 && f->dwRBitMask == 0x0f && alpha && f->dwRGBAlphaBitMask == 0xf0) return D3DFMT_A4L4_;
+        if (f->dwRGBBitCount == 16 && f->dwRBitMask == 0xffff && !alpha) return D3DFMT_L16_;
         return 0;
     }
     if ((f->dwFlags & (DDPF_ALPHA_ | DDPF_RGB | DDPF_LUMINANCE_)) == DDPF_ALPHA_ && f->dwRGBBitCount == 8) {
@@ -86,6 +92,13 @@ ULONG pf_format(const DDPIXELFORMAT *f)
     if (f->dwFlags & DDPF_RGB) {
         BOOL alpha = (f->dwFlags & DDPF_ALPHAPIXELS) && f->dwRGBAlphaBitMask;
         if (f->dwRGBBitCount == 32 && f->dwRBitMask == 0x00ff0000) return alpha ? D3DFMT_A8R8G8B8_ : D3DFMT_X8R8G8B8_;
+        if (f->dwRGBBitCount == 32) {
+            /* the DX9 formats with a DDPIXELFORMAT of their own (M16) */
+            if (f->dwRBitMask == 0x000000ff && f->dwGBitMask == 0x0000ff00) return alpha ? D3DFMT_A8B8G8R8_ : D3DFMT_X8B8G8R8_;
+            if (f->dwRBitMask == 0x000003ff && alpha) return D3DFMT_A2B10G10R10_;
+            if (f->dwRBitMask == 0x3ff00000 && alpha) return D3DFMT_A2R10G10B10_;
+            if (f->dwRBitMask == 0x0000ffff && f->dwGBitMask == 0xffff0000) return D3DFMT_G16R16_;
+        }
         if (f->dwRGBBitCount == 16) {
             if (f->dwRBitMask == 0xf800) return D3DFMT_R5G6B5_;
             if (f->dwRBitMask == 0x7c00) return alpha ? D3DFMT_A1R5G5B5_ : D3DFMT_X1R5G5B5_;
@@ -502,6 +515,46 @@ void d3d_caps_init(d3dpt_core *p)
         }
     }
 
+    /* The DX9 formats (M16 step 3), after the DX8 list and told to d3d9.dll
+     * alone. None has a DirectDraw pixel format d3d8.dll would know, and a
+     * format it did not expect once made it drop the HAL. The runtime makes
+     * the ones with no DDPIXELFORMAT (the float and 64-bit ones) as FOURCC
+     * surfaces whose code is the D3DFORMAT, as DX8's Q8W8V8U8, so the
+     * layers list those among their FOURCC codes. The host creates each in
+     * its own format (DXVK has every one). Float targets blend and filter
+     * as DXVK does: no NOALPHABLEND, no NOFILTER */
+    d3d_fmt9_n = d3d_fmt8_n;
+    {
+        ULONG n8 = d3d_fmt8_n;
+        ULONG cube = (ddflags(p) & DDF_NO_CUBE) ? 0 : D3DFORMAT_OP_CUBETEXTURE_;
+        ULONG vol = (ddflags(p) & DDF_NO_VOLUME) ? 0 : D3DFORMAT_OP_VOLUMETEXTURE_;
+        /* vertex texture fetch, a vs 3.0 feature: on the float formats, as
+         * the GeForce 6 (which has it on the 32-bit ones only) */
+        ULONG vtx = (ddflags(p) & (DDF_NO_SHADERS | DDF_SM2)) ? 0 : D3DFORMAT_OP_VERTEXTEXTURE_;
+        /* a render target, and an offscreen plain surface for its
+         * GetRenderTargetData */
+        ULONG rt = D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_OFFSCREENPLAIN_ | cube | vol;
+
+        fmt8_add(D3DFMT_A8B8G8R8_, D3DFORMAT_OP_TEXTURE_ | cube | vol);
+        fmt8_add(D3DFMT_X8B8G8R8_, D3DFORMAT_OP_TEXTURE_ | cube | vol);
+        fmt8_add(D3DFMT_A2B10G10R10_, rt);
+        fmt8_add(D3DFMT_A2R10G10B10_, rt);
+        fmt8_add(D3DFMT_G16R16_, rt);
+        fmt8_add(D3DFMT_A16B16G16R16_, rt);
+        fmt8_add(D3DFMT_L16_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_V16U16_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
+        fmt8_add(D3DFMT_Q16W16V16U16_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
+        fmt8_add(D3DFMT_A2W10V10U10_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
+        fmt8_add(D3DFMT_R16F_, rt | vtx);
+        fmt8_add(D3DFMT_G16R16F_, rt | vtx);
+        fmt8_add(D3DFMT_A16B16G16R16F_, rt | vtx);
+        fmt8_add(D3DFMT_R32F_, rt | vtx);
+        fmt8_add(D3DFMT_G32R32F_, rt | vtx);
+        fmt8_add(D3DFMT_A32B32G32R32F_, rt | vtx);
+        d3d_fmt9_n = d3d_fmt8_n;
+        d3d_fmt8_n = n8;
+    }
+
     /* the DX9 DDI's caps (M16): the device of the DX8 ones, with shader
      * model 3.0 as a GeForce 6 claims it (the reference rig's card, doc
      * 09), or 2.0 as a Radeon 9700 does (DDF_SM2, the A/B). The shader
@@ -552,11 +605,18 @@ void d3d_caps_init(d3dpt_core *p)
     d3d_caps9.c8.GuardBandTop = -8192.0f;
     d3d_caps9.c8.GuardBandRight = 8192.0f;
     d3d_caps9.c8.GuardBandBottom = 8192.0f;
+    /* StretchRect's filters: point and linear, both done as the nearest
+     * texel for now (walk_blt9); without them the runtime refuses every
+     * scaled StretchRect */
+    d3d_caps9.StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MAGFPOINT |
+                                      D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MAGFLINEAR;
     if (d3d_caps9.MaxVertexShader30InstructionSlots) {
         d3d_caps9.VertexTextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MAGFPOINT;
     }
-    /* SETSTREAMSOURCE2's offset is the walker's (core_dp2.c) */
-    d3d_caps9.DevCaps2 = D3DDEVCAPS2_STREAMOFFSET_ | D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET_;
+    /* SETSTREAMSOURCE2's offset is the walker's (core_dp2.c); StretchRect
+     * from a texture is the driver's BLT on the texture's memory */
+    d3d_caps9.DevCaps2 = D3DDEVCAPS2_STREAMOFFSET_ | D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET_ |
+                         D3DDEVCAPS2_CAN_STRETCHRECT_FROM_TEXTURES_;
     d3d_caps9.DeclTypes = 0x3ff;                /* UBYTE4 .. FLOAT16_4: DXVK reads every one */
     d3d_caps9.NumSimultaneousRTs = 1;           /* SETRENDERTARGET2 beyond index 0 is not walked yet */
     d3d_caps9.NumberOfAdaptersInGroup = 1;
@@ -597,15 +657,16 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
     case D3DGDI2_TYPE_GETFORMATCOUNT_: {
         DD_GETFORMATCOUNTDATA_ *f = (DD_GETFORMATCOUNTDATA_ *)g;
         if (want < sizeof(*f)) return DDERR_CURRENTLYNOTAVAIL;
-        f->dwFormatCount = d3d_fmt8_n;
+        f->dwFormatCount = (dx9 && c->rt_dxver >= 0x900) ? d3d_fmt9_n : d3d_fmt8_n;
         *actual = sizeof(*f);
         return DD_OK;
     }
     case D3DGDI2_TYPE_GETFORMAT_: {
         DD_GETFORMATDATA_ *f = (DD_GETFORMATDATA_ *)g;
-        if (want < sizeof(*f) || f->dwFormatIndex >= d3d_fmt8_n) return DDERR_CURRENTLYNOTAVAIL;
+        BOOL rt9 = dx9 && c->rt_dxver >= 0x900;
+        if (want < sizeof(*f) || f->dwFormatIndex >= (rt9 ? d3d_fmt9_n : d3d_fmt8_n)) return DDERR_CURRENTLYNOTAVAIL;
         f->format = d3d_fmt8[f->dwFormatIndex];
-        if (dx9 && c->rt_dxver >= 0x900) {
+        if (rt9) {
             /* d3d9.dll makes an offscreen plain surface (GetRenderTargetData's
              * target, a 2D game's back store) only in a format with this op.
              * Said to the DX9 runtime alone: the DX8 list stays the one
@@ -615,6 +676,22 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
             if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fcc == D3DFMT_R5G6B5_ || fcc == D3DFMT_X1R5G5B5_ ||
                 fcc == D3DFMT_A1R5G5B5_ || fcc == D3DFMT_A4R4G4B4_) {
                 f->format.dwRBitMask |= D3DFORMAT_OP_OFFSCREENPLAIN_;
+            }
+            /* sRGB where DXVK has it: reads on the 8-bit RGB formats and the
+             * DXTs, writes to the 8-bit RGB targets (D3DSAMP_SRGBTEXTURE and
+             * D3DRS_SRGBWRITEENABLE reach the host as they are) */
+            if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fmt_is_dxt(fcc)) {
+                f->format.dwRBitMask |= D3DFORMAT_OP_SRGBREAD_;
+            }
+            if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_) {
+                f->format.dwRBitMask |= D3DFORMAT_OP_SRGBWRITE_;
+            }
+            /* the ARGB group, among which StretchRect converts (walk_blt9
+             * through a D3DCOLOR); the runtime refuses a StretchRect or a
+             * CheckDeviceFormatConversion between two formats without it */
+            if (fcc == D3DFMT_X8R8G8B8_ || fcc == D3DFMT_A8R8G8B8_ || fcc == D3DFMT_R5G6B5_ || fcc == D3DFMT_X1R5G5B5_ ||
+                fcc == D3DFMT_A1R5G5B5_) {
+                f->format.dwRBitMask |= D3DFORMAT_MEMBEROFGROUP_ARGB_ | D3DFORMAT_OP_CONVERT_TO_ARGB_;
             }
         }
         *actual = sizeof(*f);
@@ -668,7 +745,7 @@ HRESULT core_gdi2_answer(d3dpt_core *c, void *data, ULONG *actual)
         DD_MULTISAMPLEQUALITYLEVELSDATA_ *m = (DD_MULTISAMPLEQUALITYLEVELSDATA_ *)g;
         ULONG ms = 0, t;
         if (!dx9 || want < sizeof(*m)) return DDERR_CURRENTLYNOTAVAIL;
-        for (i = 0; i < d3d_fmt8_n; i++) {
+        for (i = 0; i < d3d_fmt9_n; i++) {
             if (d3d_fmt8[i].dwFourCC == m->Format) ms = d3d_fmt8[i].dwGBitMask & 0xffff;
         }
         t = m->MSType;

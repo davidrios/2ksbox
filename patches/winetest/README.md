@@ -4,13 +4,14 @@
 `dlls/d3d9/tests/` and `include/wine/` at a pinned tag (a sparse
 checkout in `build/winetest/<tag>/`, not vendored: the tests are LGPL)
 and applies these in filename order onto restored sources before every
-build. Each one only fences off code with a macro the script defines, so
-the tests themselves are unchanged. Track M16 (`docs/tracks/m16-dx9-ddi.md`).
+build. Each one is behind a macro the script defines, and none changes
+what a test checks. Track M16 (`docs/tracks/m16-dx9-ddi.md`).
 
 | Patch | What | Why | Drop when |
 |---|---|---|---|
 | `01-d3d9-device-no-d3d9on12` | `WINETEST_NO_D3D9ON12` fences `test_d3d9on12` and its includes in d3d9 `device.c` | it needs `d3d9on12.h` and `dxgi1_4.h`, which mingw lacks; D3D9On12 is Windows 10, so the test skips on XP and 98 anyway | never |
 | `02-d3d8-visual-no-wow64` | `WINETEST_NO_WOW64` fences the WoW64 probe in d3d8 `visual.c`'s `START_TEST` | it reads `TEB64` / `PEB64` and a `TEB` field mingw's headers do not have; a 32-bit XP or 98 guest is never WoW64 | never |
+| `03-d3d9-visual-null-device-skip` | `WINETEST_NULL_DEVICE_SKIP` returns from d3d9 `visual.c`'s `test_desktop_window` when the device with a NULL window was not made | XP's runtime refuses a windowed device with neither a focus nor a device window (the documented rule), and the test then calls through the NULL device and ends the file with 17 tests unrun | never |
 
 Regenerate a patch as in `patches/qemu/README.md`: `git diff --no-index
 --no-prefix` between a pristine copy and the edited one, then apply it

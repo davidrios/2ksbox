@@ -389,6 +389,13 @@ typedef struct _D3DCAPS9_ {
 #define D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_ 0x00000080
 #define D3DFORMAT_OP_DISPLAYMODE_              0x00000400
 #define D3DFORMAT_OP_3DACCELERATION_           0x00000800
+/* DX9's (ddk/ddrawint.h) */
+#define D3DFORMAT_OP_CONVERT_TO_ARGB_          0x00002000
+#define D3DFORMAT_OP_SRGBREAD_                 0x00008000
+#define D3DFORMAT_MEMBEROFGROUP_ARGB_          0x00080000
+#define D3DFORMAT_OP_SRGBWRITE_                0x00100000
+#define D3DFORMAT_OP_AUTOGENMIPMAP_            0x00400000
+#define D3DFORMAT_OP_VERTEXTEXTURE_            0x00800000
 
 #define D3DDEVCAPS_PUREDEVICE         0x00100000
 #define D3DPMISCCAPS_COLORWRITEENABLE 0x00000080
@@ -421,6 +428,7 @@ typedef struct _D3DCAPS9_ {
 #define D3DVS_VERSION_(major, minor)  (0xFFFE0000 | ((major) << 8) | (minor))
 #define D3DPS_VERSION_(major, minor)  (0xFFFF0000 | ((major) << 8) | (minor))
 #define D3DDEVCAPS2_STREAMOFFSET_     0x00000001   /* d3d9caps.h */
+#define D3DDEVCAPS2_CAN_STRETCHRECT_FROM_TEXTURES_ 0x00000010   /* d3d9caps.h */
 #define D3DPRASTERCAPS_SCISSORTEST_   0x01000000   /* d3d9caps.h: the DX9 caps d3d9.dll requires (core_caps.c) */
 #define D3DPRASTERCAPS_SLOPESCALEDEPTHBIAS_ 0x02000000
 #define D3DPRASTERCAPS_DEPTHBIAS_     0x04000000

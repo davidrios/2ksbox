@@ -95,6 +95,23 @@
 #define D3DFMT_D24S8_     75u
 #define D3DFMT_D15S1_     73u
 #define D3DFMT_D32_       71u
+/* the DX9 runtime's formats (M16 step 3): d3d9.dll alone is told of them */
+#define D3DFMT_A2B10G10R10_ 31u
+#define D3DFMT_A8B8G8R8_    32u
+#define D3DFMT_X8B8G8R8_    33u
+#define D3DFMT_G16R16_      34u
+#define D3DFMT_A2R10G10B10_ 35u
+#define D3DFMT_A16B16G16R16_ 36u
+#define D3DFMT_V16U16_      64u
+#define D3DFMT_A2W10V10U10_ 67u
+#define D3DFMT_L16_         81u
+#define D3DFMT_Q16W16V16U16_ 110u
+#define D3DFMT_R16F_        111u
+#define D3DFMT_G16R16F_     112u
+#define D3DFMT_A16B16G16R16F_ 113u
+#define D3DFMT_R32F_        114u
+#define D3DFMT_G32R32F_     115u
+#define D3DFMT_A32B32G32R32F_ 116u
 #define FOURCC_(a, b, c, d) ((ULONG)(UCHAR)(a) | ((ULONG)(UCHAR)(b) << 8) | ((ULONG)(UCHAR)(c) << 16) | ((ULONG)(UCHAR)(d) << 24))
 
 #define D3D_MAX_CTX 16
@@ -305,8 +322,8 @@ extern D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 extern D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 extern D3DCAPS8_ d3d_caps8;
 extern D3DCAPS9_ d3d_caps9;
-extern DDPIXELFORMAT d3d_fmt8[32];
-extern ULONG d3d_fmt8_n;
+extern DDPIXELFORMAT d3d_fmt8[64];
+extern ULONG d3d_fmt8_n, d3d_fmt9_n;
 extern DDSURFACEDESC d3d_texformats[11];
 extern ULONG d3d_texformats_n;
 extern struct d3dpt_zformats { DWORD count; DDPIXELFORMAT pf[3]; } d3d_zformats;

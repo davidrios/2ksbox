@@ -29,36 +29,51 @@ ps 3.0, 256 vertex constants, 16 streams and hardware vertex processing
 (`DX9CAPS.EXE`), and `d3d8.dll` still sees the DX8 driver (the ten DX8
 probes and SHTEST pass). Doc 15 "The DirectX 9 DDI" has the queries, the
 runtime's caps check (the hard part: a failed check gives DX7-level caps,
-not an error) and the tokens. Step 2 is most of the way: declarations,
+not an error) and the tokens. Step 2 is done (2026-09-26): declarations,
 shader code, integer / boolean constants, scissor, SETSTREAMSOURCE2 and
 the target tokens reach the host (protocol v14); the blits and colour fill
 run in the driver and the event and occlusion queries answer (no wire
-change). Mip generation and instancing are still dropped with a log line.
+change); D3DFEAT9's frame **and every getter line** match the native run.
+Step 3 has its formats: the DX9 formats (float, 10-bit, 16-bit), sRGB,
+the ARGB group's conversions and the DX9 samplers (doc 15 "The DX9
+formats", "Samplers"). Mip generation, instancing and several render
+targets are still to do (they were step 2's list; they go with step 3).
 
 - **D3DGAME9 through XP's own `d3d9.dll`** (2026-09-25,
   `xp-driver-test.sh d3dgame9`): 600 frames on a hardware-vertex-processing
   device, frame 300 dumped, **0 pixels differ** from the native DXVK
   frame since finding 8's fix (17 % before it, all texture minification).
   D3DGAME8 through `d3d8.dll` on the same build: 0 pixels differ.
-- **D3DFEAT9 through `d3d9.dll`** (`xp-driver-test.sh d3dfeat9`, new):
-  the frame is **byte-identical** to the native run, and the occlusion
-  query counts the same 21316 pixels. One getter line differs: the
-  A16B16G16R16F render target's readback (`D3DERR_INVALIDCALL`), a float
-  format, which is step 3. D3DFEAT9 itself changed: its ColorFill target is
+- **D3DFEAT9 through `d3d9.dll`** (`xp-driver-test.sh d3dfeat9`): the
+  frame is **byte-identical** to the native run, the occlusion query
+  counts the same 21316 pixels, and since 2026-09-26 the A16B16G16R16F
+  render target's readback matches too (it was `D3DERR_INVALIDCALL`
+  until the float formats were listed; listing them first broke the
+  whole frame, findings 13 and 14). D3DFEAT9 itself changed: its ColorFill target is
   a render-target texture now, because Microsoft's runtime refuses
   ColorFill on a default-pool texture without `D3DUSAGE_RENDERTARGET`
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
-- **Wine's suite on the DX9 face:** d3d9 stateblock 14738 checks, **0**
-  failures (182 on the DX8 face: the integer / boolean constants). d3d9
-  visual reaches the SM2 / SM3 tests and fails **426** checks (935 before
-  the blits, queries and `dcl`) before a crash inside the test program at
-  `visual.c:25891`. What it shows next: vertex-shader fog
-  (`fog_with_shader_test`, `visual.c:3350`), point size from a vertex
-  shader (`test_pointsize`), `GENERATEMIPSUBLEVELS`
-  (`test_generate_mipmap`). They fail now because vs 1.x functions run
-  (finding 11) where the fixed function stood in before. The baseline in
-  `reference/winetest/xp-driver.txt` is the DX8 face's; the DX9 face runs
-  more tests, so a new one is due once the crashes are gone.
+- **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
+  checks, **0** failures. d3d9 visual **runs to its end**: 201461 checks,
+  803 failures (the crash at `visual.c:25891` was the test's own, a
+  device with no window, which XP refuses: patch 03 of
+  `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
+  again from this run, the DX9 face's (107 keys); d3d9 / d3d8 device and
+  d3d8 visual still crash where they did.
+- **DXVK's own failures** (`tools/winetest-dxvk.sh`, new): the same test
+  EXEs under the host's Wine on DXVK's 32-bit `d3d9.dll` / `d3d8.dll`,
+  in a headless sway. d3d9 visual 209672 checks, 1291 failures, no crash;
+  d3d9 device 154166 / 830. Saved as `reference/winetest/dxvk-wine.txt`.
+  A guest failure DXVK shares is DXVK's (most of `fog_with_shader_test`'s
+  174: a vs 1.x that writes no `oFog` is not fogged, also on native
+  DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
+  build/winetest/wine-11.0` counts the rest per test function. Against it
+  the guest's d3d9 visual has 84 keys worse. The largest: `stream_test`
+  51 (instancing), `test_fog` 48, `test_pointsize` 28 (sprite
+  coordinates under ps 2.0, a PSIZE element on an unbound stream),
+  `volume_dxtn_test` 24, `test_updatetexture` 17 (finding 2),
+  `depth_blit_test` 12 (depth StretchRect), `test_default_diffuse` 9,
+  `test_generate_mipmap` 7.
 - **Findings from the DX9 face:**
   6. *Fixed.* `d3d9.dll` registers its textures' system-memory copies
      with no pixel format (a DXT1 one as its block rows' bytes by block
@@ -111,6 +126,34 @@ change). Mip generation and instancing are still dropped with a log line.
      its cube lookup (the normal as `oT1`) black. `sm1_valid` takes `dcl`
      for vs 1.x (a usage token, then an input register);
      `d3dpt-dp2-test` has the case and a hostile one.
+  12. *Fixed.* The DX9 formats were not listed, so no float target or
+     texture existed (doc 15 "The DX9 formats"). Listed for `d3d9.dll`
+     only, after `d3d8.dll`'s list; the sRGB ops and the ARGB group too.
+     Wine's `srgbwrite_format_test`, `np2_stretch_rect_test`,
+     `color_fill_test` (float, G16R16) and `test_format_conversion`
+     (but YUY2) pass since.
+  13. *Fixed.* With a float target made, released and replaced, the next
+     DP2 call failed as a batch (`BAD_HANDLE`) and every Present after
+     it with `D3DERR_DEVICELOST`: the host bound the context's target
+     before walking the stream, and the target was gone, its handle
+     already reused. `d3d9.dll` sends a SetRenderTarget lazily (with the
+     next draw), so a context now forgets a released target and the
+     stream's SETRENDERTARGET binds the new one.
+  14. *Fixed.* Then every draw of D3DFEAT9's frame came out empty: a
+     CreateStateBlock between the float target and the lazy switch back
+     captured the 4x4 viewport on the host, and each EXECUTE put it back
+     (the occlusion query counted 1 pixel). A DX9 context's viewport now
+     stays the stream's across EXECUTE.
+  15. *Open.* The host device's state is shared by every context: d3d8
+     visual's `lighting_test` (`visual.c:640`) fails only after d3d9
+     visual has run in the same boot, most likely a light the previous
+     process left enabled. The runtime sends a new context its render
+     and stage states, not every light.
+  16. *Open.* `test_fog` / `test_texture_transform_flags` on an
+     A32B32G32R32F target: 48 of `test_fog`'s checks fail beyond DXVK's
+     (a vs that writes the specular alpha, not `oFog`), and the texture
+     transform checks read alpha 0 where 1 is due (DXVK fails the same
+     count there).
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
@@ -229,6 +272,11 @@ track builds.
   bring back `C:\2KSBOX\WINETEST`, and save each with
   `tools/winetest-summary.py <dir> --save reference/winetest/rig-xp.txt`
   (`rig-98.txt`).
+- **DXVK's own run** says which failures are DXVK's: `tools/winetest-dxvk.sh`
+  runs the same EXEs on the host's Wine with DXVK's `d3d9.dll`, and
+  `reference/winetest/dxvk-wine.txt` is its baseline. A guest failure
+  DXVK shares is not the driver's to fix (the executor's goldens are
+  DXVK's too); the rest is, `--by-function` says where.
 - **The other oracles stay**: D3DGAME9 / D3DGAME8 / D3DFEAT9 against the
   rig golden and the native DXVK frame (doc 14 P0a), now through
   Microsoft's runtime instead of our DLLs, and the DX8 probes of doc 15

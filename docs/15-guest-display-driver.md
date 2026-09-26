@@ -1333,7 +1333,7 @@ the 9x layer not yet.
   (index 0) and `SETDEPTHSTENCIL` become DX7's `SETRENDERTARGET` pair.
   Integer / boolean constants and the scissor go to the host.
   GENERATEMIPSUBLEVELS and SETSTREAMSOURCEFREQ are dropped with a
-  `dx9 token N not walked yet` line (M16 step 2).
+  `dx9 token N not walked yet` line (M16 step 3).
 - **Blits.** BLT (StretchRect, and `GetRenderTargetData` into system
   memory), SURFACEBLT (UpdateSurface) and COLORFILL run in the driver on
   the surfaces' memory, like TEXBLT: the record ends before one that
@@ -1366,6 +1366,42 @@ the 9x layer not yet.
   checks only (no SM2/3 validator for v1, user decision); 1.x keeps
   `sm1_valid`, which takes the `dcl` instructions `d3d9.dll`'s vs 1.1
   carries (`d3d8.dll`'s never has them).
+- **The DX9 formats** (step 3). After `d3d8.dll`'s list come the ones
+  only `d3d9.dll` is told of (`d3d_fmt9_n`): A8B8G8R8, X8B8G8R8,
+  A2B10G10R10, A2R10G10B10, G16R16, A16B16G16R16, L16, V16U16,
+  Q16W16V16U16, A2W10V10U10 and the six float formats R16F to
+  A32B32G32R32F, the render-capable ones with
+  `OFFSCREEN_RENDERTARGET` and `OFFSCREENPLAIN` (for
+  `GetRenderTargetData`), the float ones with `VERTEXTEXTURE` under vs
+  3.0. The ones with no DDPIXELFORMAT arrive as FOURCC surfaces whose code
+  is the D3DFORMAT, as DX8's Q8W8V8U8, so the NT layer lists 36, 67 and
+  110..116 among its FOURCC codes; `pf_format` maps the RGB-mask ones.
+  For the DX9 runtime the formats also carry `SRGBREAD` (the 8-bit RGB
+  ones and the DXTs), `SRGBWRITE` (X8R8G8B8, A8R8G8B8) and the ARGB group
+  (`D3DFORMAT_MEMBEROFGROUP_ARGB` 0x80000 plus `CONVERT_TO_ARGB`, on
+  X8R8G8B8, A8R8G8B8, R5G6B5, X1R5G5B5, A1R5G5B5), without which the
+  runtime refuses a StretchRect or `CheckDeviceFormatConversion` between
+  two formats. The BLT converts inside the group through a D3DCOLOR;
+  COLORFILL packs every listed format, the float ones by integer long
+  division (the kernel-mode driver keeps off the FPU).
+  `StretchRectFilterCaps` claims point and linear; both take the nearest
+  texel for now. `D3DDEVCAPS2_CAN_STRETCHRECT_FROM_TEXTURES` is claimed.
+- **Samplers.** A DX9 stage past the fixed function's eight is a sampler
+  only: 8..15 for ps 2.0's sixteen, and **257..260 for the vertex
+  samplers** (D3DVERTEXTEXTURESAMPLER0..3, seen in a trace). The
+  sampler states arrive as texture stage states: DX7's 12..21, DX8's
+  ADDRESSW 25, and 29..31 for sRGB read, element index and displacement
+  offset (the host's `sampler_state`). ADDRESSW went to
+  `SetTextureStageState` before, where D3D9 has no such state.
+- **Lazy targets.** `d3d9.dll` sends a SetRenderTarget and the viewport
+  it resets at the next draw or clear, not when called. A surface
+  released while still the context's target is forgotten by the context
+  (its handle is reused at once), and a DP2 call whose context names no
+  target binds the one its SETRENDERTARGET brings. A CreateStateBlock in
+  between captures the old target's viewport on the host, so executing a
+  state set leaves a DX9 context's viewport as the stream last set it
+  (D3DFEAT9's 4x4 float target put its whole frame through a 4x4
+  viewport until then).
 
 ## The ddflags bits
 
