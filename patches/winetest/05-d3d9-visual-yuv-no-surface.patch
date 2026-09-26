@@ -1,0 +1,13 @@
+diff --git dlls/d3d9/tests/visual.c dlls/d3d9/tests/visual.c
+index ddb1eac..0172d5c 100644
+--- dlls/d3d9/tests/visual.c
++++ dlls/d3d9/tests/visual.c
+@@ -12857,7 +12857,7 @@ static void yuv_color_test(void)
+         hr = IDirect3DDevice9_CreateOffscreenPlainSurface(device, 4, 1, test_data[i].format,
+                 D3DPOOL_DEFAULT, &surface, NULL);
+         ok(SUCCEEDED(hr), "Failed to create surface, hr %#lx.\n", hr);
+-
++        if (FAILED(hr)) continue;
+ 
+         hr = IDirect3DSurface9_LockRect(surface, &lr, NULL, 0);
+         ok(SUCCEEDED(hr), "Failed to lock surface, hr %#lx.\n", hr);

@@ -1,0 +1,75 @@
+diff --git dlls/d3d8/tests/device.c dlls/d3d8/tests/device.c
+index 7059e82..0789d66 100644
+--- dlls/d3d8/tests/device.c
++++ dlls/d3d8/tests/device.c
+@@ -189,7 +189,7 @@ static IDirect3DDevice8 *create_device(IDirect3D8 *d3d8, HWND focus_window, cons
+     D3DPRESENT_PARAMETERS present_parameters = {0};
+     unsigned int adapter_ordinal;
+     IDirect3DDevice8 *device;
+-    DWORD behavior_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING;
++    DWORD behavior_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING; HRESULT hr;
+ 
+     adapter_ordinal = D3DADAPTER_DEFAULT;
+     present_parameters.BackBufferWidth = 640;
+@@ -229,9 +229,9 @@ static IDirect3DDevice8 *create_device(IDirect3D8 *d3d8, HWND focus_window, cons
+         return NULL;
+     behavior_flags ^= (D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_SOFTWARE_VERTEXPROCESSING);
+ 
+-    if (SUCCEEDED(IDirect3D8_CreateDevice(d3d8, adapter_ordinal, D3DDEVTYPE_HAL, focus_window,
++    if (SUCCEEDED(hr = IDirect3D8_CreateDevice(d3d8, adapter_ordinal, D3DDEVTYPE_HAL, focus_window,
+             behavior_flags, &present_parameters, &device)))
+-        return device;
++        return device; WINETEST_TRACE_CREATE_DEVICE(hr, adapter_ordinal, behavior_flags, present_parameters);
+ 
+     return NULL;
+ }
+diff --git dlls/d3d8/tests/visual.c dlls/d3d8/tests/visual.c
+index 8387c34..98f2940 100644
+--- dlls/d3d8/tests/visual.c
++++ dlls/d3d8/tests/visual.c
+@@ -287,7 +287,7 @@ static void check_rt_color_(unsigned int line, IDirect3DSurface8 *rt, D3DCOLOR e
+ static IDirect3DDevice8 *create_device(IDirect3D8 *d3d, HWND device_window, HWND focus_window, BOOL windowed)
+ {
+     D3DPRESENT_PARAMETERS present_parameters = {0};
+-    IDirect3DDevice8 *device;
++    IDirect3DDevice8 *device; HRESULT hr;
+ 
+     present_parameters.Windowed = windowed;
+     present_parameters.hDeviceWindow = device_window;
+@@ -298,9 +298,9 @@ static IDirect3DDevice8 *create_device(IDirect3D8 *d3d, HWND device_window, HWND
+     present_parameters.EnableAutoDepthStencil = TRUE;
+     present_parameters.AutoDepthStencilFormat = D3DFMT_D24S8;
+ 
+-    if (SUCCEEDED(IDirect3D8_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, focus_window,
++    if (SUCCEEDED(hr = IDirect3D8_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, focus_window,
+             D3DCREATE_HARDWARE_VERTEXPROCESSING, &present_parameters, &device)))
+-        return device;
++        return device; WINETEST_TRACE_CREATE_DEVICE(hr, D3DADAPTER_DEFAULT, D3DCREATE_HARDWARE_VERTEXPROCESSING, present_parameters);
+ 
+     return NULL;
+ }
+diff --git dlls/d3d9/tests/device.c dlls/d3d9/tests/device.c
+index 364e720..eaf3465 100644
+--- dlls/d3d9/tests/device.c
++++ dlls/d3d9/tests/device.c
+@@ -252,7 +252,7 @@ static IDirect3DDevice9 *create_device(IDirect3D9 *d3d9, HWND focus_window, cons
+     D3DPRESENT_PARAMETERS present_parameters = {0};
+     unsigned int adapter_ordinal;
+     IDirect3DDevice9 *device;
+-    DWORD behavior_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING;
++    DWORD behavior_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING; HRESULT hr;
+ 
+     adapter_ordinal = D3DADAPTER_DEFAULT;
+     present_parameters.BackBufferWidth = 640;
+@@ -300,9 +300,9 @@ static IDirect3DDevice9 *create_device(IDirect3D9 *d3d9, HWND focus_window, cons
+             & ~(D3DCREATE_MIXED_VERTEXPROCESSING | D3DCREATE_SOFTWARE_VERTEXPROCESSING))
+             | D3DCREATE_HARDWARE_VERTEXPROCESSING;
+ 
+-    if (SUCCEEDED(IDirect3D9_CreateDevice(d3d9, adapter_ordinal, D3DDEVTYPE_HAL, focus_window,
++    if (SUCCEEDED(hr = IDirect3D9_CreateDevice(d3d9, adapter_ordinal, D3DDEVTYPE_HAL, focus_window,
+             behavior_flags, &present_parameters, &device)))
+-        return device;
++        return device; WINETEST_TRACE_CREATE_DEVICE(hr, adapter_ordinal, behavior_flags, present_parameters);
+ 
+     return NULL;
+ }

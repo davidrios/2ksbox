@@ -43,7 +43,8 @@ build() {  # $1 = d3d8 | d3d9
   for f in "$dir"/*.c; do
     n=$(basename "$f" .c)
     names+=("$n")
-    "$CC" "${FLAGS[@]}" -c "$f" -o "$OBJ/${dll}_$n.o"
+    # w98compat.h: Win98's missing Unicode display calls
+    "$CC" "${FLAGS[@]}" -include "$ROOT/guest-tools/src/winetest/w98compat.h" -c "$f" -o "$OBJ/${dll}_$n.o"
     objs+=("$OBJ/${dll}_$n.o")
   done
   {
@@ -58,7 +59,7 @@ build() {  # $1 = d3d8 | d3d9
   "$CC" "${FLAGS[@]}" -c "$OBJ/${dll}_testlist.c" -o "$OBJ/${dll}_testlist.o"
   "$CC" "${FLAGS[@]}" -o "$OUT/${dll}_test.exe" "${objs[@]}" \
     "$OBJ/${dll}_testlist.o" "$ROOT/guest-tools/src/winetest/wine_dbg.c" \
-    -l"$dll" -luser32 -lgdi32
+    -l"$dll" -luser32 -lgdi32 -luuid   # -luuid: IID_IUnknown, which w98compat.h's early windows.h leaves uninstantiated
   echo "built $OUT/${dll}_test.exe (${names[*]})"
 }
 

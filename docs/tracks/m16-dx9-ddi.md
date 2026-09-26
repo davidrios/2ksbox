@@ -452,8 +452,13 @@ track builds.
   d3d9 device fail device creation and skip nearly everything, and d3d9
   visual crashes at `visual.c:12859` (a failed CreateOffscreenPlainSurface,
   then the test's own NULL dereference). Only d3d9 stateblock (14738, 0)
-  is whole. A useful Win98 oracle needs a `patches/winetest/` patch for
-  the W calls (or unicows) and a guard at 12859, before step 5.
+  is whole. For a useful Win98 oracle the test build now carries
+  `guest-tools/src/winetest/w98compat.h` (the Unicode display calls fall
+  back to the ANSI ones where Win98 has only a stub), patch 04 (a failed
+  `CreateDevice` is traced, to see why d3d8 made no device) and patch 05
+  (the guard at 12859), all without moving a source line; XP's run is
+  key for key the same. `build/winetest/rig-winetest-98.zip` is the
+  build for the rig's next Win98 run (2026-09-26, waiting on the user).
 - **DXVK's own run** says which failures are DXVK's: `tools/winetest-dxvk.sh`
   runs the same EXEs on the host's Wine with DXVK's `d3d9.dll`, and
   `reference/winetest/dxvk-wine.txt` is its baseline. A guest failure
