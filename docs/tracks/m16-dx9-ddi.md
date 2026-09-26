@@ -369,22 +369,17 @@ fetch checked by a title, the 2.0-cap flag.
      `conditional_np2_repeat_test`'s 2 (finding 30's clamp). The volume's
      mip-count rule has no cap. A real card meets the same rule, so the
      rig's Win98 run should agree.
-  34. *Open (Win98, performance).* 9x DirectDraw refuses a
+  34. *Fixed (Win98).* 9x DirectDraw refuses a
      `DDSCAPS_EXECUTEBUFFER` surface in video memory unless the
-     HALINFO's `ddsCaps` claims the bit, which the 9x layer does not, so
-     the runtime keeps every vertex and index buffer in system memory
-     (protocol v9's VRAM buffers are NT's only). Claiming it made
-     `CreateDevice` fail out of video memory. With the bit claimed (and
-     `CreateExecuteBuffer32` logging) the requests are `EXECUTEBUFFER |
-     VIDEOMEMORY` with **the size in `dwWidth`** (flags `0x00200005`,
-     `dwLinearSize` 0): two without `WRITEONLY` first (caps2 `0x4`,
-     likely the command buffers), then `WRITEONLY` ones with caps2 `0x4`
-     (vertex buffers) and caps2 `0x04000004` (index buffers). The layer's
-     video-memory branch wants `dwLinearSize`, so everything took the
-     system-memory branch, and 9x DirectDraw does not honour a
-     `SYSTEMMEMORY` rewrite on a video-memory request. The work: size from
-     `dwWidth`, command buffers kept out of VRAM, then the whole 9x
-     battery (SHTEST, the probes, D3DGAME8/9).
+     HALINFO's `ddsCaps` claims the bit, so the runtime had kept every
+     vertex and index buffer in system memory (protocol v9's VRAM buffers
+     were NT's only). The 9x HAL claims it, and `CreateExecuteBuffer32`
+     takes the size from `dwWidth` when `dwLinearSize` is 0: 9x's runtime
+     sends it there (doc 19 §45). Claimed without that, `CreateDevice`
+     failed out of video memory. D3DGAME8/9 (0 pixels) and D3DFEAT9
+     (byte-identical) draw from VRAM buffers on Win98 now (the device's
+     `buffer writes`), the probes, SHTEST, CKTEST, EBTEST and DDTEST pass,
+     and the Wine suites match `w98-driver.txt` key for key.
   35. *Win98's own.* A system-memory float surface
      (`CreateOffscreenPlainSurface`, A16B16G16R16F / A32B32G32R32F) fails
      `D3DERR_NOTAVAILABLE` with no driver call, so a float render target

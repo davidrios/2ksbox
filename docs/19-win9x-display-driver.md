@@ -1258,11 +1258,15 @@ names the caller) and `D9CTEST.EXE` (M16):
   claim the POW2 flags on 9x (`core.pow2_mips`, doc 15 "Texture sizes").
 - **Video-memory vertex and index buffers.** A request with
   `DDSCAPS_EXECUTEBUFFER` needs that bit in the HALINFO's `ddsCaps`
-  (code 593 otherwise, `0xbaacc4ee`), and the 9x layer does not claim
-  it. So every buffer on 9x is in system memory, and the protocol v9
-  video-memory buffers (doc 15) are NT's alone. Claiming the bit made
-  `CreateDevice` fail with out-of-video-memory: the runtime then asks for
-  its command buffers in video memory too. Open.
+  (code 593 otherwise, `0xbaacc4ee`). Without it the runtime kept every
+  vertex and index buffer in system memory. The HAL claims it now, and
+  `CreateExecuteBuffer32` places a video-memory buffer in the heap as
+  NT's layer does, with one difference: **9x gives the buffer's size in
+  `dwWidth`** (`DDSD_WIDTH`), NT in `dwLinearSize`. Claimed with the size
+  read from `dwLinearSize` alone, every request fell to the
+  system-memory rewrite, which 9x DirectDraw does not honour for a
+  video-memory request, and `CreateDevice` failed out of video memory.
+  The runtime's command buffers ask for system memory themselves.
 - **Float system-memory surfaces.** `CreateOffscreenPlainSurface` in
   `D3DPOOL_SYSTEMMEM` fails for A16B16G16R16F and A32B32G32R32F with no
   driver call (`DDERR_INVALIDPIXELFORMAT`), so a float render target

@@ -1081,7 +1081,10 @@ bits of `D3DCAPS8.DevCaps`), the runtime asks for its `D3DPOOL_DEFAULT`
 buffers in video memory and keeps a MANAGED buffer's video copy in step
 with `BUFFERBLT` tokens. A draw can then name the buffer instead of
 copying it through the window. `ddflags=0x100000` (`DDF_NO_HWVB`) keeps
-every buffer in system memory, the A/B.
+every buffer in system memory, the A/B. On Win98 the same since M16
+finding 34, with two 9x differences (doc 19 §45): the HALINFO's
+`ddsCaps` must claim `DDSCAPS_EXECUTEBUFFER`, and the size comes in
+`dwWidth`.
 
 - **Allocation.** The buffer callbacks see `DDSCAPS_EXECUTEBUFFER |
   DDSCAPS_VIDEOMEMORY` with `DDSCAPS2_VERTEXBUFFER` / `INDEXBUFFER`. As

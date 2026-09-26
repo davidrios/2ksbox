@@ -547,7 +547,12 @@ static BOOL BuildHalInfo(void)
         *(DWORD __far *)&hi->lpD3DHALCallbacks = pHal->d3dhal_callbacks;
         hi->ddCaps.dwCaps |= DDCAPS_3D | DDCAPS_COLORKEY;
         hi->ddCaps.dwCKeyCaps = DDCKEYCAPS_SRCBLT;
-        hi->ddCaps.ddsCaps.dwCaps |= DDSCAPS_3DDEVICE | DDSCAPS_TEXTURE | DDSCAPS_ZBUFFER | DDSCAPS_MIPMAP;
+        /* DDSCAPS_RESERVED2 is DDSCAPS_EXECUTEBUFFER: 9x DirectDraw refuses
+         * a video-memory buffer (code 593) unless this claims it, and the
+         * runtime then kept every vertex and index buffer in system memory
+         * (doc 19 §45). CreateExecuteBuffer32 places them */
+        hi->ddCaps.ddsCaps.dwCaps |= DDSCAPS_3DDEVICE | DDSCAPS_TEXTURE | DDSCAPS_ZBUFFER | DDSCAPS_MIPMAP |
+                                     DDSCAPS_RESERVED2;
         hi->ddCaps.dwZBufferBitDepths = DDBD_16 | DDBD_24 | DDBD_32;
     }
 

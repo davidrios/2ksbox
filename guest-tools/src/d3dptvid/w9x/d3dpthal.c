@@ -1109,25 +1109,39 @@ static DWORD __stdcall CanCreateExecuteBuffer32(d3dpt_ddhal_cancreatesurface *d)
 
 static DWORD __stdcall CreateExecuteBuffer32(d3dpt_ddhal_createsurface *d)
 {
-    ULONG i;
+    ULONG i, size = 0;
+    static int said;
 
     if (!core.d3d) {
         d->ddRVal = DDERR_UNSUPPORTED;
         return DDHAL_DRIVER_HANDLED;
     }
+    /* 9x's runtime gives a buffer's size in dwWidth (DDSD_WIDTH), NT's in
+     * dwLinearSize */
+    if (d->lpDDSurfaceDesc) {
+        size = d->lpDDSurfaceDesc->dwLinearSize;
+        if (!size && (d->lpDDSurfaceDesc->dwFlags & DDSD_WIDTH)) size = d->lpDDSurfaceDesc->dwWidth;
+    }
+    if (said < 16 && d->lpDDSurfaceDesc) {
+        said++;
+        dbg_hex(&core, "d3dpthal: CreateExecuteBuffer, caps ", d->lpDDSurfaceDesc->ddsCaps.dwCaps);
+        dbg_hex(&core, " size ", size);
+        dbg_puts(&core, "\n");
+    }
     if (!(ddflags(&core) & DDF_NO_HWVB) && d->lpDDSurfaceDesc &&
         (d->lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_VIDEOMEMORY) &&
-        (d->lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_EXECUTEBUFFER) && d->lpDDSurfaceDesc->dwLinearSize &&
+        (d->lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_EXECUTEBUFFER) && size &&
         d->dwSCnt && d->lplpSList) {
         for (i = 0; i < d->dwSCnt; i++) {
             LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(d->lplpSList[i]);
             LPDDRAWI_DDRAWSURFACE_GBL g = s ? s->lpGbl : NULL;
             if (!g) continue;
-            g->dwLinearSize = d->lpDDSurfaceDesc->dwLinearSize;
-            g->dwBlockSizeX = d->lpDDSurfaceDesc->dwLinearSize;
+            g->dwLinearSize = size;
+            g->dwBlockSizeX = size;
             g->dwBlockSizeY = 1;
             g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
         }
+        d->lpDDSurfaceDesc->dwLinearSize = size;
         d->lpDDSurfaceDesc->dwFlags |= DDSD_LINEARSIZE;
         d->ddRVal = DD_OK;
         return DDHAL_DRIVER_NOTHANDLED;
