@@ -135,7 +135,7 @@ fetch checked by a title, the 2.0-cap flag.
     own Voodoo 2 DirectDraw driver, which `base98-br` has installed: the
     run booted without the card and d3d8 loaded its driver anyway. Not
     ours (finding 32).
-  - **Full-screen devices fail** `D3DERR_NOTAVAILABLE` inside the tests
+  - **Full-screen devices fail** `D3DERR_DRIVERINTERNALERROR` (`0x88760827`) inside the tests
     (A8R8G8B8 back buffer, D24S8, 640x480 / 800x600, `device.c:234` and
     `305`), while `D9CTEST.EXE`'s full-screen devices of the same formats
     are made. Found (2026-09-26, `D9CTEST -modechange`, which replays the
@@ -371,7 +371,7 @@ fetch checked by a title, the 2.0-cap flag.
      they run whole.
   33. *Fixed (Win98).* Mipmapped textures of a non-power-of-two size
      (a 10x10 chain in every pool, a 257 managed chain), cube maps of edge
-     3 and Wine's 2x4x8 volume of 4 levels failed `D3DERR_NOTAVAILABLE`
+     3 and Wine's 2x4x8 volume of 4 levels failed `D3DERR_DRIVERINTERNALERROR`
      with no driver call. **Win98's DirectDraw refuses them itself** (doc
      19 §45): power-of-two width and height for a `MIPMAP` surface, a
      power-of-two square cube, and a mip count up to log2 of the larger
@@ -401,7 +401,7 @@ fetch checked by a title, the 2.0-cap flag.
      `RUN_SECS=330 tools/win98-game-test.sh`.
   35. *Win98's own.* A system-memory float surface
      (`CreateOffscreenPlainSurface`, A16B16G16R16F / A32B32G32R32F) fails
-     `D3DERR_NOTAVAILABLE` with no driver call, so a float render target
+     `D3DERR_DRIVERINTERNALERROR` with no driver call, so a float render target
      cannot be read back: D3DFEAT9's readback line and most of `test_fog`
      / `test_texture_transform_flags` on Win98. 9x DirectDraw's HEL makes
      a system-memory offscreen plain surface only in the primary's format

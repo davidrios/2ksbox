@@ -112,7 +112,7 @@ static HRESULT reset640(IDirect3DDevice9 *dev, HWND wnd)
 
 /* Wine's test_wndproc in short: the mode changed under a full-screen
  * device, focus dropped, the device released; then full-screen devices
- * again (on Win98 every one after it failed D3DERR_NOTAVAILABLE) */
+ * again (on Win98 every one after it failed DDERR_HWNDALREADYSET) */
 static void modechange(IDirect3D9 *d3d, HWND wnd)
 {
     IDirect3DDevice9 *dev = NULL;

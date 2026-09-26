@@ -10,7 +10,7 @@
 # D3DGAME8 against the native DXVK frame (HUD masked, no tolerance),
 # D3DFEAT9's frame byte for byte and its query / getter lines against the
 # native run's, except that its A16B16G16R16F readback must fail
-# D3DERR_NOTAVAILABLE: Win98's HEL makes no system-memory float surface
+# D3DERR_DRIVERINTERNALERROR (0x88760827): Win98's HEL makes no system-memory float surface
 # (M16 finding 35, doc 19 §45). The native frames come from
 # `scripts/test.sh host` (build/test/g9-native.bmp, f9-native.bmp,
 # f9-native.lines).

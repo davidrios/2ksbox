@@ -1241,7 +1241,9 @@ GL program that presents by a front-buffer flush needs it still.
 On Win98, DirectX 9.0c's `d3d9.dll` creates every surface through
 `ddraw.dll`'s own create path (its `DdEntryN` exports). That path checks
 the request itself and maps any failure except out-of-memory to
-`D3DERR_NOTAVAILABLE` (the mapper at `0xbaac0213` in 4.09.00.0904). So a
+`D3DERR_DRIVERINTERNALERROR`, `0x88760827` (the mapper at `0xbaac0213` in 4.09.00.0904; not
+`D3DERR_NOTAVAILABLE`, `0x8876086a`, which the handoff and the first
+notes called it). So a
 refused texture never reaches `CanCreateSurface32` and the HAL's log is
 silent. Found with the QEMU gdbstub (`EXTRA="-gdb tcp:127.0.0.1:12345"`
 on `tools/win98-game-test.sh`; system DLLs sit at one address in every

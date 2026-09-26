@@ -614,7 +614,7 @@ void d3d_caps_init(d3dpt_core *p)
      * of two, a cube map that is not a power-of-two square, and a mip
      * count above log2 of the larger of width and height plus one (a
      * volume's depth is not counted). d3d9.dll returns that as
-     * D3DERR_NOTAVAILABLE, so a 10x10 chain, an edge-3 cube or Wine's
+     * D3DERR_DRIVERINTERNALERROR, so a 10x10 chain, an edge-3 cube or Wine's
      * 2x4x8 volume of 4 levels failed in every pool while the caps
      * promised them. The DX8 face's claim there is what the OS can make:
      * a non-power-of-two texture without mips (one surface) works. The
