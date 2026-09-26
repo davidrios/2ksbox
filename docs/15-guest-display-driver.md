@@ -1354,6 +1354,9 @@ the 9x layer not yet.
   and makes the levels after each upload of level 0 and before sampling
   a target drawn into since (DXVK does neither on its own), and at the
   stream's GENERATEMIPSUBLEVELS, which the walker passes through.
+- **Volumes from d3d9.dll.** A VOLUMEBLT takes DXT volumes in whole
+  blocks (a slice is its block rows apart), and a system-memory source
+  with no pixel format as the target's format, as TEXBLT does.
 - **SetLOD and UpdateTexture.** `d3d9.dll` manages a managed texture's
   LOD itself and sends no SETTEXLOD: it makes the video-memory copy again
   without the levels above the LOD and TEXBLTs the whole system-memory

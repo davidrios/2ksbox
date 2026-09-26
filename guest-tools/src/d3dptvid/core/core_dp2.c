@@ -426,6 +426,7 @@ static void walk_volumeblt(DP2WALK *w, const ULONG *b)
     d3dpt_core *p = w->p;
     SURF *dst = surf_slot(b[0], FALSE), *src = surf_slot(b[1], FALSE);
     ULONG bpp, levels, lv, z, y;
+    BOOL dxt;
 
     if (p->reg_lines < 4096 && p->bufblt_lines < 8) {
         p->reg_lines++;
@@ -446,11 +447,14 @@ static void walk_volumeblt(DP2WALK *w, const ULONG *b)
         dbg_hex(p, "/", src ? src->depth : 0);
         dbg_puts(p, "\n");
     }
-    if (!dst || !src || !dst->depth || !src->depth || !dst->fmt || dst->fmt != src->fmt || fmt_is_dxt(dst->fmt) ||
+    /* a system-memory source with no pixel format (d3d9.dll's, as for
+     * TEXBLT) is the target's format */
+    if (!dst || !src || !dst->depth || !src->depth || !dst->fmt || (dst->fmt != src->fmt && !src->nopf) ||
         dst->buffer || src->buffer || b[7] <= b[5] || b[8] <= b[6] || b[10] <= b[9]) {
         return;
     }
-    bpp = fmt_row_bytes(dst->fmt, 1);
+    dxt = fmt_is_dxt(dst->fmt);
+    bpp = dxt ? fmt_row_bytes(dst->fmt, 4) : fmt_row_bytes(dst->fmt, 1);    /* DXT: one 4x4 block */
     levels = dst->levels < src->levels ? dst->levels : src->levels;
     if (levels > 16) {
         levels = 16;
@@ -478,6 +482,20 @@ static void walk_volumeblt(DP2WALK *w, const ULONG *b)
         if (y1 + ch > dh) ch = dh > y1 ? dh - y1 : 0;
         if (z1 + cd > dd) cd = dd > z1 ? dd - z1 : 0;
         if (!cw || !ch || !cd || !smem || !dmem) {
+            continue;
+        }
+        if (dxt) {
+            /* whole blocks from the block the box's left / top edge is in
+             * (blt_levels' rule); a slice is its block rows apart */
+            ULONG bx0 = x0 / 4, by0 = y0 / 4, bx1 = x1 / 4, by1 = y1 / 4;
+            ULONG bw = (x0 + cw + 3) / 4 - bx0, bh = (y0 + ch + 3) / 4 - by0;
+            ULONG srows = (sh + 3) / 4, drows = (dh + 3) / 4;
+            for (z = 0; z < cd; z++) {
+                for (y = 0; y < bh; y++) {
+                    memcpy((void *)(dmem + (z1 + z) * dpitch * drows + (by1 + y) * dpitch + bx1 * bpp),
+                           (const void *)(smem + (z0 + z) * spitch * srows + (by0 + y) * spitch + bx0 * bpp), bw * bpp);
+                }
+            }
             continue;
         }
         for (z = 0; z < cd; z++) {

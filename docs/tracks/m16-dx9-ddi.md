@@ -58,8 +58,8 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  745 failures (803 before mip generation, finding 17 and instancing;
-  `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
+  709 failures (803 before mip generation, finding 17, instancing and DXT
+  volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
   again from this run, the DX9 face's (107 keys); d3d9 / d3d8 device and
@@ -72,9 +72,9 @@ fetch checked by a title, the 2.0-cap flag.
   174: a vs 1.x that writes no `oFog` is not fogged, also on native
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
   build/winetest/wine-11.0` counts the rest per test function. Against it
-  the guest's d3d9 visual has 39 keys worse. The largest: `test_fog` 48, `test_pointsize` 28 (sprite
+  the guest's d3d9 visual has 36 keys worse. The largest: `test_fog` 48, `test_pointsize` 28 (sprite
   coordinates under ps 2.0, a PSIZE element on an unbound stream),
-  `volume_dxtn_test` 24, `test_updatetexture` 15 (finding 2),
+  `test_updatetexture` 15 (finding 2),
   `depth_blit_test` 12 (depth StretchRect), `test_default_diffuse` 9,
   `test_generate_mipmap` 7 (finding 18).
 - **Findings from the DX9 face:**
@@ -169,6 +169,9 @@ fetch checked by a title, the 2.0-cap flag.
      hardware): the host makes every render-target texture with one level,
      so level 0 shows through. Several levels of a target texture need a
      handle per level on the host, as a render-target cube's faces have.
+  19. *Fixed.* DXT volume textures from `d3d9.dll` came out black: the
+     driver's VOLUMEBLT refused DXT, and a source with no pixel format.
+     Wine's `volume_dxtn_test` and `volume_srgb_test` pass since.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
