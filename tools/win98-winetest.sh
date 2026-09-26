@@ -17,7 +17,8 @@
 #   WT_TESTS="d3d9:visual d3d8:device"  a subset (default: every file, the
 #                       device files last, as on XP)
 #   WT_CAP=s            WTRUN's cap per file (3600: TCG)
-#   WT_BASELINE=f       a verdict against reference/winetest/<f>.txt
+#   WT_BASELINE=f       a verdict against reference/winetest/<f>.txt (or a path);
+#                       w98-driver is the driver's Win98 baseline
 #   WT_SAVE=f           save this run as a baseline
 #   RUN_SECS=s          the whole run's cap (6 h)
 #   RAW=, FRESH=1, OUT=, DDFLAGS=  as tools/win98-game-test.sh
@@ -92,4 +93,6 @@ GUEST_CMD="$CMD" UNTIL=WTALL RUN_SECS="${RUN_SECS:-21600}" SHOTS="${SHOTS:-300}"
 rm -rf "$OUT/winetest"; mkdir -p "$OUT/winetest"
 mcopy -n -i "$M" '::/2KSBOX/WINETEST/*' "$OUT/winetest/" 2>/dev/null || true
 echo "=== COM1"; sed 's/\r$//; s/^/   /' "$OUT/com1.log" 2>/dev/null || true
-python3 "$ROOT/tools/winetest-summary.py" "$OUT/winetest" ${WT_SAVE:+--save "$WT_SAVE"} ${WT_BASELINE:+--baseline "$WT_BASELINE"} || true
+# a baseline by name (reference/winetest/<f>.txt) or by path
+BL="${WT_BASELINE:-}"; [ -n "$BL" ] && [ ! -f "$BL" ] && BL="$ROOT/reference/winetest/${BL%.txt}.txt"
+python3 "$ROOT/tools/winetest-summary.py" "$OUT/winetest" ${WT_SAVE:+--save "$WT_SAVE"} ${BL:+--baseline "$BL"} || true

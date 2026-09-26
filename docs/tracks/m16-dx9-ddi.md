@@ -163,7 +163,9 @@ fetch checked by a title, the 2.0-cap flag.
   142764 / 156, device 55352 / 60, stateblock 9283 / 0). Most of d3d9
   visual's excess over XP is finding 35 (`test_fog` 280,
   `test_texture_transform_flags` 644, both reading float targets back).
-  `D9CTEST.EXE` (new) creates the resources the tests found failing,
+  Saved as the Win98 driver baseline, `reference/winetest/w98-driver.txt`
+  (165 keys, only ever shrinks; `WT_BASELINE=w98-driver.txt` checks a
+  run against it). `D9CTEST.EXE` (new) creates the resources the tests found failing,
   one line each; `-readback` runs the float readbacks alone,
   `-modechange` the focus-loss case.
 - **A modern card, for contrast** (`reference/winetest/win11-rtx3090.txt`,
