@@ -80,7 +80,7 @@ enum {
     DP2_CREATEVERTEXSHADERDECL = 71, DP2_DELETEVERTEXSHADERDECL = 72, DP2_SETVERTEXSHADERDECL = 73,
     DP2_CREATEVERTEXSHADERFUNC = 74, DP2_DELETEVERTEXSHADERFUNC = 75, DP2_SETVERTEXSHADERFUNC = 76,
     DP2_SETVERTEXSHADERCONSTI = 77, DP2_SETSCISSORRECT = 79, DP2_SETVERTEXSHADERCONSTB = 83,
-    DP2_SETRENDERTARGET2 = 85, DP2_GENERATEMIPSUBLEVELS = 89, DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
+    DP2_BLT = 81, DP2_SETRENDERTARGET2 = 85, DP2_GENERATEMIPSUBLEVELS = 89, DP2_SETPIXELSHADERCONSTI = 93, DP2_SETPIXELSHADERCONSTB = 94,
 };
 #define D3DERR_COMMAND_UNPARSED_ 0x88760BB8u
 
@@ -2432,6 +2432,29 @@ struct Dp2 {
                 }
                 break;
             }
+            case DP2_BLT:
+                /* v18: StretchRect between two depth buffers (the driver
+                 * sends no other BLT): whole surfaces of one size, as
+                 * Direct3D 9 allows it, outside a scene */
+                need = count * 52u;
+                if (need > left) return fail("truncated BLT");
+                for (uint32_t i = 0; i < count; i++) {
+                    const uint8_t *e = q + 52 * i;
+                    VramSurf *src = surf(x, u32(e)), *dst = surf(x, u32(e + 24));
+                    RECT sr, dr;
+                    memcpy(&sr, e + 4, sizeof sr); memcpy(&dr, e + 28, sizeof dr);
+                    tr("depth blt %u -> %u", u32(e), u32(e + 24));
+                    if (!src || !dst || !(src->d.caps & D3DPT_VS_ZBUFFER) || !(dst->d.caps & D3DPT_VS_ZBUFFER) ||
+                        !ensure_object(x, *src) || !ensure_object(x, *dst) || !src->rt || !dst->rt ||
+                        src->d.width != dst->d.width || src->d.height != dst->d.height) {
+                        if (d.warn_once(0xf0000)) x.log("ddi: dp2: BLT %u -> %u is no blit between two depth buffers of one size, dropped", u32(e), u32(e + 24));
+                        continue;
+                    }
+                    x.scene_end();
+                    HRESULT hr = x.dev->StretchRect(src->rt, nullptr, dst->rt, nullptr, D3DTEXF_NONE);
+                    if (FAILED(hr) && d.warn_once(0xf0001)) x.log("ddi: dp2: depth StretchRect %u -> %u: 0x%08x", u32(e), u32(e + 24), (unsigned)hr);
+                }
+                break;
             case DP2_SETRENDERTARGET2:
                 /* v17: render targets 1..3 {index, surface handle; 0 = none}
                  * (the driver turns index 0 into SETRENDERTARGET) */

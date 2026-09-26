@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   17u
+#define D3DPT_PROTO_VERSION   18u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -405,7 +405,12 @@ typedef struct d3dpt_dp2 {
  *
  * v17: several render targets. The DP2 stream carries the runtime's own
  * SETRENDERTARGET2 (op 85, {index, surface handle}) for targets 1..3;
- * target 0 stays DX7's SETRENDERTARGET pair. */
+ * target 0 stays DX7's SETRENDERTARGET pair.
+ *
+ * v18: StretchRect between two depth buffers. The runtime's BLT (op 81,
+ * D3DHAL_DP2BLT: source, RECTL, level, destination, RECTL, level, flags)
+ * travels in the DP2 stream when both are video-memory depth buffers,
+ * whose contents only the host has; every other BLT is the driver's. */
 #define D3DPT_DP2_DRAW8 200u
 #define D3DPT_DRAW8_VRAM_VB 0x1u
 #define D3DPT_DRAW8_VRAM_IB 0x2u

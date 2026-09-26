@@ -58,7 +58,7 @@ fetch checked by a title, the 2.0-cap flag.
   (Wine's `colorfill_test` says so; DXVK and our `D3D9.DLL` let it by).
 - **Wine's suite on the DX9 face** (2026-09-26): d3d9 stateblock 14738
   checks, **0** failures. d3d9 visual **runs to its end**: 201792 checks,
-  652 failures (803 before mip generation, findings 15, 17, 20 and 21,
+  640 failures (803 before mip generation, findings 15, 17, 20 to 22,
   instancing and DXT volumes; `multiple_rendertargets_test` runs since v17 and passes) (the crash at `visual.c:25891` was the test's own, a
   device with no window, which XP refuses: patch 03 of
   `patches/winetest/`). `reference/winetest/xp-driver.txt` was saved
@@ -72,8 +72,8 @@ fetch checked by a title, the 2.0-cap flag.
   174: a vs 1.x that writes no `oFog` is not fogged, also on native
   DXVK); `winetest-summary.py --baseline dxvk-wine.txt --by-function
   build/winetest/wine-11.0` counts the rest per test function. Against it
-  the guest's d3d9 visual has 27 keys worse. The largest: `test_fog` 48,
-  `depth_blit_test` 12 (depth StretchRect), `test_updatetexture` 9
+  the guest's d3d9 visual has 26 keys worse. The largest: `test_fog` 48,
+  `test_updatetexture` 9
   (finding 2), `test_generate_mipmap` 7 (finding 18).
 - **Where DXVK itself differs.** A guest failure DXVK shares is DXVK's
   behaviour, and a patch in `patches/dxvk/` would be the fix. The clear
@@ -193,6 +193,10 @@ fetch checked by a title, the 2.0-cap flag.
      refused: such a surface has no pixel format, its width is bytes per
      block row and its height block rows, and the blit checked a texel
      rectangle against those. Five of `update_surface_test`'s seven pass.
+  22. *Fixed.* StretchRect between two depth buffers copied VRAM that the
+     host never writes depth into. The walker sends such a BLT to the host
+     (protocol v18), which runs DXVK's StretchRect; `depth_blit_test`
+     passes.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

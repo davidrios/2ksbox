@@ -1019,6 +1019,56 @@ int main(int argc, char **argv) {
         send_dp2(&enc, md, vtx);
     }
 
+    /* --- StretchRect between two depth buffers (v18): on a 64x64 target, a
+     * second D16 buffer cleared to 0 is blitted over the bound one (cleared
+     * to 1), so a white quad at z 0.5 fails the depth test and the target
+     * stays black; the same quad after the bound buffer is cleared to 1
+     * again lands. Then a BLT that names no depth buffer is dropped --- */
+    {
+        enum { DRT_OFF = 0x370000, DZA_OFF = 0x374000, DZB_OFF = 0x376000, H_DRT = 350, H_DZA = 351, H_DZB = 352 };
+        vram_surface(&enc, H_DRT, DRT_OFF, 64, 64, 256, D3DFMT_X8R8G8B8, D3DPT_VS_RENDER_TARGET);
+        vram_surface(&enc, H_DZA, DZA_OFF, 64, 64, 128, D3DFMT_D16, D3DPT_VS_ZBUFFER);
+        vram_surface(&enc, H_DZB, DZB_OFF, 64, 64, 128, D3DFMT_D16, D3DPT_VS_ZBUFFER);
+        std::vector<tlv> dq = { { 0, 0, 0.5f, 1, ~0u, 0, 0, 0 }, { 64, 0, 0.5f, 1, ~0u, 0, 0, 0 }, { 0, 64, 0.5f, 1, ~0u, 0, 0, 0 },
+                                { 0, 64, 0.5f, 1, ~0u, 0, 0, 0 }, { 64, 0, 0.5f, 1, ~0u, 0, 0, 0 }, { 64, 64, 0.5f, 1, ~0u, 0, 0, 0 } };
+        auto blt = [](Dp2Buf &g, uint32_t src, uint32_t dst) {
+            g.cmd(81, 1); g.u32(src); g.u32(0); g.u32(0); g.u32(64); g.u32(64); g.u32(0);
+            g.u32(dst); g.u32(0); g.u32(0); g.u32(64); g.u32(64); g.u32(0); g.u32(0);
+        };
+        auto at = [&]() { uint32_t v; memcpy(&v, vram + DRT_OFF + 32 * 256 + 32 * 4, 4); return v & 0xffffff; };
+        uint32_t got[2];
+        for (int k = 0; k < 2; k++) {
+            Dp2Buf g;
+            g.cmd(41, 1); g.u32(H_DRT); g.u32(H_DZB);
+            g.viewport(0, 0, 64, 64);
+            g.clear(D3DCLEAR_ZBUFFER, 0, 0.0f);
+            g.cmd(41, 1); g.u32(H_DRT); g.u32(H_DZA);
+            g.viewport(0, 0, 64, 64);
+            g.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000u, 1.0f);
+            if (k == 0) blt(g, H_DZB, H_DZA);
+            g.rs(D3DRS_ZENABLE, 1); g.rs(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+            g.tss(0, 0, 0); g.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1); g.tss(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+            g.draw8(4, 2, FVF_TLVERTEX, dq);
+            g.cmd(41, 1); g.u32(H_RT); g.u32(H_Z);
+            g.viewport(0, 0, W, H);
+            hr = send_dp2(&enc, g, vtx);
+            hr |= readback(&enc, H_DRT);
+            got[k] = hr ? 0xdeadbe : at();
+        }
+        CHECK(got[0] == 0 && got[1] == 0xffffff,
+              "depth StretchRect: a quad behind the copied depth 0x%06x (want 0), without the copy 0x%06x (want 0xffffff)", got[0], got[1]);
+        Dp2Buf bb;
+        blt(bb, H_RT, H_DZA);
+        hr = send_dp2(&enc, bb, vtx);
+        CHECK(hr == 0, "a BLT from a colour target to a depth buffer dropped, not fatal (0x%08x)", hr);
+        for (uint32_t h : { (uint32_t)H_DRT, (uint32_t)H_DZA, (uint32_t)H_DZB }) {
+            d3dpt_handle *hh = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_RELEASE, sizeof *hh, 0);
+            *hh = { h, 0 };
+        }
+        Dp2Buf r; r.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        send_dp2(&enc, r, vtx);
+    }
+
     /* --- the luminance bump maps (BUMPENVMAPLUMINANCE): a uniform bump map
      * (du = dv = 0, L = one half) at stage 0 over a uniform green
      * environment map at stage 1, a zero bump matrix and a luminance scale

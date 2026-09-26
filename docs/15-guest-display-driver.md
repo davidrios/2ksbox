@@ -14,7 +14,7 @@ The driver came in three stages, which still name the parts: **M7a** the
 framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
 (a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L, and
 since M16 a DirectX 9 DDI with shader model 3.0). The
-register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v17**
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v18**
 (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
 GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
@@ -1426,6 +1426,10 @@ the 9x layer not yet.
   division (the kernel-mode driver keeps off the FPU).
   `StretchRectFilterCaps` claims point and linear; both take the nearest
   texel for now. `D3DDEVCAPS2_CAN_STRETCHRECT_FROM_TEXTURES` is claimed.
+  A StretchRect between two video-memory depth buffers is the host's
+  (v18): depth never comes back to VRAM, so the walker sends that BLT on
+  as the runtime's token and the host runs DXVK's StretchRect on the two
+  buffers.
 - **Samplers.** A DX9 stage past the fixed function's eight is a sampler
   only: 8..15 for ps 2.0's sixteen, and **257..260 for the vertex
   samplers** (D3DVERTEXTEXTURESAMPLER0..3, seen in a trace). The

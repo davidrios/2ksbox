@@ -802,6 +802,20 @@ static void walk_colorfill(DP2WALK *w, const ULONG *b)
     if (!t->sysmem) d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[0]);
 }
 
+/* a depth format: the host keeps such a surface's contents */
+static BOOL fmt_is_depth(ULONG f)
+{
+    return f == D3DFMT_D16_ || f == D3DFMT_D24X8_ || f == D3DFMT_D24S8_ || f == D3DFMT_D15S1_ || f == D3DFMT_D32_;
+}
+
+/* a BLT (StretchRect) between two video-memory depth buffers (v18) */
+static BOOL blt_depth(const ULONG *b)
+{
+    SURF *src = surf_slot(b[0], FALSE), *dst = surf_slot(b[6], FALSE);
+
+    return src && dst && !src->sysmem && !dst->sysmem && fmt_is_depth(src->fmt) && fmt_is_depth(dst->fmt);
+}
+
 /* one texel of an ARGB-group format as a D3DCOLOR (an X channel reads as
  * 0xff, each field widened by repeating its top bits, so fill_pack gives
  * the texel back); FALSE for a format outside the group */
@@ -1507,8 +1521,20 @@ static BOOL walk(DP2WALK *w)
             break;
         }
         case 81: case 96:                                       /* BLT / SURFACEBLT: done here, in pass 1 (M16) */
-            if (!w->out) {
-                for (i = 0; i < count; i++) walk_blt9(w, (const ULONG *)(q + i * 52), op == 81);
+            for (i = 0; i < count; i++) {
+                const ULONG *e = (const ULONG *)(q + i * 52);
+                if (op == 81 && blt_depth(e)) {
+                    /* between two video-memory depth buffers (v18): the
+                     * host's, whose depth never comes back to VRAM */
+                    D3DHAL_DP2COMMAND_ h;
+                    h.bCommand = 81;
+                    h.bReserved = 0;
+                    h.wPrimitiveCount = 1;
+                    walk_put(w, &h, sizeof(h));
+                    walk_put(w, e, 52);
+                } else if (!w->out) {
+                    walk_blt9(w, e, op == 81);
+                }
             }
             break;
         case 82:                                                /* COLORFILL: done here, in pass 1 (M16) */
