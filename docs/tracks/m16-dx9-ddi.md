@@ -384,7 +384,12 @@ fetch checked by a title, the 2.0-cap flag.
      failed out of video memory. D3DGAME8/9 (0 pixels) and D3DFEAT9
      (byte-identical) draw from VRAM buffers on Win98 now (the device's
      `buffer writes`), the probes, SHTEST, CKTEST, EBTEST and DDTEST pass,
-     and the Wine suites match `w98-driver.txt` key for key.
+     and the Wine suites match `w98-driver.txt` key for key. Max Payne
+     (DX8, hardware T&L) draws its main menu on `base98-br` from VRAM
+     buffers at 60 frames/s (about 300 buffer writes and 4800 draws per
+     5 s): `CDS=<its ISO> GUEST_CMD=...MAXPAYNE.EXE CLICKS="130:607,160"`
+     (Play in v1.0's launcher, which `-skipstartup` does not skip)
+     `RUN_SECS=330 tools/win98-game-test.sh`.
   35. *Win98's own.* A system-memory float surface
      (`CreateOffscreenPlainSurface`, A16B16G16R16F / A32B32G32R32F) fails
      `D3DERR_NOTAVAILABLE` with no driver call, so a float render target
