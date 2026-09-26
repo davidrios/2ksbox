@@ -206,6 +206,18 @@ fetch checked by a title, the 2.0-cap flag.
      source). A system-memory source of the target's texel size is the
      target's format now, and a plain source into a cube root is its +X
      face. `test_updatetexture` 2 failures (9).
+  24. *Open, a DXVK patch.* Pre-transformed vertices past z = 1:
+     without `D3DPMISCCAPS_CLIPTLVERTS` (never claimed, doc 15) the runtime
+     clips such geometry to the screen itself and hands the rest on, and
+     the cards of the era draw it unclipped in depth (Wine's `z_range_test`
+     expects that exactly when the cap is absent; `depth_clamp_test` too).
+     DXVK claims the cap itself and always clips depth
+     (`BindRasterizerState`: `setDepthClip(true)`). The fix is a patch
+     making depth clip follow `D3DRS_CLIPPING`, and the executor turning
+     clipping off for an XYZRHW draw. It waits for the rig's run (the
+     DXVK rule above) and a user decision. Part of `test_fog`'s 48
+     (VS_MODE_FFP, a point missing entirely rather than fogged wrong)
+     may be the same.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own
@@ -259,7 +271,17 @@ fetch checked by a title, the 2.0-cap flag.
      `DrvEnableDirectDraw` on it again (QEMU log: `dd disabled`, then
      GetDriverInfo queries but no `dd enabled`), so later devices fail
      in every process until a reboot. A game's Alt+Tab takes this path.
-     The harness runs the `device` files last because of it.
+     The harness runs the `device` files last because of it. 2026-09-26,
+     d3d9 `device.c` `test_reset` shows the same: a fullscreen device at
+     640x480 Reset to 800x600, the desktop's own mode. Windows gives the
+     desktop's kept PDEV back through `DrvAssertMode(TRUE)` (no
+     `DrvEnableSurface`, unlike a new PDEV), the 640x480 PDEV's
+     DirectDraw is disabled, and from then on the runtime only toggles
+     exclusive mode: no `DrvGetDirectDrawInfo`, no `DrvEnableDirectDraw`,
+     no surface creation reaches the driver, and Reset returns
+     `D3DERR_INVALIDCALL` (the test then crashes on a NULL swapchain).
+     Next: what makes dxg enable DirectDraw again on a PDEV that
+     `DrvAssertMode` brought back.
 
 ## Why SM3 in one step
 
