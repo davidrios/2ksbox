@@ -360,12 +360,14 @@ fetch checked by a title, the 2.0-cap flag.
      `CreateDevice` fail out of video memory: the runtime's command
      buffers then ask for video memory too, and `CreateExecuteBuffer32`
      has to send those back to system memory.
-  35. *Open (Win98).* A system-memory float surface
+  35. *Win98's own.* A system-memory float surface
      (`CreateOffscreenPlainSurface`, A16B16G16R16F / A32B32G32R32F) fails
      `D3DERR_NOTAVAILABLE` with no driver call, so a float render target
      cannot be read back: D3DFEAT9's readback line and most of `test_fog`
-     / `test_texture_transform_flags` on Win98. The refusing check in
-     ddraw.dll is not found yet (the same gdbstub recipe).
+     / `test_texture_transform_flags` on Win98. 9x DirectDraw's HEL makes
+     a system-memory offscreen plain surface only in the primary's format
+     or one of its own 20 (doc 19 §45); the driver has no say, so the
+     rig's Win98 should fail the same checks.
 
 - **The suites in a guest** (2026-09-25). Wine 11.0 is the pin: its
   test EXEs import only functions that XP's and Win98's own

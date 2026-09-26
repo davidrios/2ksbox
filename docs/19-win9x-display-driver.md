@@ -1265,6 +1265,13 @@ names the caller) and `D9CTEST.EXE` (M16):
   its command buffers in video memory too. Open.
 - **Float system-memory surfaces.** `CreateOffscreenPlainSurface` in
   `D3DPOOL_SYSTEMMEM` fails for A16B16G16R16F and A32B32G32R32F with no
-  driver call, so a float render target cannot be read back
-  (D3DFEAT9's readback line, most of Wine's `test_fog` on 9x). Where it
-  fails is not found yet.
+  driver call (`DDERR_INVALIDPIXELFORMAT`), so a float render target
+  cannot be read back (D3DFEAT9's readback line, most of Wine's
+  `test_fog` on 9x). The HEL's `CanCreateSurface` (`0xbaaa9d34`) takes a
+  system-memory offscreen plain surface only in the primary's pixel
+  format (`0xbaaa98d4`) or one of the 20 formats of its table at
+  `0xbaaf6c30`. A texture goes the other branch, where a FOURCC is sized
+  by `0xbaad40dc`, which knows the float D3DFORMATs. The driver has no
+  say, so this is Win98's too. The float formats keep
+  `D3DFORMAT_OP_OFFSCREENPLAIN`: a video-memory one is the driver's to
+  make.
